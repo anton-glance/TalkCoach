@@ -1,0 +1,24 @@
+disabled_rules:
+  - todo
+  - line_length
+  - type_name
+
+opt_in_rules:
+  - empty_count
+  - explicit_init
+  - first_where
+  - sorted_first_last
+  - contains_over_first_not_nil
+
+excluded:
+  - .build
+  - DerivedData
+  - WPMSpike/recordings
+
+reporter: "xcode"
+
+identifier_name:
+  excluded:
+    - id
+    - x
+    - y

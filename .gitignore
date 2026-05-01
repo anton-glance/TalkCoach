@@ -1,0 +1,16 @@
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+.build/
+.swiftpm/
+Package.resolved
+.DS_Store
+**/.DS_Store
+.claude/settings.local.json
+WPMSpike/recordings/*.wav
+WPMSpike/recordings/*.caf
+WPMSpike/recordings/*.m4a
