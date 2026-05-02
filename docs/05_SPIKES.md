@@ -13,44 +13,47 @@
 
 ## Spike #6 — WPM ground truth on real EN/RU recordings
 
-**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 4h
+**Status:** 🔬 in progress (revised Session 004) · **Priority:** P0 · **Estimate:** 4h
 
 ### Question
-Does the WPM number we plan to display match what a stopwatch + manual word count says, in both English and Russian, across normal/fast/slow speech?
+Does the WPM number we plan to display match what a stopwatch + manual word count says, in both English and Russian, across normal/fast/slow speech — using `SpeechAnalyzer` token timestamps as the speaking-duration source (not energy VAD)?
 
 ### Why it matters
 FM2 (unreliable data) is a hard failure mode. If WPM math is off by 15%+, the user immediately distrusts the app and uninstalls. We need to prove the math before building UI on top of it.
 
 ### Method
 1. Record 6 audio clips (yourself, ~60s each):
-   - EN normal pace
-   - EN fast (rushing)
-   - EN slow (deliberate)
-   - RU normal pace
-   - RU fast
-   - RU slow
+   - EN normal pace (with deliberate 4s pause)
+   - EN fast (continuous)
+   - EN slow (continuous)
+   - RU normal pace (with deliberate 4s pause)
+   - RU fast (continuous)
+   - RU slow (continuous)
 2. For each clip:
    - Manually count words (from a transcript) → ground truth WPM
-   - Run a minimal `SpeechAnalyzer` test harness with `attributeOptions: [.audioTimeRange]`
-   - Apply the proposed `WPMCalculator` math (5–8s rolling window, EMA, VAD-aware)
+   - Run `SpeechAnalyzer` test harness with `attributeOptions: [.audioTimeRange]`
+   - Use proposed `WPMCalculator` math: 5–8s rolling window, EMA smoothing, **speaking duration derived from token interval lengths** (NOT from audio energy VAD)
    - Compare displayed WPM at the end of each clip vs ground truth
-3. Tabulate error % per clip
-4. Test with a deliberate 4-second pause mid-clip — does WPM drop or stay stable?
+3. Tabulate error % per clip across all (window, alpha) combinations
+4. For pause clips: confirm WPM doesn't crash to 0 during the 4s pause (stays within 10% of pre-pause value because token gaps reduce window-effective speaking duration naturally)
 
 ### Pass criteria
 - Mean absolute error <8% on normal-pace clips (EN and RU)
-- WPM does not crash to 0 during a 4s breath pause (stays within 10% of pre-pause value)
+- WPM does not crash to 0 during the 4s pause (stays within 10% of pre-pause value)
 - Direction of change matches direction of speech rate change (fast clip shows higher WPM than slow clip)
+- **No environment-specific calibration required** — same recording on different mics produces similar errors (validates Approach D + A architecture decision)
 
 ### Fail mode → action
-- **Error too high:** investigate window size (try 8–12s), VAD calibration, EMA alpha
+- **Error too high:** investigate window size (try 8–12s), EMA alpha, token-arrival timing accuracy
 - **Russian specifically off:** word-count semantics differ (compound morphology) → may need a per-language word-counting rule
-- **Pause crashes WPM:** VAD threshold or windowing is wrong — re-examine algorithm
+- **Pause crashes WPM:** `SpeechAnalyzer` may not be reporting token end times accurately during silence — examine `.audioTimeRange` behavior at pause edges
+- **Token timestamps too coarse (phrase-level not word-level):** falls back to proportional estimation within phrases; may degrade accuracy and trigger Spike #8
 
 ### Outputs
-- A small Swift command-line tool that runs the WPM math on an audio file
+- A small Swift Package harness that runs the WPM math on an audio file
 - A spreadsheet of clip → ground truth WPM → calculated WPM → error %
-- Tuned values for window size, EMA alpha, VAD threshold (these become production constants)
+- Tuned values for window size, EMA alpha (these become production constants)
+- **No** VAD threshold value (the architecture no longer uses energy VAD)
 
 ---
 
@@ -268,9 +271,80 @@ Test by:
 
 ---
 
-## Deferred / not running in Phase 0
+## Spike #8 — Token-arrival robustness across environments and mics
 
-### Spike #5 — Acoustic non-word detection ("hmm", "ahh")
+**Status:** 📋 planned · **Priority:** P1 (run after S6 passes) · **Estimate:** 3h
+
+### Question
+Does `SpeechAnalyzer` produce stable token-arrival timing across different microphones and ambient environments? If a clip is recorded on AirPods in a coffee shop vs. MacBook built-in in a quiet room, do we get similar WPM measurements?
+
+### Why it matters
+Architecture decision Session 004 chose Approach D (token-arrival-based speaking duration) specifically because it should be environment-agnostic — `SpeechAnalyzer` does its own ML-based VAD internally. But this assumption needs validation. If token timestamps are noisy or shift based on mic/environment, the WPM math degrades and we'd need to add Approach C (`SoundAnalysis`-based VAD) as a secondary signal.
+
+This addresses FM2 (unreliable data) under the realistic condition that the user changes mics and locations.
+
+### Method
+1. Record the same script (~30s, English, normal pace) in 4 conditions:
+   - MacBook built-in mic, quiet room
+   - MacBook built-in mic, café/noisy room
+   - AirPods, quiet room
+   - AirPods, café/noisy room
+2. Run all 4 through the Spike #6 harness with the production-tuned (window, alpha)
+3. Compare WPM and `effectiveSpeakingDuration` across the 4 conditions
+
+### Pass criteria
+- WPM variance across the 4 conditions <5% (i.e., same script produces consistent WPM regardless of mic/environment)
+- `effectiveSpeakingDuration` consistent within 10%
+- No clip produces wildly different word counts (would indicate `SpeechAnalyzer` model degradation in noise)
+
+### Fail mode → action
+- **WPM varies >10% across conditions:** token-arrival isn't stable enough; add Approach C (small `SoundAnalysis` model) as a confidence-weighted secondary signal. This becomes a backlog item.
+- **Word count varies wildly:** `SpeechAnalyzer` model is failing in noise; this is a deeper problem affecting all metrics, not just WPM. May force scope change (warn user about noisy environments, or accept degraded quality). Discuss.
+- **AirPods specifically degrades:** AirPods apply aggressive bluetooth compression — may be unrecoverable. Document as a known limitation.
+
+### Outputs
+- Cross-condition WPM table
+- Decision: do we add Approach C, or proceed with Approach D alone?
+
+---
+
+## Spike #9 — Adaptive RMS noise-floor for shouting detection
+
+**Status:** 📋 planned · **Priority:** P2 (run before M4.5) · **Estimate:** 2h
+
+### Question
+Does the adaptive noise-floor approach (rolling 5s buffer, 10th percentile = noise floor, threshold = floor + 25 dB) reliably detect shouting across environments without false positives?
+
+### Why it matters
+The shouting detector is the only audio-energy-based feature in the app (per Session 004 architecture decision). It must work in any environment without calibration to satisfy FM3 (no setup). Fixed-dBFS thresholds break across mics and rooms.
+
+### Method
+1. Record short clips (~20s each):
+   - Quiet room, normal speech (no shouting expected)
+   - Quiet room, deliberate shouting at end
+   - Noisy environment (HVAC + nearby conversation), normal speech (no shouting expected)
+   - Noisy environment, deliberate shouting at end
+2. Build a small harness: ingest RMS samples → run adaptive threshold → output detected shouting events
+3. Validate: shouting clips trigger events, non-shouting clips don't
+
+### Pass criteria
+- Shouting clips: at least one shouting event detected with timestamp matching the actual shouting onset (±1s)
+- Non-shouting clips: zero shouting events
+- Adaptive floor adjusts within 5s when ambient noise changes (validate by switching environments mid-clip)
+
+### Fail mode → action
+- **False positives in noisy environments:** floor estimation too low — try 25th percentile instead of 10th, or longer rolling window
+- **False negatives on actual shouting:** threshold too conservative — try 20 dB margin instead of 25
+- **Adaptation too slow:** shorten rolling buffer from 5s to 3s
+- **Adaptation too jumpy:** lengthen to 8s
+
+### Outputs
+- Tuned constants for adaptive floor: rolling buffer length, percentile, threshold dB
+- These become production constants in `ShoutingDetector`
+
+---
+
+## Spike #5 — Acoustic non-word detection ("hmm", "ahh")
 **Status:** ⏸ deferred to v1.x
 
 Not in v1. Run when v1.x scoping begins.

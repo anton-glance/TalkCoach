@@ -4,6 +4,113 @@
 
 ---
 
+## Session 004 — 2026-05-02 — Architecture Pivot: Token-Arrival Speaking Duration (Approach D + A)
+
+**Format:** Architecture decision triggered by user concern during Spike #6 recording prep.
+
+### Trigger
+User raised the question while preparing to record the `silence.caf` calibration clip for Spike #6: *"I'm afraid the mic will re-adjust sensitivity if there is no voice input and it will capture background noise. It's important to mention that I can be on different environments and use different headphones. how the app will adapt to that?"*
+
+This exposed a real architecture gap, not a recording-day problem. The original design used energy-based VAD with a fixed dBFS threshold — broken for two reasons the user correctly identified:
+
+1. **Mic AGC during silence:** macOS Core Audio + most consumer mics apply automatic gain control. When no voice input, the mic *increases* sensitivity, recording an *amplified* noise floor that doesn't match the floor during actual speech. A `silence.caf` calibration would tell us threshold = -30 dBFS, but during real speech the floor is -50 dBFS. VAD using -30 would classify quiet speech as silence, breaking WPM math.
+2. **Multi-environment / multi-mic usage:** user works in coffee shops, home, hotels, with built-in mic, AirPods, USB headsets. A one-time calibration is wrong for every environment after the first. Violates FM3 (no setup).
+
+### Decision
+Combined **Approach D + Approach A**:
+
+- **Approach D — derive speaking duration from `SpeechAnalyzer` token-arrival timestamps.** No audio energy involved. `SpeechAnalyzer` already does ML-based speech/non-speech classification internally; piggyback on it instead of reinventing energy VAD. New module: `SpeakingActivityTracker`.
+- **Approach A — adaptive noise-floor for the only remaining audio-energy feature: `ShoutingDetector`.** Maintain a rolling 5s buffer of RMS samples; current noise floor = 10th percentile; shouting threshold = floor + 25 dB. Recomputed every 100ms. Works in any environment without calibration.
+
+### Why this is better
+- Removes the entire energy-VAD module. One less thing to build, debug, and tune.
+- Removes the calibration step from Spike #6 and from production setup. FM3 satisfied.
+- WPM math now uses Apple's robust ML-based speech detection instead of a hand-rolled energy threshold.
+- ShoutingDetector becomes environment-adaptive in ~30 lines of additional code.
+- Enables a clean Spike #8 to validate cross-environment robustness.
+
+### What changed in docs
+
+#### `03_ARCHITECTURE.md`
+- `AudioPipeline` no longer fans out to a VAD module. Just buffers (to SpeechEngine) + RMS samples (to ShoutingDetector).
+- New `SpeakingActivityTracker` sub-component in `Analyzer`: consumes token stream, provides `speakingDuration(in:)` and `isCurrentlySpeaking(asOf:)`.
+- `ShoutingDetector` rewritten with adaptive noise-floor logic.
+- Removed standalone `SpeakingDurationTracker` — its job is now done by `SpeakingActivityTracker` accumulator (`EffectiveSpeakingDuration`).
+- Data flow diagram updated: token stream → SpeakingActivityTracker; RMS → ShoutingDetector (no VAD branch).
+
+#### `05_SPIKES.md`
+- Spike #6 method revised: no `silence.caf` calibration step, no `--measure-noise-floor` CLI flag, speaking duration derived from token interval lengths. Pass criteria add: "no environment-specific calibration required."
+- New Spike #8: cross-environment/cross-mic robustness test. Records same script on built-in/AirPods × quiet/noisy. Validates that Approach D produces consistent WPM (<5% variance).
+- New Spike #9: adaptive noise-floor validation for ShoutingDetector. Records normal/shouting in quiet/noisy. Validates that adaptive threshold catches real shouting without false positives in noisy environments.
+- Spike #5 (acoustic non-words) stays deferred to v1.x.
+
+#### `04_BACKLOG.md`
+- Phase 0 spikes total: 24h → 29h (added S8 + S9, 5h).
+- Phase 3 M3.2: was "VAD on audio buffers (3h)" → "SpeakingActivityTracker derive speaking duration from token timestamps (2h)". Net: 1h saved, simpler module.
+- Phase 4 M4.5: `ShoutingDetector` 2h → 3h (added adaptive noise-floor logic).
+- Phase 4 M4.6: `SpeakingDurationTracker` (1h) → `EffectiveSpeakingDuration: accumulate from SpeakingActivityTracker` (1h). Same effort, different source.
+
+#### Spike #6 harness code
+The agent will need to update the Spike #6 harness to match the new architecture:
+- Remove `SimpleEnergyVAD.swift`
+- Remove `--measure-noise-floor` CLI flag and `NoiseFloorMeasurer.swift`
+- Remove `silence.caf` calibration step from `recordings/README.md`
+- Replace `[VADEvent]` input to `WPMCalculator` with token-derived speaking-duration computation
+- Tests become simpler: instead of constructing both `[TimestampedWord]` AND `[VADEvent]`, tests construct only `[TimestampedWord]` (with their start/end times encoding speaking activity directly)
+
+This is a meaningful rewrite of `WPMCalculator.swift` and ~half the tests. Estimated 2-3h agent work.
+
+### Why this is the right time to do this
+- Recording any data with the current spike would test the wrong VAD model. Wasted effort, plus tuned constants would be wrong.
+- The agent already wrote clean code; rewriting now (before user has invested 90 min in recording) is much cheaper than after.
+- Sets up Spike #8 cleanly — once Approach D harness exists, validating it across mics is a 1-hour exercise.
+
+### Where we left off
+- Spike #6 harness exists but uses the old (energy VAD) architecture. Will be rewritten in next session.
+- No recordings have been made yet. Good — recording with the new architecture will be simpler (no `silence.caf` step, fewer JSON fields).
+- All planning docs updated to reflect Approach D + A.
+- Next session: Claude generates a "Spike #6 redo" prompt for Claude Code to rewrite the harness. Then user records.
+
+### Ups
+- User caught a real architecture gap before spending hours on recordings. Excellent product instinct — "how does this work in different environments" is exactly the question to ask, and we should have asked it during Session 001.
+- The fix is simpler than the original design, not more complex. Removed a module instead of adding one.
+- Adaptive techniques (token-derived VAD, percentile-based noise floor) are robust by construction; the architecture no longer has a calibration concept anywhere.
+
+### Downs
+- Original architecture had a blind spot we didn't catch until recording day. The Session 001 docs glossed VAD as "simple energy-based or `SoundAnalysis`" without forcing the choice. Lesson: every "or" in an architecture spec is a deferred decision that needs to be resolved before the dependent spike runs, not during.
+- 5h added to Phase 0 (S8 + S9). But since 1h was saved on M3.2 and the alternative was finding the problem in production, this is a rounding error.
+- Some agent work to throw away (the `SimpleEnergyVAD.swift`, the `--measure-noise-floor` flag, parts of the README). Lesson re-stated: architecture decisions should be locked before agent code, not adjusted after.
+
+### Lesson for the prompt template
+Session 002 added "verification-first prompts." Session 004 suggests another rule: **Before generating an agent prompt for any module that depends on a sensor, signal source, or environmental input, the architect must explicitly answer: 'How does this work when the user changes [environment / device / context]?' If the answer is unclear, run a spike to resolve it before the dependent module's prompt.**
+
+Will add to `00_COLLABORATION_INSTRUCTIONS.md` in next session.
+
+---
+
+## Session 003 — 2026-05-01 — Project Identifier Renamed to TalkCoach
+
+**Format:** Naming decision during environment setup, no code written.
+
+### What changed
+- GitHub repo: `talk_coach`
+- Local folder: `/Users/antonglance/coding/talk_coach`
+- Xcode product / target / scheme / bundle base / app class: **`TalkCoach`** (was `SpeechCoach` in earlier docs)
+
+### What did NOT change
+- The user-facing product name "Speech Coach" (with space) — that's the marketing name and remains
+- Anything in product spec, architecture decisions, or backlog content beyond identifier strings
+
+### Why
+User chose `talk_coach` for the repo name and `TalkCoach` for Xcode product to align identifiers with the GitHub URL. Updated all 14 technical references across 5 docs (collaboration instructions, architecture, backlog, CLAUDE.md, example prompt). Search confirms zero remaining `SpeechCoach` references.
+
+### Where we left off
+- Phase A of Xcode setup complete: Xcode 26.4.1, macOS 26.4.1, SwiftLint 0.63.2, Apple Silicon, dev account presumed signed in
+- Empty GitHub repo created, awaiting Phase B (folder structure + git init + docs in place)
+- Next: Phase B walk-through customized for actual paths
+
+---
+
 ## Session 002 — 2026-05-01 — Collaboration Instructions Revised + CLAUDE.md Added
 
 **Format:** Best-practices research, no code written.

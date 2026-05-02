@@ -10,14 +10,16 @@
 
 | ID | Spike | Status | Estimate |
 |---|---|---|---|
-| S6 | WPM ground truth on real EN/RU recordings | 📋 | 4h |
+| S6 | WPM ground truth on real EN/RU recordings (Approach D, no energy VAD) | 🔬 in progress | 4h |
 | S7 | Power & CPU profiling during 1hr session | 📋 | 4h |
 | S3 | Russian transcription quality on `SpeechAnalyzer` | 📋 | 4h |
 | S4 | Mic coexistence with Zoom voice processing | 📋 | 3h |
 | S2 | Language auto-detect mechanism (constrained by S7) | 📋 | 6h |
+| S8 | Token-arrival robustness across mics & environments | 📋 | 3h |
+| S9 | Adaptive RMS noise-floor for shouting detection | 📋 | 2h |
 | S1 | Identifying activating app for blocklist | 📋 | 3h |
 
-**Phase 0 total: ~24h.** Run spikes in priority order. Stop if any P0 spike (S6, S7, S3, S4) reveals a fundamental problem — re-plan instead of pushing through.
+**Phase 0 total: ~29h.** Run spikes in priority order. Stop if any P0 spike (S6, S7, S3, S4) reveals a fundamental problem — re-plan instead of pushing through.
 
 Detailed spike specs in `05_SPIKES.md`.
 
@@ -30,7 +32,7 @@ Goal: a runnable menu bar app with no real functionality, but all the structural
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
 | M1.1 | Xcode project setup, entitlements, Info.plist, code signing | 📋 | 2h | — |
-| M1.2 | App lifecycle: `SpeechCoachApp`, `LSUIElement`, `MenuBarExtra` skeleton | 📋 | 2h | M1.1 |
+| M1.2 | App lifecycle: `TalkCoachApp`, `LSUIElement`, `MenuBarExtra` skeleton | 📋 | 2h | M1.1 |
 | M1.3 | Empty `StatsWindow` opening from menu bar | 📋 | 1h | M1.2 |
 | M1.4 | `Settings` (UserDefaults wrapper) skeleton | 📋 | 1h | M1.2 |
 | M1.5 | SwiftData `Session` schema + empty `SessionStore` | 📋 | 3h | M1.1 |
@@ -58,7 +60,7 @@ Goal: the app knows when the mic turns on, shows an empty placeholder widget, kn
 
 **Phase 2 total: ~20h.**
 
-**End-of-phase checkpoint:** Open Zoom → widget appears in chosen position → close Zoom → widget fades out → `~/Library/Application Support/SpeechCoach/` shows a session record with timestamps.
+**End-of-phase checkpoint:** Open Zoom → widget appears in chosen position → close Zoom → widget fades out → `~/Library/Application Support/TalkCoach/` shows a session record with timestamps.
 
 ---
 
@@ -69,7 +71,7 @@ Goal: while a session is active, audio is being captured, transcribed in the rig
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
 | M3.1 | `AudioPipeline`: AVAudioEngine setup, voice-processing-OFF, raw input tap | 📋 | 4h | S4 (passed) |
-| M3.2 | VAD on audio buffers (energy-based or `SoundAnalysis`) | 📋 | 3h | M3.1 |
+| M3.2 | `SpeakingActivityTracker`: derive speaking duration from `SpeechAnalyzer` token timestamps | 📋 | 2h | M3.5, S6/S8 (passed) |
 | M3.3 | RMS calculation on audio buffers | 📋 | 1h | M3.1 |
 | M3.4 | `LanguageDetector` (mechanism per Spike #2) | 📋 | 6–10h | S2 (passed) |
 | M3.5 | `SpeechEngine`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | 📋 | 5h | S3 (passed), M3.4 |
@@ -89,12 +91,12 @@ Goal: tokens + VAD + RMS turn into meaningful real-time metrics.
 
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
-| M4.1 | `WPMCalculator`: sliding window, VAD-aware, EMA smoothing | 📋 | 4h | S6 (passed), M3.7, M3.2 |
+| M4.1 | `WPMCalculator`: sliding window, token-arrival speaking duration, EMA smoothing | 📋 | 4h | S6 (passed), M3.7, M3.2 |
 | M4.2 | `FillerDetector`: seeded dictionaries (EN/RU/ES), match logic | 📋 | 4h | M3.7 |
 | M4.3 | Filler dictionary editor in settings (per language) | 📋 | 3h | M4.2 |
 | M4.4 | `RepeatedPhraseDetector`: n-gram window | 📋 | 3h | M3.7 |
-| M4.5 | `ShoutingDetector`: RMS threshold + sustained-time logic | 📋 | 2h | M3.3 |
-| M4.6 | `SpeakingDurationTracker` for `effectiveSpeakingDuration` | 📋 | 1h | M3.2 |
+| M4.5 | `ShoutingDetector`: adaptive noise-floor (10th percentile rolling window) + threshold | 📋 | 3h | M3.3, S9 (passed) |
+| M4.6 | `EffectiveSpeakingDuration`: accumulate from `SpeakingActivityTracker` | 📋 | 1h | M3.2 |
 | M4.7 | Final session aggregation at session end | 📋 | 2h | M4.1–M4.6 |
 
 **Phase 4 total: ~19h.**

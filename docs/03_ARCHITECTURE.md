@@ -8,7 +8,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  SpeechCoachApp (LSUIElement = true, .accessory)             │
+│  TalkCoachApp (LSUIElement = true, .accessory)             │
 │                                                              │
 │  ┌──────────────┐    ┌───────────────────────────────────┐   │
 │  │ MenuBarUI    │    │  CoreServices (singletons)        │   │
@@ -90,20 +90,24 @@
 ---
 
 ### 3. `AudioPipeline`
-**Job:** Capture mic audio and provide both raw buffers (for `SpeechEngine`) and derived signals (VAD + RMS for `Analyzer`).
+**Job:** Capture mic audio and provide raw buffers (for `SpeechEngine`) plus RMS samples (for `ShoutingDetector`).
 
 **Implementation:**
 - `AVAudioEngine` with `inputNode` tap
 - **Voice Processing IO disabled** (`isVoiceProcessingEnabled = false`) — avoids fighting Zoom's echo cancellation
 - Tap callback delivers buffers to a fan-out:
   - → `SpeechEngine` (forwarded to `SpeechAnalyzer`)
-  - → VAD (simple energy-based or Apple's `SoundAnalysis` `SNClassifySoundRequest` for speech presence)
-  - → RMS calculation (for shouting detection)
+  - → RMS calculation (~10×/sec, fed to `ShoutingDetector` for adaptive noise-floor tracking)
 
 **Outputs:**
 - Audio buffers (for `SpeechEngine`)
-- `isSpeaking: Bool` events (for VAD-aware WPM math)
-- `currentRMS: Float` (for shouting detection, ~10x/sec)
+- `currentRMS: Float` samples (~10×/sec, for `ShoutingDetector`)
+
+**Design note (locked Session 004):**
+The previous design included a standalone VAD module (energy-based or `SoundAnalysis`-based) feeding `isSpeaking` events to the WPM calculator. This was replaced by deriving speaking activity from `SpeechAnalyzer` token arrival timestamps directly (see `SpeakingActivityTracker` in the `Analyzer` module). Reasons:
+1. `SpeechAnalyzer` already does ML-based speech/non-speech classification internally — energy VAD would be redundant and weaker
+2. Energy VAD requires noise-floor calibration, which fails when mic AGC adjusts during silence and breaks across environments/mics (FM3 violation)
+3. Removing one entire module reduces CPU, removes a setup step, and removes a class of bugs
 
 ---
 
@@ -146,10 +150,18 @@ The "two transcribers in parallel" approach (Option A) is **disqualified** by po
 
 **Sub-components:**
 
+#### `SpeakingActivityTracker`
+- Consumes the `SpeechEngine` token stream
+- Maintains a record of `[(tokenStart, tokenEnd)]` time intervals from `.audioTimeRange` attributes
+- Provides `speakingDuration(in window: TimeRange) -> TimeInterval` — sum of token interval lengths intersected with the window
+- Provides `isCurrentlySpeaking(asOf timestamp:) -> Bool` — true if any token's end time is within `tokenSilenceTimeout` (default 1.5s) of the query time
+- This replaces the old standalone VAD module. No audio energy involvement.
+
 #### `WPMCalculator`
 - Maintains a sliding window of (token timestamp, word count) pairs
 - Window length: 5–8 seconds (final value tuned in Spike #6)
-- Excludes silence: when VAD reports not-speaking, time doesn't accumulate in denominator
+- **Speaking duration source:** `SpeakingActivityTracker.speakingDuration(in:)` — i.e., `SpeechAnalyzer`'s implicit speech/non-speech classification, not energy VAD
+- When `speakingDuration` is 0 in the window, return last smoothed value (hold-on-disagreement, prevents jitter)
 - Smooths with EMA (alpha ~0.3) to prevent jitter
 - Emits short-window WPM and running session average
 
@@ -166,12 +178,14 @@ The "two transcribers in parallel" approach (Option A) is **disqualified** by po
 - Increments counts per session
 
 #### `ShoutingDetector`
-- Subscribes to `AudioPipeline.currentRMS`
-- Threshold-based (configurable, default ~-12dBFS sustained 0.5s+)
+- Subscribes to `AudioPipeline.currentRMS` samples
+- **Adaptive noise-floor tracking:** maintains a rolling 5-second buffer of recent RMS samples; current noise floor = 10th percentile of buffer
+- Shouting threshold: `noiseFloor + threshold_dB` (default `threshold_dB = 25.0`, sustained for 0.5s+)
+- This replaces fixed-dBFS thresholding; works in any environment without calibration
 - Emits a "shouting event" with timestamp
 
-#### `SpeakingDurationTracker`
-- Accumulates time-while-speaking for `effectiveSpeakingDuration` field
+#### `EffectiveSpeakingDuration`
+- Accumulates `SpeakingActivityTracker.speakingDuration` over the entire session for the `effectiveSpeakingDuration` field in `Session`
 
 **Outputs:** Updates to widget view model (rate-limited to every 3s for the WPM display, immediate for filler/shouting events) and final `Session` aggregate at session end.
 
@@ -182,7 +196,7 @@ The "two transcribers in parallel" approach (Option A) is **disqualified** by po
 
 **Implementation:**
 - SwiftData (macOS 14+ → in our case macOS 26)
-- Single-store local file in `~/Library/Application Support/SpeechCoach/`
+- Single-store local file in `~/Library/Application Support/TalkCoach/`
 - Schema as defined in `02_PRODUCT_SPEC.md`
 - Provides queries: `sessionsByDateRange`, `fillerTrendByLanguage`, `wpmTrendByDateRange`
 
@@ -277,12 +291,16 @@ SessionCoordinator: blocklist check → not blocked → start session
      │         ├──► SpeechEngine: init SpeechAnalyzer(locale: ru-RU), start streaming
      │         │         │
      │         │         ▼
-     │         │    Token stream with timestamps
+     │         │    Token stream with timestamps (.audioTimeRange)
+     │         │         │
+     │         │         ▼
+     │         │    SpeakingActivityTracker: derives speaking duration
      │         │
-     │         └──► VAD + RMS streams
+     │         └──► RMS samples (~10×/sec) → ShoutingDetector
+     │                                      (adaptive noise-floor from 5s rolling buffer)
      │
      ▼
-Analyzer: consumes tokens + VAD + RMS
+Analyzer: consumes tokens + speaking duration + RMS
      │
      ├──► WPMCalculator → wpmShort, wpmAvg
      ├──► FillerDetector → fillerCounts
