@@ -21,6 +21,11 @@ struct WPMSpikeCLI {
             return
         }
 
+        if args.contains("--measure-noise-floor") {
+            try measureNoiseFloor(args: args)
+            return
+        }
+
         let audioPath = args[1]
         let vadThreshold = parseVADThreshold(from: args)
 
@@ -132,6 +137,7 @@ struct WPMSpikeCLI {
     private static func printUsage() {
         let usage = """
             USAGE: WPMSpikeCLI <audio-file-path> [--vad-threshold <dBFS>]
+                   WPMSpikeCLI --measure-noise-floor <silence-file-path>
 
             Reads a .wav/.caf audio file and its sidecar .json metadata.
             Processes through SpeechAnalyzer to extract timestamped words.
@@ -139,8 +145,9 @@ struct WPMSpikeCLI {
             Outputs CSV to stdout.
 
             OPTIONS:
-              --vad-threshold <dBFS>   VAD threshold in dBFS (default: -40.0)
-              --help, -h               Show this help message
+              --vad-threshold <dBFS>          VAD threshold in dBFS (default: -40.0)
+              --measure-noise-floor <file>    Measure silence RMS, print recommended threshold
+              --help, -h                      Show this help message
 
             SIDECAR JSON FORMAT:
               Same base name as audio file. Fields:
@@ -167,9 +174,35 @@ struct WPMSpikeCLI {
         }
         return value
     }
+
+    // MARK: - Noise Floor
+
+    private static func measureNoiseFloor(args: [String]) throws {
+        guard let flagIdx = args.firstIndex(of: "--measure-noise-floor"),
+              flagIdx + 1 < args.count else {
+            fputs("Error: --measure-noise-floor requires an audio file path\n", stderr)
+            throw ExitError.missingArgument
+        }
+
+        let audioPath = args[flagIdx + 1]
+        let audioURL = URL(fileURLWithPath: audioPath)
+
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            fputs("Error: Audio file not found: \(audioPath)\n", stderr)
+            throw ExitError.fileNotFound
+        }
+
+        let rmsLinear = try NoiseFloorMeasurer.measureRMS(audioFileURL: audioURL)
+        let rmsDBFS = 20.0 * log10(Double(max(rmsLinear, 1e-10)))
+        let recommended = rmsDBFS + 6.0
+
+        print(String(format: "Silence RMS:                  %.1f dBFS", rmsDBFS))
+        print(String(format: "Recommended --vad-threshold:  %.1f dBFS", recommended))
+    }
 }
 
 enum ExitError: Error {
     case fileNotFound
     case sidecarNotFound
+    case missingArgument
 }
