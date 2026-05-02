@@ -1,0 +1,16 @@
+clip,filler,expected,recognized,rate
+ru_normal,ну,4,4,1.00
+ru_normal,это,5,5,1.00
+ru_normal,как бы,0,0,0.00
+ru_normal,типа,1,1,1.00
+ru_normal,короче,1,1,1.00
+ru_fast,ну,5,3,0.60
+ru_fast,это,6,6,1.00
+ru_fast,как бы,0,0,0.00
+ru_fast,типа,1,1,1.00
+ru_fast,короче,1,1,1.00
+ru_slow,ну,2,2,1.00
+ru_slow,это,3,3,1.00
+ru_slow,как бы,0,0,0.00
+ru_slow,типа,1,1,1.00
+ru_slow,короче,0,0,0.00

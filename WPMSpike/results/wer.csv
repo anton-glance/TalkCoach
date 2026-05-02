@@ -1,0 +1,4 @@
+clip,wer,ref_words,sub,ins,del
+ru_normal,0.116,164,8,2,9
+ru_fast,0.268,190,24,6,21
+ru_slow,0.108,120,7,2,4

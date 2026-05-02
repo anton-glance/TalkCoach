@@ -16,6 +16,11 @@ struct WPMSpikeCLI {
     static func main() async throws {
         let args = CommandLine.arguments
 
+        if args.contains("--diagnose") {
+            await Diagnostics.run()
+            return
+        }
+
         if args.contains("--help") || args.contains("-h") || args.count < 2 {
             printUsage()
             return
