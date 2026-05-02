@@ -12,10 +12,10 @@ struct WPMCalculatorTests {
         over duration: TimeInterval
     ) -> [TimestampedWord] {
         let interval = duration / Double(count)
-        return (0..<count).map { i in
-            let start = Double(i) * interval
+        return (0..<count).map { index in
+            let start = Double(index) * interval
             return TimestampedWord(
-                word: "word\(i)",
+                word: "word\(index)",
                 startTime: start,
                 endTime: start + interval * 0.8
             )
@@ -25,34 +25,30 @@ struct WPMCalculatorTests {
     // MARK: - Tests
 
     @Test func evenlySpacedWords_yieldsExpectedWPM() {
-        // 60 words evenly over 30s = 2 words/sec = 120 WPM
-        // VAD: all speaking (empty array = assume all speaking)
-        // Window 8s, alpha 0.3. Sample at t=25s (well past warm-up).
+        // 60 words over 30s = 0.5s intervals, 0.4s token duration.
+        // Token-derived speaking duration in [17,25] window = 24.9 - 17.0 = 7.9s
+        // (all 0.1s inter-token gaps bridged by 1.5s timeout).
+        // 16 words / 7.9s * 60 = ~121.5 WPM.
         let words = makeEvenlySpacedWords(count: 60, over: 30.0)
         var calc = WPMCalculator(windowSize: 8.0, emaAlpha: 0.3)
-        for w in words { calc.addWord(w) }
+        for word in words { calc.addWord(word) }
 
         let sample = calc.wpm(at: 25.0)
         #expect(
-            sample.smoothedWPM > 118.8 && sample.smoothedWPM < 121.2,
-            "Expected 120 WPM ± 1%, got \(sample.smoothedWPM)"
+            sample.smoothedWPM > 120.3 && sample.smoothedWPM < 122.7,
+            "Expected ~121.5 WPM ± 1%, got \(sample.smoothedWPM)"
         )
     }
 
-    @Test func silenceAtEnd_VADExcludesItFromDenominator() {
-        // 60 words in first 10s (6 words/sec = 360 WPM).
-        // VAD: speaking 0–10s, silent 10–30s.
-        // Window 5s, alpha 0.3. Sample at t=9s.
-        // Expect ~360 WPM (±5%), NOT ~120.
+    @Test func silenceAtEnd_tokenGapsReduceSpeakingDuration() {
+        // 60 words in first 10s (6 words/sec = 360 WPM speaking rate).
+        // No words in 10–30s. Token-derived: speaking only in [0, 10s].
+        // Window 5s at t=9s covers [4, 9]. Tokens densely cover this range.
+        // Speaking duration ≈ 5s. ~30 words in window → ~360 WPM.
         let words = makeEvenlySpacedWords(count: 60, over: 10.0)
-        let vadEvents = [
-            VADEvent(timestamp: 0.0, isSpeaking: true),
-            VADEvent(timestamp: 10.0, isSpeaking: false),
-        ]
 
         var calc = WPMCalculator(windowSize: 5.0, emaAlpha: 0.3)
-        for v in vadEvents { calc.addVADEvent(v) }
-        for w in words { calc.addWord(w) }
+        for word in words { calc.addWord(word) }
 
         let sample = calc.wpm(at: 9.0)
         #expect(
@@ -62,34 +58,27 @@ struct WPMCalculatorTests {
     }
 
     @Test func fourSecondPauseMidStream_doesNotCrashWPM() {
-        // ~120 WPM (2 words/sec) for 10s, 4s silence (10–14s), ~120 WPM for 10s (14–24s).
-        // VAD: speaking 0–10s, silent 10–14s, speaking 14–24s.
+        // ~120 WPM (2 words/sec) for 10s, 4s gap (10–14s), ~120 WPM for 10s (14–24s).
+        // 4s gap > tokenSilenceTimeout (1.5s) → not bridged.
         // Window 8s, alpha 0.3.
         var words: [TimestampedWord] = []
-        // First segment: 20 words over 10s
-        for i in 0..<20 {
-            let start = Double(i) * 0.5
-            words.append(TimestampedWord(word: "a\(i)", startTime: start, endTime: start + 0.4))
+        for index in 0..<20 {
+            let start = Double(index) * 0.5
+            words.append(TimestampedWord(
+                word: "a\(index)", startTime: start, endTime: start + 0.4
+            ))
         }
-        // Second segment: 20 words over 10s starting at 14s
-        for i in 0..<20 {
-            let start = 14.0 + Double(i) * 0.5
-            words.append(TimestampedWord(word: "b\(i)", startTime: start, endTime: start + 0.4))
+        for index in 0..<20 {
+            let start = 14.0 + Double(index) * 0.5
+            words.append(TimestampedWord(
+                word: "b\(index)", startTime: start, endTime: start + 0.4
+            ))
         }
-
-        let vadEvents = [
-            VADEvent(timestamp: 0.0, isSpeaking: true),
-            VADEvent(timestamp: 10.0, isSpeaking: false),
-            VADEvent(timestamp: 14.0, isSpeaking: true),
-        ]
 
         var calc = WPMCalculator(windowSize: 8.0, emaAlpha: 0.3)
-        for v in vadEvents { calc.addVADEvent(v) }
-        for w in words { calc.addWord(w) }
+        for word in words { calc.addWord(word) }
 
-        // Pre-pause WPM at t=9s
         let prePause = calc.wpm(at: 9.0)
-        // Mid-pause WPM at t=12s
         let midPause = calc.wpm(at: 12.0)
 
         #expect(
@@ -104,35 +93,37 @@ struct WPMCalculatorTests {
 
     @Test func graduallyIncreasingRate_WPMTrendsUp() {
         // Words at gradually increasing rate: 1/sec at start, ~3/sec by 30s.
-        // VAD: all speaking (empty). Window 5s, alpha 0.3.
-        // Sample every 5s from t=10s. Each sample >= previous.
+        // Token-derived speaking duration. Window 5s, alpha 0.3.
+        // Sample every 1s from t=10s. Each sample >= previous.
         var words: [TimestampedWord] = []
-        var t = 0.0
-        while t < 30.0 {
-            let rate = 1.0 + (t / 30.0) * 2.0 // 1 word/sec → 3 words/sec
+        var currentTime = 0.0
+        while currentTime < 30.0 {
+            let rate = 1.0 + (currentTime / 30.0) * 2.0
             let interval = 1.0 / rate
-            words.append(TimestampedWord(word: "w", startTime: t, endTime: t + interval * 0.8))
-            t += interval
+            words.append(TimestampedWord(
+                word: "w",
+                startTime: currentTime,
+                endTime: currentTime + interval * 0.8
+            ))
+            currentTime += interval
         }
 
         let samples = WPMCalculator(windowSize: 5.0, emaAlpha: 0.3)
-            .processAll(words: words, vadEvents: [], sampleInterval: 1.0)
+            .processAll(words: words, sampleInterval: 1.0)
 
-        // Check samples from t=10s onward are monotonically increasing
         let relevantSamples = samples.filter { $0.timestamp >= 10.0 }
-        for i in 1..<relevantSamples.count {
+        for index in 1..<relevantSamples.count {
             #expect(
-                relevantSamples[i].smoothedWPM >= relevantSamples[i - 1].smoothedWPM,
-                "WPM not monotonically increasing at t=\(relevantSamples[i].timestamp): \(relevantSamples[i].smoothedWPM) < \(relevantSamples[i - 1].smoothedWPM)"
+                relevantSamples[index].smoothedWPM >= relevantSamples[index - 1].smoothedWPM,
+                "WPM not monotonically increasing at t=\(relevantSamples[index].timestamp)"
             )
         }
     }
 
     @Test func emptyTokenStream_returnsZeroNotCrash() {
-        // No words, no VAD events. processAll returns empty or all-zero.
-        // No crash, no NaN, no infinity.
+        // No words. processAll returns empty or all-zero.
         let samples = WPMCalculator(windowSize: 8.0, emaAlpha: 0.3)
-            .processAll(words: [], vadEvents: [], sampleInterval: 3.0)
+            .processAll(words: [], sampleInterval: 3.0)
 
         for sample in samples {
             #expect(!sample.smoothedWPM.isNaN, "WPM must not be NaN")
