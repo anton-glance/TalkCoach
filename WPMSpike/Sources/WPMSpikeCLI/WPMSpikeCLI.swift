@@ -77,6 +77,11 @@ struct WPMSpikeCLI {
         groundTruth: GroundTruth,
         tokenSilenceTimeout: TimeInterval
     ) {
+        let speakingDur = computeSpeakingDuration(
+            words: result.words,
+            tokenSilenceTimeout: tokenSilenceTimeout
+        )
+
         for windowSize in windowSizes {
             for alpha in alphas {
                 let calc = WPMCalculator(
@@ -90,14 +95,13 @@ struct WPMSpikeCLI {
                 )
                 printCSVRow(
                     groundTruth: groundTruth,
-                    windowSize: windowSize,
-                    alpha: alpha,
-                    tokenSilenceTimeout: tokenSilenceTimeout,
                     samples: samples,
-                    wordsRecognized: result.words.count,
-                    totalSpeakingDuration: computeSpeakingDuration(
-                        words: result.words,
-                        tokenSilenceTimeout: tokenSilenceTimeout
+                    config: CSVRowConfig(
+                        windowSize: windowSize,
+                        alpha: alpha,
+                        tokenSilenceTimeout: tokenSilenceTimeout,
+                        wordsRecognized: result.words.count,
+                        totalSpeakingDuration: speakingDur
                     )
                 )
             }
@@ -121,14 +125,18 @@ struct WPMSpikeCLI {
         return 0
     }
 
+    private struct CSVRowConfig {
+        let windowSize: TimeInterval
+        let alpha: Double
+        let tokenSilenceTimeout: TimeInterval
+        let wordsRecognized: Int
+        let totalSpeakingDuration: TimeInterval
+    }
+
     private static func printCSVRow(
         groundTruth: GroundTruth,
-        windowSize: TimeInterval,
-        alpha: Double,
-        tokenSilenceTimeout: TimeInterval,
         samples: [WPMSample],
-        wordsRecognized: Int,
-        totalSpeakingDuration: TimeInterval
+        config: CSVRowConfig
     ) {
         let avgWPM: Double = samples.isEmpty
             ? 0
@@ -146,14 +154,14 @@ struct WPMSpikeCLI {
             String(format: "%.1f", gtWPM),
             "\(groundTruth.totalWords)",
             String(format: "%.1f", groundTruth.durationSeconds),
-            String(format: "%.0f", windowSize),
-            String(format: "%.1f", alpha),
-            String(format: "%.1f", tokenSilenceTimeout),
+            String(format: "%.0f", config.windowSize),
+            String(format: "%.1f", config.alpha),
+            String(format: "%.1f", config.tokenSilenceTimeout),
             String(format: "%.1f", avgWPM),
             String(format: "%.1f", peakWPM),
             String(format: "%.1f", errorPct),
-            "\(wordsRecognized)",
-            String(format: "%.1f", totalSpeakingDuration)
+            "\(config.wordsRecognized)",
+            String(format: "%.1f", config.totalSpeakingDuration)
         ].joined(separator: ",")
 
         print(row)

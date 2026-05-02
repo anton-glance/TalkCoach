@@ -2,18 +2,7 @@
 
 Record the following clips AFTER verifying the harness builds and the algorithm tests pass with synthetic data.
 
-### Step 0 — Calibrate VAD threshold
-
-Record a 10-second silence clip with the same mic you'll use for speech clips. Sit in the same room, same conditions — just don't speak.
-
-    QuickTime Player > File > New Audio Recording > Record 10s of silence > Save as silence.caf
-
-Then run the calibration command:
-
-    cd WPMSpike
-    swift run WPMSpikeCLI --measure-noise-floor recordings/silence.caf
-
-This prints a recommended `--vad-threshold` value (the silence RMS + 6 dB margin). Use that value with `--vad-threshold` when processing your speech clips. No sidecar JSON is needed for the silence clip.
+No calibration is required. The harness derives speaking duration from `SpeechAnalyzer` token timestamps directly.
 
 ### What to record
 
@@ -45,7 +34,7 @@ QuickTime Player > File > New Audio Recording > Record for ~60s > Save as .caf
 
 For each clip, create a sidecar .json file with the same base name. Count words manually from a transcript.
 
-**Important:** `groundTruthWPM` must be calculated against **speaking duration** (excluding the deliberate pause), not wall-clock `durationSeconds`. Otherwise you'd compare wall-clock ground truth against VAD-aware harness WPM, which is apples-to-oranges.
+**Important:** `groundTruthWPM` must be calculated against **speaking duration** (excluding the deliberate pause), not wall-clock `durationSeconds`. Otherwise you'd compare wall-clock ground truth against token-derived harness WPM, which is apples-to-oranges.
 
 - For clips **without** a pause: `groundTruthWPM = totalWords / (durationSeconds / 60)`
 - For clips **with** a 4-second pause: `groundTruthWPM = totalWords / ((durationSeconds - 4) / 60)`
@@ -87,23 +76,27 @@ Example (en_fast.json — continuous clip, no pause):
 ### Running the harness
 
     cd WPMSpike
-    swift run WPMSpikeCLI recordings/en_normal.caf --vad-threshold <your-threshold>
+    swift run WPMSpikeCLI recordings/en_normal.caf
 
 Output is CSV to stdout. Redirect to a file for analysis:
 
-    swift run WPMSpikeCLI recordings/en_normal.caf --vad-threshold -35.0 > results/en_normal.csv
+    swift run WPMSpikeCLI recordings/en_normal.caf > results/en_normal.csv
+
+To adjust the token silence timeout (default 1.5s):
+
+    swift run WPMSpikeCLI recordings/en_normal.caf --token-silence-timeout 2.0
 
 ### Processing all clips at once
 
 After recording and creating JSON sidecars for all 6 clips, run:
 
-    ./recordings/process_all.sh <vad-threshold>
-
-For example:
-
-    ./recordings/process_all.sh -35.0
+    ./recordings/process_all.sh
 
 This produces `results/combined.csv` with one header row followed by all data rows from all clips. Paste this file back to the architect for analysis.
+
+To use a custom token silence timeout:
+
+    TOKEN_SILENCE_TIMEOUT=2.0 ./recordings/process_all.sh
 
 ### What to look for in results
 
