@@ -10,16 +10,17 @@
 
 | ID | Spike | Status | Estimate |
 |---|---|---|---|
-| S6 | WPM ground truth on real EN/RU recordings (Approach D, no energy VAD) | 🔬 in progress | 4h |
-| S7 | Power & CPU profiling during 1hr session | 📋 | 4h |
-| S3 | Russian transcription quality on `SpeechAnalyzer` | 📋 | 4h |
-| S4 | Mic coexistence with Zoom voice processing | 📋 | 3h |
-| S2 | Language auto-detect mechanism (constrained by S7) | 📋 | 6h |
-| S8 | Token-arrival robustness across mics & environments | 📋 | 3h |
-| S9 | Adaptive RMS noise-floor for shouting detection | 📋 | 2h |
-| S1 | Identifying activating app for blocklist | 📋 | 3h |
+| S6 | WPM ground truth on real EN/RU recordings (Approach D) | 🔬 EN passed Session 005; RU pending S10 | 4h |
+| S10 | Parakeet (NVIDIA) feasibility on macOS 26 / Apple Silicon | 📋 P0 | 8–12h |
+| S7 | Power & CPU profiling: Architecture Y (Apple + Parakeet) | 📋 P0 | 6h |
+| S4 | Mic coexistence with Zoom voice processing | 📋 P0 | 3h |
+| S2 | Language auto-detect mechanism (constrained by S7) | 📋 P1 | 6h |
+| S8 | Token-arrival robustness across mics & environments | 📋 P1 | 3h |
+| S9 | Adaptive RMS noise-floor for shouting detection | 📋 P2 | 2h |
+| S1 | Identifying activating app for blocklist | 📋 P2 | 3h |
+| S3 | ~~Russian transcription quality on `SpeechAnalyzer`~~ | ❌ superseded by S10 | — |
 
-**Phase 0 total: ~29h.** Run spikes in priority order. Stop if any P0 spike (S6, S7, S3, S4) reveals a fundamental problem — re-plan instead of pushing through.
+**Phase 0 total: ~35–39h.** Run spikes in priority order. S10 gates Architecture Y — if Parakeet doesn't work on macOS 26, the architecture changes meaningfully.
 
 Detailed spike specs in `05_SPIKES.md`.
 
@@ -64,24 +65,26 @@ Goal: the app knows when the mic turns on, shows an empty placeholder widget, kn
 
 ---
 
-## Phase 3 — Audio pipeline & speech engine
+## Phase 3 — Audio pipeline & transcription engine
 
-Goal: while a session is active, audio is being captured, transcribed in the right language, and tokens are flowing.
+Goal: while a session is active, audio is being captured, transcribed in the right language via the right backend, and tokens are flowing.
 
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
 | M3.1 | `AudioPipeline`: AVAudioEngine setup, voice-processing-OFF, raw input tap | 📋 | 4h | S4 (passed) |
-| M3.2 | `SpeakingActivityTracker`: derive speaking duration from `SpeechAnalyzer` token timestamps | 📋 | 2h | M3.5, S6/S8 (passed) |
+| M3.2 | `SpeakingActivityTracker`: derive speaking duration from token timestamps | 📋 | 2h | M3.5, S6/S8 (passed) |
 | M3.3 | RMS calculation on audio buffers | 📋 | 1h | M3.1 |
 | M3.4 | `LanguageDetector` (mechanism per Spike #2) | 📋 | 6–10h | S2 (passed) |
-| M3.5 | `SpeechEngine`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | 📋 | 5h | S3 (passed), M3.4 |
-| M3.6 | `AssetInventory` model download flow with widget toast | 📋 | 3h | M3.5 |
-| M3.7 | Token stream wiring: audio → engine → token output | 📋 | 3h | M3.1, M3.5 |
-| M3.8 | Mid-session language re-detection / swap (if Spike #2 mechanism supports it) | 📋 | 3h | M3.4, M3.5 |
+| M3.5 | `TranscriptionEngine` routing layer: locale → backend selection, unified token stream output | 📋 | 4h | M3.5a, M3.5b, M3.4 |
+| M3.5a | `AppleTranscriberBackend`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | 📋 | 4h | M3.4 |
+| M3.5b | `ParakeetTranscriberBackend`: Core ML model load, inference loop, timestamp normalization | 📋 | 8–12h | S10 (passed) |
+| M3.6 | Model download flow with widget toast — Apple `AssetInventory` + Parakeet CDN fetch | 📋 | 4h | M3.5a, M3.5b |
+| M3.7 | Token stream wiring: audio → engine → unified token output | 📋 | 3h | M3.1, M3.5 |
+| M3.8 | Mid-session language re-detection / swap (if Spike #2 mechanism supports it) | 📋 | 4h | M3.4, M3.5 |
 
-**Phase 3 total: ~28–32h.**
+**Phase 3 total: ~40–48h.** Architecture Y added M3.5a, M3.5b, increased M3.5 routing complexity, and lengthened M3.6 (two download paths).
 
-**End-of-phase checkpoint:** Speak into mic during a session → console logs show timestamped tokens streaming in correct language → first-time RU/ES use shows toast and downloads model silently.
+**End-of-phase checkpoint:** Speak English → Apple backend transcribes; speak Russian → Parakeet backend transcribes; first-time Russian shows toast and downloads model. Token streams from both backends look identical to downstream consumers.
 
 ---
 
@@ -172,21 +175,23 @@ Goal: take the working app to public-release quality.
 
 | Phase | Goal | Estimate |
 |---|---|---|
-| 0 | Spikes | 24h |
+| 0 | Spikes (incl. S10 Parakeet) | 35–39h |
 | 1 | Foundation | 11h |
 | 2 | Mic detection + session lifecycle | 20h |
-| 3 | Audio pipeline + speech engine | 28–32h |
+| 3 | Audio pipeline + transcription engine (Architecture Y) | 40–48h |
 | 4 | Analyzer | 19h |
 | 5 | Widget UI | 22h |
 | 6 | Stats window | 16h |
 | 7 | Polish & ship | 29h |
-| **Total** | **v1 complete** | **~169–173h focused effort** |
+| **Total** | **v1 complete** | **~192–204h focused effort** |
+
+Architecture Y (Session 006) added ~22–31h: Parakeet feasibility spike (S10), expanded Spike #7, plus the second transcription backend (M3.5b) and routing layer.
 
 Multiplier for "macOS new to user" learning curve: ~1.3–1.5×. Realistic calendar:
 
-- **At 8h/week (hobby pace):** 5–6 months
-- **At 20h/week (serious side project):** 9–11 weeks
-- **At 40h/week (full-time):** 5–6 weeks
+- **At 8h/week (hobby pace):** 6–7 months
+- **At 20h/week (serious side project):** 11–13 weeks
+- **At 40h/week (full-time):** 6–7 weeks
 
 This is **not a 1–2 week sprint**. The right reframe per Session 001 is "module by module, decide pace later."
 
@@ -194,7 +199,7 @@ This is **not a 1–2 week sprint**. The right reframe per Session 001 is "modul
 
 ## Recommended order of attack
 
-1. Run all Phase 0 spikes (P0 first: S6, S7, S3, S4)
+1. Run all Phase 0 spikes (P0 first: S10 → S7 → S4 → S6 RU leg, in that order — S10 gates Architecture Y, S7 validates power envelope only after Parakeet feasibility is known)
 2. If P0 spikes pass, build Phases 1 → 2 → 3 in order (each unlocks the next)
 3. Phase 4 can begin as soon as Phase 3 produces token streams
 4. Phase 5 begins after Phase 4's session aggregation is stable (working on Phase 5 with broken metrics is a waste — you can't tune visual feedback for inputs you can't trust)

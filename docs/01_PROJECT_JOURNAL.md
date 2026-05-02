@@ -4,6 +4,144 @@
 
 ---
 
+## Session 006 — 2026-05-02 — Architecture Pivot Y: Apple + Parakeet, Russian via Core ML
+
+**Format:** Architecture decision triggered by Spike #6 incidentally discovering Russian is not on macOS 26.4.1's `SpeechTranscriber.supportedLocales`.
+
+### What happened
+Began the session running Spike #6 (WPM ground truth). English: 3 clips processed cleanly across all (window, alpha) combinations. Russian: failed with `SFSpeechErrorDomain Code=1 "transcription.ru asset unavailable"`.
+
+After ruling out network, VPN, signing, disk space, the agent's diagnostic discovered the actual cause: `SpeechTranscriber.supportedLocales` on macOS 26.4.1 contains 27 locales, none of them Russian. `AssetInventory.status` returns `.unsupported` for `ru_RU`. The `supportedLocale(equivalentTo: Locale("ru"))` API misleadingly returns `ru_RU` even though it's not in the supported set — the locale is "reservation-only" with no model deliverable.
+
+### Root cause vs assumption
+Session 001 chose `SpeechAnalyzer` over legacy `SFSpeechRecognizer` because the user had real-world Russian failures on iOS with the legacy framework. We assumed `SpeechAnalyzer` had Russian. It does not on macOS 26.4.1. We have less Russian coverage than we started with.
+
+This is exactly the failure that Phase 0 spikes are meant to catch — but Spike #3 was scheduled too late (after #6, #7, #4, #2). It should have been Phase 0 step 1 alongside checking `SpeechTranscriber.supportedLocales` for the explicit set of v1 languages. Lesson: when the architecture depends on a specific platform locale being supported, verify the *list* of supported locales before any other spike.
+
+### Decision: Architecture Y
+Apple `SpeechAnalyzer` for the 27 locales it actually supports (English, Spanish, French, German, etc.), NVIDIA Parakeet via Core ML for Russian. The user has prior production experience running Parakeet in real time on iOS in a translation app — strong signal it's feasible.
+
+Considered and rejected:
+- **Path A — drop Russian from v1:** user is bilingual EN/RU; Russian meetings are weekly; would gut the product's value for them
+- **Path X — Parakeet for everything:** wastes Apple's free, OS-integrated path for English; bloats the install with a 600 MB model that adds nothing for English-only users; FM4 (no performance impact) likely violated for English sessions
+- **Path C — wait for Apple to add Russian:** indefinite, blocks v1
+
+### Scope impact
+
+**Added:**
+- New **Spike #10** — Parakeet feasibility on macOS 26 / Apple Silicon (8–12h). Validates: working Core ML port exists, real-time factor <0.5, Russian WER acceptable, **word-level timestamps** (load-bearing assumption for `SpeakingActivityTracker` from Session 004), cold-start <30s.
+- New **`ParakeetTranscriberBackend`** module (M3.5b, 8–12h).
+- New routing layer **`TranscriptionEngine`** (replaces `SpeechEngine`; M3.5, 4h).
+- Network entitlement flips to `network.client = true` — required for Parakeet model download from CDN. Documented network policy in architecture doc: download only, no telemetry, no transcripts, audio never leaves the device.
+
+**Revised:**
+- **Spike #7** scope expanded — now validates Architecture Y power envelope specifically. Two-phase: Apple path baseline (Phase A), Parakeet path under load (Phase B), backend-switching cost (Phase C). Estimate 4h → 6h.
+- **Spike #3** marked superseded by Spike #10 in `05_SPIKES.md` rather than left pending. Phantom tasks in the backlog cause confusion later.
+- **`02_PRODUCT_SPEC.md`** Languages section rewritten: explicit Apple-vs-Parakeet split per locale; Russian first-use download is ~600 MB one-time with toast (vs ~150 MB for Apple locales).
+- **`03_ARCHITECTURE.md`** `SpeechEngine` renamed `TranscriptionEngine` with two backends (`AppleTranscriberBackend`, `ParakeetTranscriberBackend`) and a routing layer. Network entitlement changed. Threading model adds Parakeet inference Task. Data-flow diagram updated to show routing.
+- **`04_BACKLOG.md`** Phase 0 totals: 29h → 35–39h. Phase 3 totals: 28–32h → 40–48h. Project total: 169–173h → 192–204h.
+
+### Critical assumption to validate (Spike #10 Phase D)
+Session 004's `SpeakingActivityTracker` requires word-level timestamps. If Parakeet's Core ML port emits only phrase-level timestamps (one range per ~5-word phrase), the WPM math degrades for Russian — speaking-duration intersections become coarse, `tokenSilenceTimeout` gap-bridging is meaningless. Spike #10 explicitly tests this with intra-phrase pauses and quotes the result. Fallback plan: proportional estimation within phrases (N words over T seconds → each word `T/N` duration centered in the phrase). Documented in `TranscriptionEngine` caveats.
+
+### Where we left off
+- Session 005 closed Spike #6 English: ✅ provisional production constants — window=6, alpha=0.3, tokenSilenceTimeout=1.5 — pending Russian re-validation
+- Russian WPM data not yet collected — blocked on Spike #10
+- Recommended next session: generate Spike #10 prompt, agent investigates Parakeet Core ML, reports back. After Spike #10 passes, re-run WPM harness with Russian routed through Parakeet to close Spike #6 RU leg.
+
+### Ups
+- User caught the platform-locale gap before Phase 1 started — i.e., before any production code was committed. Cost so far: a few hours of misdirected harness runs. Cost if discovered after M3.5 was implemented: a major refactor.
+- User had real-world prior experience with Parakeet (mobile, translation app). Anchored the architectural decision instead of speculation.
+- Architecture Y is cleaner than alternatives despite adding a backend. The interface (`TranscriptionEngine` emits unified `(token, startTime, endTime, isFinal)` tuples regardless of backend) keeps downstream code unchanged. `SpeakingActivityTracker`, `WPMCalculator`, `FillerDetector` etc. don't care which backend produced the tokens.
+
+### Downs
+- Phase 0 spikes were not ordered to surface platform availability first. Spike #3 should have been "verify Apple supports each v1 locale" as a P0 prerequisite instead of "verify quality" as a P0 followup. Lesson: the *availability* check is upstream of the *quality* check; sequence matters.
+- The Session 001 framework decision (`SpeechAnalyzer` over `SFSpeechRecognizer`) was made on the strength of "verified to support `ru_RU`" — that verification was based on `supportedLocale(equivalentTo:)` returning a non-nil value, which we now know is misleading. We need a hard rule: when validating platform availability, check the explicit list (`supportedLocales`), never the lookup helper (`supportedLocale(equivalentTo:)`).
+- ~22–31h added to v1 effort. Real cost. The product is much stronger for it (Russian works), but the calendar slips by 2–3 weeks at 20h/week pace.
+- Network entitlement flipping from `false` to `true` is real — every privacy-conscious user reading the app's entitlements will notice. Mitigation: tight network policy, documented; UI never presents network-related options; consider adding a "network used only for first-run model downloads" disclosure in settings.
+
+### Lesson for the prompt template (carryover from Session 004)
+Session 004 added: "Before generating an agent prompt for any module that depends on a sensor, signal source, or environmental input, the architect must explicitly answer: 'How does this work when the user changes [environment / device / context]?'"
+
+Session 006 adds: **Before locking any architectural decision that depends on a platform capability (a specific framework, locale, codec, API), the architect must verify the capability is actually present on the target OS version, by checking the explicit enumeration (e.g., `supportedLocales`, `availableEncoders`, etc.) — not the convenience lookup that may misleadingly succeed.** Add to `00_COLLABORATION_INSTRUCTIONS.md` next session.
+
+### Files updated this session
+- `02_PRODUCT_SPEC.md` — Languages at launch section rewritten for Architecture Y
+- `03_ARCHITECTURE.md` — `SpeechEngine` → `TranscriptionEngine` with two backends; entitlements; threading; data-flow diagram; open questions table
+- `04_BACKLOG.md` — Phase 0 spike list, Phase 3 module table, summary totals, recommended order
+- `05_SPIKES.md` — Spike #3 marked superseded; Spike #7 revised for Architecture Y; Spike #10 added
+- `01_PROJECT_JOURNAL.md` — this entry
+
+### Next session
+- Generate Spike #10 (Parakeet feasibility) prompt for Claude Code
+- Agent runs Phase 1 inventory (does a Core ML port exist? how do we get one?), then implementation, then validation
+- After Spike #10 closes ✅ or ❌, replan from there
+
+---
+
+## Session 005 — 2026-05-02 — Spike #6 harness rewritten to Approach D
+
+**Format:** Claude Code agent execution, fully verified.
+
+### What was done
+Rewrote WPMSpike Swift Package to match the Session 004 architecture pivot. Energy-based VAD removed entirely; speaking duration now derived from `SpeechAnalyzer` token-arrival timestamps via a new `SpeakingActivityTracker` type.
+
+### Commits
+- `b88a274` — refactor: remove energy VAD and calibration step
+- `ebb85cd` — test: add SpeakingActivityTracker tests (red phase)
+- `8bf9c27` — test: adapt WPMCalculator tests to token-derived speaking duration
+- `d025c45` — implementation (all green)
+
+### Files removed
+- `Sources/WPMSpikeCLI/SimpleEnergyVAD.swift`
+- `Sources/WPMSpikeCLI/NoiseFloorMeasurer.swift`
+- `VADEvent` struct from `Models.swift`
+- `--measure-noise-floor` and `--vad-threshold` CLI flags
+- "Step 0 — Calibrate VAD threshold" section of `recordings/README.md`
+- `<vad-threshold>` argument from `recordings/process_all.sh`
+- `updateSessionAccumulators()`, `totalWords` accumulator, and stored `totalSpeakingDuration` from `WPMCalculator` (single source of truth now lives in the tracker)
+
+### Files added
+- `Sources/WPMCalculatorLib/SpeakingActivityTracker.swift` — `speakingDuration(in:)` via clip-then-merge with `tokenSilenceTimeout` gap-bridging; `isCurrentlySpeaking(asOf:)` via `[startTime, endTime + tokenSilenceTimeout]` containment check
+- `Tests/WPMCalculatorTests/SpeakingActivityTrackerTests.swift` — 6 tests covering empty tokens, full containment, partial containment with clipping, gap-bridging at different timeouts, and `isCurrentlySpeaking` recent/old cases
+- `TimeRange` struct in `Models.swift`
+
+### CLI / CSV changes
+- New flag: `--token-silence-timeout <seconds>` (default 1.5)
+- New CSV columns: `token_silence_timeout_s` (column 9, between alpha and recognized columns), `total_speaking_duration_s` (column 14, appended at end)
+- `process_all.sh` now takes no positional arguments; `TOKEN_SILENCE_TIMEOUT` env var optional
+
+### Test count
+14 total: 5 `WPMCalculatorTests` + 3 `EMASmoothingTests` + 6 `SpeakingActivityTrackerTests`. All green on `d025c45`.
+
+### Test 1 expected value derivation
+The Risk 1 mitigation from the planning round: instead of widening tolerance, recomputed `evenlySpacedWords_yieldsExpectedWPM`'s expected WPM under token-derived speaking duration. 60 words over 30s, 0.5s spacing, 0.4s token duration (0.1s gaps, all bridged < 1.5s timeout). Window 8s at t=25 → tokens 34–49 in window (16 words), speaking duration 17.0 → 24.9 = 7.9s. Raw WPM = 16/7.9 × 60 = 121.5. Tolerance kept at ±1%.
+
+### Sub-agent verdict
+Read `03_ARCHITECTURE.md` `SpeakingActivityTracker` section + the implementation file fresh. Reported no discrepancies. Specifically validated: clip-then-merge order (prevents cross-window gap-bridging), `isCurrentlySpeaking` semantics (timestamp inside `[startTime, endTime + timeout]`), edge cases (empty tokens, window before/after all tokens, single-token clip), Sendable conformance, default timeout value.
+
+### Where we left off
+- Spike #6 harness ready for real recordings
+- No audio recorded yet — that's the next step
+- After recording: run harness, sweep `(window, alpha, tokenSilenceTimeout)`, tabulate error %, lock production constants
+- Spike #6 still in 🔬 in-progress status (harness done, validation against ground truth not started)
+
+### Ups
+- Agent executed cleanly. No mid-flight scope creep. Reported deviations honestly (none in this case).
+- The "test count by suite" plan-time inventory caught a miscount in the prompt's acceptance criterion — the criterion said "8 original tests" but the actual count is 5 + 3. The agent reported the truth instead of fudging to match the prompt. Good signal.
+- Sub-agent review caught nothing because the implementation matched the spec, not because the sub-agent was lazy — its report named specific properties it verified.
+- TDD discipline held: failing tests committed before implementation; implementation didn't touch test files.
+
+### Downs
+- The acceptance criterion said "all original 8 tests" when the actual count was 5 + 3. Lesson for future prompts: when the prompt's acceptance criterion contains a count, sample size, or other hard number, require Phase 1 inventory to verify the number before approval. The Spike #6 redo prompt did this for "current test count" — and the agent caught it. Make this a permanent rule.
+
+### Next session
+- User records 6 audio clips per revised Spike #6 method
+- User runs harness, generates CSV outputs across the parameter sweep
+- Claude analyzes CSV, decides whether pass criteria are met, locks production constants
+
+---
+
 ## Session 004 — 2026-05-02 — Architecture Pivot: Token-Arrival Speaking Duration (Approach D + A)
 
 **Format:** Architecture decision triggered by user concern during Spike #6 recording prep.

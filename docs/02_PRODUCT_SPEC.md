@@ -53,7 +53,8 @@ First launch must be ≤2 user actions.
 - No dedicated onboarding screen
 - Permissions requested at point of use
 - English model pre-bundled (or silent-downloaded with no UI)
-- Russian/Spanish models silent-download on first detected use
+- Russian via Parakeet backend silent-downloads on first detected Russian session — ~600 MB one-time, widget shows "Preparing Russian model…" toast (Architecture Y, Session 006)
+- Spanish via Apple backend silent-downloads on first detected Spanish session
 - Sensible defaults for everything (WPM band, widget position, filler dictionary)
 
 ### FM4 — No performance impact
@@ -97,7 +98,7 @@ Invisible cost during 1hr Zoom calls on battery.
 - Auto-detect per session (mechanism TBD via Spike #2)
 - Manual override always one click away in menu bar
 - Models download silently on first use of each language
-- Initial set: en-US, ru-RU, es-ES (more locales available via `SpeechTranscriber.supportedLocales`)
+- Initial set: en-US (Apple backend), ru-RU (Parakeet backend), es-ES (Apple backend). Backend routing is automatic per locale — see Architecture Y in `03_ARCHITECTURE.md`.
 
 ### Session storage (local only, metrics-only schema)
 ```
@@ -157,11 +158,18 @@ All settings are accessible but no setting is required to start using the app.
 
 ## Languages at launch
 
-- **en-US** — primary, model pre-bundled or silent-downloaded
-- **ru-RU** — silent download on first Russian session
-- **es-ES, es-MX, es-US** — silent download on first Spanish session (which Spanish locale auto-detected from speech or system locale)
+Architecture Y (Session 006) routes each locale to the right backend:
 
-Other locales available later via `SpeechTranscriber.supportedLocales` — out of scope for v1 polish.
+**Apple `SpeechAnalyzer` path** (cheap, OS-integrated, ~free per session):
+- **en-US** — primary, silent-downloaded by `AssetInventory` on first session
+- **es-ES / es-MX / es-US** — silent download on first Spanish session (specific locale auto-detected)
+
+**Parakeet (Core ML) path** (Apple-unsupported locales; one-time CDN download of ~600 MB on first use):
+- **ru-RU** — Russian transcription via `ParakeetTranscriberBackend` because `SpeechTranscriber.supportedLocales` does not include Russian on macOS 26.4.1 (discovered Session 006). First Russian session triggers a one-time model download with widget toast "Preparing Russian model…"
+
+The user-visible behavior is identical regardless of backend — both show a "Preparing [language] model…" toast on first use, both stream tokens through the same downstream pipeline, both produce the same metrics. The backend split is invisible to the user except for the larger one-time download for Russian.
+
+Other locales (other Parakeet-supported European languages, additional Apple-supported locales) are not v1 priorities. Adding a new locale post-launch is a config change once the routing layer is in place.
 
 ---
 

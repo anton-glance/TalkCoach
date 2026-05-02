@@ -57,86 +57,98 @@ FM2 (unreliable data) is a hard failure mode. If WPM math is off by 15%+, the us
 
 ---
 
-## Spike #7 — Power & CPU profiling during 1hr session
+## Spike #7 — Power & CPU profiling during 1hr session (Architecture Y)
 
-**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 4h
+**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 6h (was 4h before Parakeet was added to scope)
 
 ### Question
-Will running `SpeechAnalyzer` + `AVAudioEngine` + VAD + RMS continuously for 1 hour stay under our resource budget on Apple Silicon, on battery?
+Does Architecture Y (Apple `SpeechAnalyzer` for supported locales, NVIDIA Parakeet via Core ML for unsupported locales like Russian) stay under the resource budget for a 1hr session on Apple Silicon, on battery?
+
+This is a two-part question because the two backends have categorically different resource profiles:
+- Apple `SpeechAnalyzer` is OS-integrated and effectively free — measured separately to confirm.
+- Parakeet (0.6B params Core ML) is materially more expensive and must be measured under sustained load.
+
+### Why this scope changed (Session 006)
+Originally this spike asked "can `SpeechAnalyzer` + `AVAudioEngine` run for 1hr within budget?" — a single-stack question. After Session 006's pivot to Architecture Y, we now have two stacks and the budget question is different: **can we afford to run Parakeet at all on consumer Apple Silicon during a typical Zoom call?**
+
+The architecture's load-bearing assumption is that Apple handles English (cheap), Parakeet handles Russian and ES-on-Apple-fallback (expensive but only when needed). If Parakeet's cost is so high that running it in real-time during a Zoom call is infeasible, Architecture Y is dead and we need to reopen scope.
 
 ### Why it matters
-FM4 (no performance impact) is a uninstall-trigger. If a 1hr Zoom call drains battery 20% more with this app running, the user kills it.
+FM4 (no performance impact). If a Russian session drains battery 20%+ more than an English session, the user notices and disables the app for Russian meetings — meaning the multilingual story collapses functionally even if the recognition technically works.
 
-### Budget
-- <5% sustained CPU on M-series during active session
-- <150MB RSS memory
-- No measurable mic dropouts in Zoom (manual A/B test)
-- Battery drain delta <2% per hour vs control (Zoom alone)
+### Budget (per backend, per active session)
+
+**Apple `SpeechAnalyzer` path (English, Spanish, etc.):**
+- <5% sustained CPU on M-series
+- <150 MB RSS memory
+- Energy Impact: "low" in Activity Monitor
+- No measurable mic dropouts in Zoom
+
+**Parakeet path (Russian, future locales):**
+- <15% sustained CPU on M-series (3× the Apple budget; Parakeet is doing real work)
+- <800 MB RSS memory (model weights + activation buffers; depends on quantization tier)
+- Energy Impact: "high" acceptable but not "extreme"
+- No mic dropouts; Parakeet's GPU/ANE usage must not starve other apps
+- Battery drain delta <5% per hour vs control (vs <2% for Apple path)
+
+If Parakeet exceeds these, Architecture Y fails and we either:
+1. Drop Russian from v1 (revisit Path A from Session 006)
+2. Find a smaller/cheaper Russian-capable model
+3. Accept that Russian sessions warn the user about battery cost
 
 ### Method
-1. Build a minimal harness: `AVAudioEngine` with input tap → `SpeechAnalyzer` (English) → discard tokens. Add VAD + RMS computation.
-2. Run a 1hr loop playing English audio (or speaking) into the mic.
-3. Measure with Xcode's Instruments:
-   - **Time Profiler** — CPU usage breakdown
-   - **Allocations / Leaks** — memory growth
-   - **Energy Log** — power impact rating
-4. Run Zoom alongside for the second half of the test. Compare both readings.
-5. Run a control: Zoom alone, no harness, for 1hr. Diff.
+
+**Phase A — Apple `SpeechAnalyzer` path (English baseline):**
+1. Build minimal harness: `AVAudioEngine` input tap → `SpeechAnalyzer` (en_US) → discard tokens. Add RMS computation.
+2. Run a 1hr English audio loop into the mic.
+3. Measure with Instruments: Time Profiler (CPU), Allocations/Leaks (memory), Energy Log (power).
+4. Run Zoom alongside for the second 30 minutes. Compare.
+5. Control: Zoom alone, 1hr, no harness.
+
+**Phase B — Parakeet path (Russian load):**
+1. Extend the harness to route Russian audio through Parakeet (whichever quantization tier Spike #10 selected).
+2. Run a 1hr Russian audio loop.
+3. Same Instruments measurements as Phase A.
+4. Run Zoom alongside for the second 30 minutes. Compare.
+5. Control: Zoom alone (already from Phase A).
+
+**Phase C — Backend switching cost:**
+1. Run a 1hr loop alternating between English (5 min) and Russian (5 min) chunks.
+2. Measure transition cost: model load time, memory churn, any audio dropouts at the swap.
+3. Validates that real-world bilingual users (the primary persona) don't pay a tax every time language detection swaps.
 
 ### Pass criteria
-- Sustained CPU within budget
-- No memory growth over time (stable RSS after warmup)
-- Energy Impact rating "low" or better in Activity Monitor
-- Zoom audio quality unchanged in A/B test
+- Apple path within Apple budget
+- Parakeet path within Parakeet budget
+- Switching cost: <500 ms gap in token output across language swap, no Zoom audio degradation, no memory ratchet (memory returns to baseline within 30s of swap)
+- Both backends combined Energy Impact rating <"high" averaged over the alternating-languages run
 
 ### Fail mode → action
-- **CPU too high:** investigate `SpeechAnalyzer` reporting options (do we need both `.volatileResults` and full results? what's the cost of `.audioTimeRange`?), VAD frequency
-- **Memory grows:** likely leak in token accumulation or audio buffer retention — fix at the source
-- **Zoom degrades:** Voice Processing IO conflict — verify our `isVoiceProcessingEnabled = false` is actually taking effect; may need different audio session configuration
+- **Parakeet CPU too high:** try smaller quantization (INT8 over FP16), reduced sample rate, or lower-tier Parakeet variant. Reopen with user.
+- **Parakeet memory pinning Russian-session users:** reduce model footprint or accept "Russian sessions use more battery" disclosure in settings.
+- **Switching cost too high:** keep both models loaded simultaneously (memory cost) or accept brief gaps (UX cost). Pick.
+- **Apple path degrades when Parakeet is loaded:** unlikely but possible (ANE/GPU contention). Investigate scheduling.
+- **Zoom degrades during Parakeet:** Parakeet is using shared compute resources. Investigate Core ML compute units (`.cpuOnly` vs `.cpuAndNeuralEngine`).
 
 ### Outputs
-- Energy Impact baseline numbers
-- Confirmed (or revised) settings for `SpeechAnalyzer` reporting/attribute options
-- Decision input for Spike #2 (how much budget remains for language detection)
+- Energy Impact numbers per backend
+- Confirmed `SpeechAnalyzer` reporting/attribute settings
+- Confirmed Parakeet quantization tier and Core ML compute unit selection (input from Spike #10)
+- Decision input for Spike #2 (how much language-detection budget is left after both transcription stacks)
+- Go/no-go on Architecture Y as a whole
 
 ---
 
 ## Spike #3 — Russian transcription quality on `SpeechAnalyzer`
 
-**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 4h
+**Status:** ❌ superseded by Spike #10 (Session 006)
 
-### Question
-Is `SpeechAnalyzer`'s Russian recognition good enough for our use case (counting words, detecting fillers)?
+### Why superseded
+Spike #6 incidentally discovered that `SpeechTranscriber.supportedLocales` on macOS 26.4.1 does not include `ru_RU`. Russian transcription via `SpeechAnalyzer` is not available on the platform — not a quality problem, an availability problem. `supportedLocale(equivalentTo:)` returns `ru_RU` misleadingly even though it is not in the supported set; `AssetInventory.status` returns `.unsupported`.
 
-### Why it matters
-The user's prior iOS experience showed `SFSpeechRecognizer` Russian was unusable. We've moved to `SpeechAnalyzer` (which is verified to support `ru_RU`) but quality has not been independently confirmed for our specific use case. If Russian quality is poor, the whole multilingual story collapses.
+The architecture decision in Session 006 adopts Architecture Y (Apple where Apple covers, Parakeet for the rest). Russian transcription quality validation moves to Spike #10, which validates the Parakeet Core ML port on macOS 26 / Apple Silicon.
 
-### Method
-1. Record (or source) ~10 minutes of real meeting-style Russian audio:
-   - Clear speaker, no background noise → ~3 min
-   - Realistic conditions (some background, normal speaker) → ~5 min
-   - Two speakers in the same room (your worst case) → ~2 min
-2. Transcribe via `SpeechAnalyzer` with `SpeechTranscriber(locale: ru_RU)`, `.audioTimeRange`, `.volatileResults`
-3. Manually transcribe ground truth
-4. Compute WER (Word Error Rate) per clip
-5. Specifically check: are the Russian filler words ("ну", "это", "как бы", "типа", "короче") being recognized correctly when spoken? (Filler counting is the most demanding test — fillers are short and often softly spoken.)
-
-### Pass criteria
-- WER <15% on clean speech
-- WER <25% on realistic speech
-- Russian fillers in our seed dictionary are recognized at least 70% of the time when spoken clearly
-- Word boundaries (timestamps) are reasonable (no 5-word chunks merged into single tokens)
-
-### Fail mode → action
-- **WER too high overall:** is `requiresOnDeviceRecognition` falling back to a worse model? Can we get a better model? Is the `ru_RU` model actually downloaded (`AssetInventory.installedLocales`)?
-- **Russian fillers specifically missed:** these are very short — try `addsPunctuation = true` (sometimes that improves segmentation), check if they're being elided as non-words
-- **Total fail (worse than iOS):** consider Whisper.cpp via Core ML as fallback for Russian only — significant scope expansion. Alternative: ship without Russian in v1, add later. Discuss with user.
-
-### Outputs
-- WER measurements per clip type
-- Confirmed model behavior on `ru_RU`
-- Filler-word recognition rates per Russian filler in seed dictionary
-- Go/no-go decision on Russian in v1
+This spike's outputs (WER bars, filler recognition rates, word-boundary expectations) carry forward to Spike #10's pass criteria with the recognizer swapped from `SpeechTranscriber(locale: ru_RU)` to Parakeet.
 
 ---
 
@@ -341,6 +353,88 @@ The shouting detector is the only audio-energy-based feature in the app (per Ses
 ### Outputs
 - Tuned constants for adaptive floor: rolling buffer length, percentile, threshold dB
 - These become production constants in `ShoutingDetector`
+
+---
+
+---
+
+## Spike #10 — Parakeet (NVIDIA) feasibility on macOS 26 / Apple Silicon
+
+**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 8–12h
+
+### Question
+Can NVIDIA Parakeet (multilingual, v3) run as a Core ML model on macOS 26 / Apple Silicon, in real time, with word-level timestamps, at acceptable quality for Russian transcription, within a power/memory budget compatible with Architecture Y?
+
+### Why it matters
+Architecture Y depends on Parakeet covering locales Apple does not (notably Russian — confirmed unsupported by `SpeechTranscriber` on macOS 26.4.1, Session 006). If Parakeet can't be made to work on macOS, Architecture Y collapses and we are back to Path A from Session 006 (drop Russian from v1) or a third option not yet identified.
+
+This spike was originally Spike #3 ("Russian quality on `SpeechAnalyzer`"). Spike #6 incidentally found Russian is not on the platform's supported locale list at all. The question is no longer "is Apple Russian good enough" but "is Parakeet feasible at all in our deployment context."
+
+### Variant selection
+- **Investigate v3 first** — `parakeet-tdt-0.6b-v3` is multilingual (25 European languages including Russian and Spanish). Serves Russian-now and future-language flexibility.
+- The user has used Parakeet in real-time on iOS in a translation app (variant unknown). v3 is the right default here unless v3 doesn't have a usable Core ML port and an earlier multilingual variant does.
+
+### Method
+
+**Phase A — Acquisition + conversion check (2–3h):**
+1. Investigate whether a Core ML conversion of `parakeet-tdt-0.6b-v3` already exists publicly (Hugging Face, NVIDIA NeMo Core ML exports, third-party ports). If yes, use it. If no, attempt conversion via `coremltools` from the NeMo PyTorch checkpoint. Document the conversion path and any pitfalls.
+2. Confirm at least one runnable Core ML model file exists at end of phase. If conversion fails completely, stop here and raise a blocker.
+
+**Phase B — Quantization tier comparison (2h):**
+1. Test two model tiers in this order:
+   - **INT8** (~600 MB): smaller download, lower memory, possibly lower quality
+   - **FP16** (~1.2 GB): higher quality, larger footprint
+2. For each tier, measure on the same test corpus:
+   - Cold-start time (model load → first token)
+   - Real-time factor (RTF = processing time / audio duration; <1.0 means real-time capable)
+   - Peak memory during inference
+   - Word Error Rate vs ground truth (see Phase C)
+3. Output a quality-vs-size tradeoff table. Architecture doc references the chosen tier's realistic size, not worst case.
+
+**Phase C — Russian quality validation (3–4h):**
+1. Reuse the Spike #6 Russian recordings (`ru_normal.caf`, `ru_fast.caf`, `ru_slow.caf`). Add ~5 minutes of more realistic Russian (some background noise, slightly varied register).
+2. Transcribe via Parakeet at the chosen quantization tier.
+3. Compute Word Error Rate vs the manual transcripts.
+4. Specifically check Russian fillers: «ну», «это», «как бы», «типа», «короче». These are short and softly spoken — the most demanding case.
+5. Pass criteria same as the original Spike #3: WER <15% clean, <25% realistic, fillers recognized ≥70% when spoken clearly.
+
+**Phase D — Word-level timestamp validation (1–2h):** ★ critical
+1. Confirm Parakeet's Core ML port emits **word-level** timestamps, not phrase-level.
+2. Why this matters: the Session 004 `SpeakingActivityTracker` architecture assumes word-level start/end times. If Parakeet only emits phrase-level segmentation (e.g., one timestamp range per 5-word phrase), the WPM math degrades for Russian — speaking-duration intersections become coarse and `tokenSilenceTimeout` gap-bridging is meaningless.
+3. Test method: process a Russian clip with 2–3 internal pauses of ~1.5s each (within a phrase). Inspect the emitted timestamps. Expected if word-level: 1 timestamp per word, gaps visible in the `[startTime, endTime]` series. Expected if phrase-level: 1 timestamp range per phrase, internal pauses invisible.
+4. If only phrase-level is available, design a fallback: proportional estimation within phrases (if a phrase is N words over T seconds, assign each word `T/N` duration centered in the phrase). Measure how much this degrades WPM accuracy vs the Spike #6 English baseline.
+
+**Phase E — Power & cold-start under realistic conditions (2h):**
+1. Run a 5-minute Russian session through Parakeet, measure with Instruments:
+   - Sustained CPU
+   - Peak GPU/ANE utilization
+   - Memory profile
+   - Energy Impact rating
+2. These are inputs to Spike #7's Architecture Y validation — not the final budget verdict, just the per-second profile.
+3. Specifically measure cold-start: how long from "user starts speaking Russian for the first time in the app's lifetime" to "first Russian token emitted." This is the user-facing latency of the M3.6 toast ("Preparing Russian model…").
+
+### Pass criteria
+- A working Core ML port of Parakeet v3 (or a justified alternate variant) exists and runs on macOS 26 / Apple Silicon
+- At chosen quantization tier: real-time factor <0.5 (i.e., 2× real-time, leaves headroom), peak memory <800 MB
+- Russian WER <15% on clean clips, <25% on realistic clips
+- Russian fillers recognized ≥70%
+- Word-level timestamps present (or fallback estimation degrades WPM accuracy by <5% vs English baseline)
+- Cold-start <30s on first session (acceptable for a "Preparing model…" toast)
+
+### Fail mode → action
+- **No working Core ML port and conversion fails:** investigate alternatives — Whisper.cpp Core ML (English+Russian), Whisper Distil, or accept Path A (drop Russian from v1)
+- **Real-time factor >1.0 (slower than real-time):** Parakeet can't keep up with live audio; would require buffering with growing latency. Probable kill for Architecture Y as-drafted. Try smaller tier; if still too slow, drop to Path A.
+- **Quality unacceptable:** test if a different multilingual model fits better (Whisper-medium Russian)
+- **Phrase-level timestamps only AND fallback estimation degrades WPM accuracy too much:** WPM math for Russian becomes a known limitation. Document, accept, move on — better to have inaccurate WPM than no Russian.
+- **Power profile clearly violates budget:** input to Spike #7 — may force "Russian sessions warn user about battery impact" UX.
+
+### Outputs
+- Working Parakeet Core ML pipeline (script or small library) usable as the basis for the production `TranscriptionEngine` non-Apple backend
+- Quality-vs-size tradeoff table (INT8 vs FP16)
+- Selected quantization tier with justification
+- Word-level vs phrase-level timestamp finding (and fallback design if needed)
+- Per-second power profile to feed into Spike #7
+- Documentation of the conversion path (so the production app can repeat it as part of build, or pin a conversion artifact)
 
 ---
 
