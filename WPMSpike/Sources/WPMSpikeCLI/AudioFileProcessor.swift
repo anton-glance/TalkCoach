@@ -21,7 +21,6 @@ struct GroundTruth: Codable, Sendable {
 struct ProcessingResult: Sendable {
     let groundTruth: GroundTruth
     let words: [TimestampedWord]
-    let vadEvents: [VADEvent]
     let audioDuration: TimeInterval
 }
 
@@ -34,8 +33,7 @@ enum AudioFileProcessor {
 
     static func process(
         audioFileURL: URL,
-        groundTruth: GroundTruth,
-        vadThreshold: Float
+        groundTruth: GroundTruth
     ) async throws -> ProcessingResult {
         let transcriber = try await makeTranscriber(
             language: groundTruth.language
@@ -53,19 +51,9 @@ enum AudioFileProcessor {
 
         let words = try await collectWords(from: transcriber)
 
-        let vadEvents = try SimpleEnergyVAD.analyze(
-            audioFileURL: audioFileURL,
-            thresholdDBFS: vadThreshold
-        )
-
-        if vadEvents.isEmpty {
-            logger.warning("VAD produced no events — all speaking assumed")
-        }
-
         return ProcessingResult(
             groundTruth: groundTruth,
             words: words,
-            vadEvents: vadEvents,
             audioDuration: audioDuration
         )
     }

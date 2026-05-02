@@ -21,13 +21,8 @@ struct WPMSpikeCLI {
             return
         }
 
-        if args.contains("--measure-noise-floor") {
-            try measureNoiseFloor(args: args)
-            return
-        }
-
         let audioPath = args[1]
-        let vadThreshold = parseVADThreshold(from: args)
+        let timeout = parseTokenSilenceTimeout(from: args)
 
         let audioURL = URL(fileURLWithPath: audioPath)
         let jsonExt = audioURL
@@ -52,14 +47,17 @@ struct WPMSpikeCLI {
 
         let result = try await AudioFileProcessor.process(
             audioFileURL: audioURL,
-            groundTruth: groundTruth,
-            vadThreshold: vadThreshold
+            groundTruth: groundTruth
         )
 
-        logger.info("Recognized \(result.words.count) words, \(result.vadEvents.count) VAD events")
+        logger.info("Recognized \(result.words.count) words")
 
         printCSVHeader()
-        printCSVRows(result: result, groundTruth: groundTruth)
+        printCSVRows(
+            result: result,
+            groundTruth: groundTruth,
+            tokenSilenceTimeout: timeout
+        )
     }
 
     // MARK: - Output
@@ -76,36 +74,61 @@ struct WPMSpikeCLI {
 
     private static func printCSVRows(
         result: ProcessingResult,
-        groundTruth: GroundTruth
+        groundTruth: GroundTruth,
+        tokenSilenceTimeout: TimeInterval
     ) {
         for windowSize in windowSizes {
             for alpha in alphas {
                 let calc = WPMCalculator(
                     windowSize: windowSize,
-                    emaAlpha: alpha
+                    emaAlpha: alpha,
+                    tokenSilenceTimeout: tokenSilenceTimeout
                 )
                 let samples = calc.processAll(
                     words: result.words,
-                    vadEvents: result.vadEvents,
                     sampleInterval: 3.0
                 )
                 printCSVRow(
                     groundTruth: groundTruth,
                     windowSize: windowSize,
                     alpha: alpha,
+                    tokenSilenceTimeout: tokenSilenceTimeout,
                     samples: samples,
-                    wordsRecognized: result.words.count
+                    wordsRecognized: result.words.count,
+                    totalSpeakingDuration: computeSpeakingDuration(
+                        words: result.words,
+                        tokenSilenceTimeout: tokenSilenceTimeout
+                    )
                 )
             }
         }
+    }
+
+    private static func computeSpeakingDuration(
+        words: [TimestampedWord],
+        tokenSilenceTimeout: TimeInterval
+    ) -> TimeInterval {
+        guard !words.isEmpty else { return 0 }
+        var tracker = SpeakingActivityTracker(
+            tokenSilenceTimeout: tokenSilenceTimeout
+        )
+        for word in words { tracker.addToken(word) }
+        if let maxEnd = words.map(\.endTime).max() {
+            return tracker.speakingDuration(
+                in: TimeRange(start: 0, end: maxEnd)
+            )
+        }
+        return 0
     }
 
     private static func printCSVRow(
         groundTruth: GroundTruth,
         windowSize: TimeInterval,
         alpha: Double,
+        tokenSilenceTimeout: TimeInterval,
         samples: [WPMSample],
-        wordsRecognized: Int
+        wordsRecognized: Int,
+        totalSpeakingDuration: TimeInterval
     ) {
         let avgWPM: Double = samples.isEmpty
             ? 0
@@ -125,10 +148,12 @@ struct WPMSpikeCLI {
             String(format: "%.1f", groundTruth.durationSeconds),
             String(format: "%.0f", windowSize),
             String(format: "%.1f", alpha),
+            String(format: "%.1f", tokenSilenceTimeout),
             String(format: "%.1f", avgWPM),
             String(format: "%.1f", peakWPM),
             String(format: "%.1f", errorPct),
-            "\(wordsRecognized)"
+            "\(wordsRecognized)",
+            String(format: "%.1f", totalSpeakingDuration)
         ].joined(separator: ",")
 
         print(row)
@@ -136,18 +161,19 @@ struct WPMSpikeCLI {
 
     private static func printUsage() {
         let usage = """
-            USAGE: WPMSpikeCLI <audio-file-path> [--vad-threshold <dBFS>]
-                   WPMSpikeCLI --measure-noise-floor <silence-file-path>
+            USAGE: WPMSpikeCLI <audio-file-path> [options]
 
             Reads a .wav/.caf audio file and its sidecar .json metadata.
             Processes through SpeechAnalyzer to extract timestamped words.
             Computes WPM using all (window-size, alpha) combinations.
             Outputs CSV to stdout.
 
+            No calibration is required. Speaking duration is derived from
+            SpeechAnalyzer token timestamps directly.
+
             OPTIONS:
-              --vad-threshold <dBFS>          VAD threshold in dBFS (default: -40.0)
-              --measure-noise-floor <file>    Measure silence RMS, print recommended threshold
-              --help, -h                      Show this help message
+              --token-silence-timeout <s>    Max gap between tokens treated as speech (default: 1.5)
+              --help, -h                     Show this help message
 
             SIDECAR JSON FORMAT:
               Same base name as audio file. Fields:
@@ -161,48 +187,26 @@ struct WPMSpikeCLI {
         let header = [
             "clip_name", "language", "pace", "gt_wpm",
             "gt_total_words", "duration_s", "window_s", "alpha",
-            "avg_wpm", "peak_wpm", "error_pct", "words_recognized"
+            "token_silence_timeout_s",
+            "avg_wpm", "peak_wpm", "error_pct",
+            "words_recognized", "total_speaking_duration_s"
         ].joined(separator: ",")
         print(header)
     }
 
-    private static func parseVADThreshold(from args: [String]) -> Float {
-        guard let idx = args.firstIndex(of: "--vad-threshold"),
+    private static func parseTokenSilenceTimeout(
+        from args: [String]
+    ) -> TimeInterval {
+        guard let idx = args.firstIndex(of: "--token-silence-timeout"),
               idx + 1 < args.count,
-              let value = Float(args[idx + 1]) else {
-            return -40.0
+              let value = Double(args[idx + 1]) else {
+            return 1.5
         }
         return value
-    }
-
-    // MARK: - Noise Floor
-
-    private static func measureNoiseFloor(args: [String]) throws {
-        guard let flagIdx = args.firstIndex(of: "--measure-noise-floor"),
-              flagIdx + 1 < args.count else {
-            fputs("Error: --measure-noise-floor requires an audio file path\n", stderr)
-            throw ExitError.missingArgument
-        }
-
-        let audioPath = args[flagIdx + 1]
-        let audioURL = URL(fileURLWithPath: audioPath)
-
-        guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            fputs("Error: Audio file not found: \(audioPath)\n", stderr)
-            throw ExitError.fileNotFound
-        }
-
-        let rmsLinear = try NoiseFloorMeasurer.measureRMS(audioFileURL: audioURL)
-        let rmsDBFS = 20.0 * log10(Double(max(rmsLinear, 1e-10)))
-        let recommended = rmsDBFS + 6.0
-
-        print(String(format: "Silence RMS:                  %.1f dBFS", rmsDBFS))
-        print(String(format: "Recommended --vad-threshold:  %.1f dBFS", recommended))
     }
 }
 
 enum ExitError: Error {
     case fileNotFound
     case sidecarNotFound
-    case missingArgument
 }

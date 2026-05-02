@@ -13,18 +13,14 @@ public struct TimestampedWord: Sendable {
     }
 }
 
-/// A voice activity detection transition event.
-///
-/// Uses a transition model: each event marks the moment speech starts or stops.
-/// The state holds until the next event. If the array is empty, the entire
-/// duration is assumed to be speaking.
-public struct VADEvent: Sendable {
-    public let timestamp: TimeInterval
-    public let isSpeaking: Bool
+/// A time interval defined by start and end points.
+public struct TimeRange: Sendable {
+    public let start: TimeInterval
+    public let end: TimeInterval
 
-    public init(timestamp: TimeInterval, isSpeaking: Bool) {
-        self.timestamp = timestamp
-        self.isSpeaking = isSpeaking
+    public init(start: TimeInterval, end: TimeInterval) {
+        self.start = start
+        self.end = end
     }
 }
 

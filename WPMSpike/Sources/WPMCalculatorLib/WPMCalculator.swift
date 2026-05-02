@@ -1,43 +1,48 @@
 import Foundation
 
-/// Sliding-window, VAD-aware words-per-minute calculator with EMA smoothing.
+/// Sliding-window, token-derived words-per-minute calculator with EMA smoothing.
 ///
-/// Uses a transition-based VAD model: each ``VADEvent`` marks when speech
-/// starts or stops. The state holds until the next event. An empty VAD array
-/// means the entire duration is assumed to be speaking.
+/// Speaking duration is derived from `SpeakingActivityTracker`, which uses
+/// `SpeechAnalyzer` token-arrival timestamps — no energy-based VAD involved.
 ///
-/// When `speakingDuration == 0` but `wordCount > 0` (VAD/Speech disagreement),
+/// When `speakingDuration == 0` but `wordCount > 0` (token timing disagreement),
 /// the calculator holds the last-known smoothed value to avoid jitter.
 public struct WPMCalculator: Sendable {
     private let windowSize: TimeInterval
     private let emaAlpha: Double
+    private let tokenSilenceTimeout: TimeInterval
     private var smoother: EMASmoother
     private var words: [TimestampedWord] = []
-    private var vadEvents: [VADEvent] = []
+    private var tracker: SpeakingActivityTracker
     private var lastSmoothedWPM: Double = 0
-    private var totalWords: Int = 0
-    private var totalSpeakingDuration: TimeInterval = 0
-    private var lastSampleTimestamp: TimeInterval = 0
 
-    public init(windowSize: TimeInterval, emaAlpha: Double) {
+    public init(
+        windowSize: TimeInterval,
+        emaAlpha: Double,
+        tokenSilenceTimeout: TimeInterval = 1.5
+    ) {
         self.windowSize = windowSize
         self.emaAlpha = emaAlpha
+        self.tokenSilenceTimeout = tokenSilenceTimeout
         self.smoother = EMASmoother(alpha: emaAlpha)
+        self.tracker = SpeakingActivityTracker(
+            tokenSilenceTimeout: tokenSilenceTimeout
+        )
     }
 
     public mutating func addWord(_ word: TimestampedWord) {
         words.append(word)
-    }
-
-    public mutating func addVADEvent(_ event: VADEvent) {
-        vadEvents.append(event)
+        tracker.addToken(word)
     }
 
     public mutating func wpm(at timestamp: TimeInterval) -> WPMSample {
         let windowStart = max(0, timestamp - windowSize)
+        let window = TimeRange(start: windowStart, end: timestamp)
 
-        let wordCount = words.count(where: { $0.startTime >= windowStart && $0.startTime < timestamp })
-        let speakingDuration = computeSpeakingDuration(from: windowStart, to: timestamp)
+        let wordCount = words.count(where: {
+            $0.startTime >= windowStart && $0.startTime < timestamp
+        })
+        let speakingDuration = tracker.speakingDuration(in: window)
 
         let rawWPM: Double
         if wordCount > 0 && speakingDuration <= 0 {
@@ -51,28 +56,44 @@ public struct WPMCalculator: Sendable {
         let smoothedWPM = smoother.smooth(rawWPM)
         lastSmoothedWPM = smoothedWPM
 
-        updateSessionAccumulators(from: lastSampleTimestamp, to: timestamp, wordCount: wordCount)
-        lastSampleTimestamp = timestamp
-
-        return WPMSample(timestamp: timestamp, rawWPM: rawWPM, smoothedWPM: smoothedWPM)
+        return WPMSample(
+            timestamp: timestamp,
+            rawWPM: rawWPM,
+            smoothedWPM: smoothedWPM
+        )
     }
 
+    /// Speaking duration over the full clip, derived from the tracker.
+    public var totalSpeakingDuration: TimeInterval {
+        if let maxEnd = words.map(\.endTime).max() {
+            return tracker.speakingDuration(
+                in: TimeRange(start: 0, end: maxEnd)
+            )
+        }
+        return 0
+    }
+
+    /// Session average WPM using tracker as single source of truth.
     public var sessionAverageWPM: Double {
-        guard totalSpeakingDuration > 0 else { return 0 }
-        return Double(totalWords) / totalSpeakingDuration * 60.0
+        guard !words.isEmpty else { return 0 }
+        let speaking = totalSpeakingDuration
+        guard speaking > 0 else { return 0 }
+        return Double(words.count) / speaking * 60.0
     }
 
     /// Batch convenience for spike/test usage. Default sampleInterval matches
     /// production widget update rate (3.0s per product spec).
     public func processAll(
         words: [TimestampedWord],
-        vadEvents: [VADEvent],
         sampleInterval: TimeInterval = 3.0
     ) -> [WPMSample] {
         guard !words.isEmpty else { return [] }
 
-        var calc = WPMCalculator(windowSize: windowSize, emaAlpha: emaAlpha)
-        for vadEvent in vadEvents { calc.addVADEvent(vadEvent) }
+        var calc = WPMCalculator(
+            windowSize: windowSize,
+            emaAlpha: emaAlpha,
+            tokenSilenceTimeout: tokenSilenceTimeout
+        )
         for word in words { calc.addWord(word) }
 
         let maxTime = words.map(\.endTime).max() ?? 0
@@ -83,53 +104,5 @@ public struct WPMCalculator: Sendable {
             sampleTime += sampleInterval
         }
         return samples
-    }
-
-    // MARK: - Private
-
-    private func computeSpeakingDuration(from start: TimeInterval, to end: TimeInterval) -> TimeInterval {
-        guard start < end else { return 0 }
-
-        if vadEvents.isEmpty {
-            return end - start
-        }
-
-        var speakingTime: TimeInterval = 0
-        var currentlySpeaking = vadEvents.first.map { $0.isSpeaking } ?? true
-        var segmentStart = start
-
-        for event in vadEvents {
-            if event.timestamp <= start {
-                currentlySpeaking = event.isSpeaking
-                segmentStart = start
-                continue
-            }
-
-            if event.timestamp >= end {
-                break
-            }
-
-            if currentlySpeaking {
-                speakingTime += event.timestamp - segmentStart
-            }
-            segmentStart = event.timestamp
-            currentlySpeaking = event.isSpeaking
-        }
-
-        if currentlySpeaking {
-            speakingTime += end - segmentStart
-        }
-
-        return speakingTime
-    }
-
-    private mutating func updateSessionAccumulators(
-        from previousTimestamp: TimeInterval,
-        to currentTimestamp: TimeInterval,
-        wordCount: Int
-    ) {
-        totalWords += wordCount
-        let speaking = computeSpeakingDuration(from: previousTimestamp, to: currentTimestamp)
-        totalSpeakingDuration += speaking
     }
 }
