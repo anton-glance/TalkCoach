@@ -1,0 +1,27 @@
+Word-Count Threshold Analysis
+=============================
+
+Pair: en+es
+  Correct-guess word counts: [17, 18, 19, 25, 28, 28, 35, 37]
+  Wrong-guess word counts:   [13, 16, 18, 18, 24, 30, 34, 35]
+  Optimal threshold: 17 words
+  Accuracy: 62.5%
+  TP=2 FP=0 TN=8 FN=6
+  Mean word-count ratio (correct/wrong): 1.1x
+
+Pair: en+ja
+  Correct-guess word counts: [1, 1, 1, 2, 25, 28, 35, 37]
+  Wrong-guess word counts:   [0, 0, 0, 0, 13, 14, 16, 20]
+  Optimal threshold: 1 words
+  Accuracy: 75.0%
+  TP=4 FP=0 TN=8 FN=4
+  Mean word-count ratio (correct/wrong): 2.3x
+
+Pair: en+ru
+  Correct-guess word counts: [-1, -1, -1, -1, 25, 28, 35, 37]
+  Wrong-guess word counts:   [-1, -1, -1, -1, 0, 0, 9, 12]
+  Optimal threshold: 13 words
+  Accuracy: 75.0%
+  TP=8 FP=4 TN=4 FN=0
+  Mean word-count ratio (correct/wrong): 7.6x
+

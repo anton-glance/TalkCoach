@@ -1,0 +1,49 @@
+clip,pair,ground_truth_lang,initialized_lang,guess_mode,partial_text,words_emitted_in_5s,detected_lang,confidence_correct,confidence_wrong,correct_detection,time_to_decision_s
+en_01.caf,en+ru,en,ru,wrong,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+en_02.caf,en+ru,en,ru,wrong,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+en_03.caf,en+ru,en,ru,wrong,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+en_04.caf,en+ru,en,ru,wrong,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+ru_01.caf,en+ru,ru,en,wrong,"You have podcasts, morgulansi, simbev. I didn't know summer.",9,en,0.0000,1.0000,false,0.477
+ru_02.caf,en+ru,ru,en,wrong,"",0,undetermined,0.0000,0.0000,false,0.095
+ru_03.caf,en+ru,ru,en,wrong,"",0,undetermined,0.0000,0.0000,false,0.091
+ru_04.caf,en+ru,ru,en,wrong,"Nice, easy, what name was by me, meet himself, novel, meet you.",12,en,0.0000,1.0000,false,0.170
+en_01.caf,en+ru,en,en,correct,"Did you know there is a secret part in all of Apple's newest products, and this isn't the first time they've done this before?  So, fun fact, in every single Apple, M3, and M4 product,",35,en,1.0000,0.0000,true,0.247
+en_02.caf,en+ru,en,en,correct,"This is having real world implications, right?  This is not just theoretical multi agent problems.  Gartner predicts 40% of agentic AI projects are going to be canceled by...",28,en,1.0000,0.0000,true,0.222
+en_03.caf,en+ru,en,en,correct,"If your happiness depends on the actions of others, you're at mercy of things that you can't control.  And that's never where I want to...",25,en,1.0000,0.0000,true,0.217
+en_04.caf,en+ru,en,en,correct,"I was the trophy wife from the get go.  It was very much, you know, he was doing well for himself.  He was an entrepreneur, so obviously, that was, like,  Well, of course, she's after the money.",37,en,1.0000,0.0000,true,0.226
+ru_01.caf,en+ru,ru,ru,correct,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+ru_02.caf,en+ru,ru,ru,correct,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+ru_03.caf,en+ru,ru,ru,correct,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+ru_04.caf,en+ru,ru,ru,correct,"UNSUPPORTED_LOCALE",-1,unsupported,0.0000,0.0000,false,0.000
+en_01.caf,en+ja,en,ja,wrong,"Did younow theres seretartn alf Aplesews proet and isn thirtimeveonseforeronfet in everythingle Apple M 3ndm4 product。",16,en,1.0000,0.0000,true,0.369
+en_02.caf,en+ja,en,ja,wrong,"Thisavingeloldpictinighe Thisotstedialotage probles Grner prodets 40セント of gentic AI projects areoing to becansle by。",14,en,1.0000,0.0000,true,0.169
+en_03.caf,en+ja,en,ja,wrong,"If you're happines depens on theアクションs of others youre atmercy of tings that you can't control. Andhat's never where In。",20,en,1.0000,0.0000,true,0.169
+en_04.caf,en+ja,en,ja,wrong,"Ias the trofie from the Get Go Iaserychonowes doing wel fomsnatiefors Shes theony.",13,en,1.0000,0.0000,true,0.140
+ja_01.caf,en+ja,ja,en,wrong,"",0,undetermined,0.0000,0.0000,false,0.088
+ja_02.caf,en+ja,ja,en,wrong,"",0,undetermined,0.0000,0.0000,false,0.085
+ja_03.caf,en+ja,ja,en,wrong,"",0,undetermined,0.0000,0.0000,false,0.088
+ja_04.caf,en+ja,ja,en,wrong,"",0,undetermined,0.0000,0.0000,false,0.093
+en_01.caf,en+ja,en,en,correct,"Did you know there is a secret part in all of Apple's newest products, and this isn't the first time they've done this before?  So, fun fact, in every single Apple, M3, and M4 product,",35,en,1.0000,0.0000,true,0.243
+en_02.caf,en+ja,en,en,correct,"This is having real world implications, right?  This is not just theoretical multi agent problems.  Gartner predicts 40% of agentic AI projects are going to be canceled by...",28,en,1.0000,0.0000,true,0.220
+en_03.caf,en+ja,en,en,correct,"If your happiness depends on the actions of others, you're at mercy of things that you can't control.  And that's never where I want to...",25,en,1.0000,0.0000,true,0.213
+en_04.caf,en+ja,en,en,correct,"I was the trophy wife from the get go.  It was very much, you know, he was doing well for himself.  He was an entrepreneur, so obviously, that was, like,  Well, of course, she's after the money.",37,en,1.0000,0.0000,true,0.224
+ja_01.caf,en+ja,ja,ja,correct,"秋の行楽シーズンを迎えた京都を取材すると、外国人観光客が殺到し、日本人離れが進んでいました。ホテル代も高騰し。",1,ja,1.0000,0.0000,true,0.142
+ja_02.caf,en+ja,ja,ja,correct,"中国では競争することを諦め、必要最小限の稼ぎで暮らすことを意味する寝そべりという言葉が流行しています。",1,ja,1.0000,0.0000,true,0.135
+ja_03.caf,en+ja,ja,ja,correct,"マルコス大統領ガリーエデリー大臣とそれぞれ会談を持たせていただきました。登場生を踏まえ、ここ。",1,ja,1.0000,0.0000,true,0.135
+ja_04.caf,en+ja,ja,ja,correct,"午後 2時です。この時間帯大槌町雨が降ってきました。雨足もだんだんと強まっています。火災発生後初めての雨だということです。",2,ja,1.0000,0.0000,true,0.146
+en_01.caf,en+es,en,es,wrong,"Did you know there is a secret part in all of Apple's news products, and thisn't the first time they've done this before? So fun fact, in every single Apple M3 and M4 product.",34,en,1.0000,0.0000,true,0.386
+en_02.caf,en+es,en,es,wrong,"This is having real world implication, Right? This is not just the erradical multity agt problems. Garartner prejects 40% of a gentic AI projects are going to be canceled by.",30,en,0.9999,0.0001,true,0.154
+en_03.caf,en+es,en,es,wrong,"If you're happiness depends on the actions of others, you're at mercy of things that you can't control. And that's never where I want.",24,en,0.9998,0.0002,true,0.135
+en_04.caf,en+es,en,es,wrong,"I was the trorufe- wife from to Getgo. It was very much. you know, he was doing well for himself. He's an unpenino, so obviously that was like, well, of course. she's uter the mark.",35,en,1.0000,0.0000,true,0.160
+es_01.caf,en+es,es,en,wrong,"Hola, hola, en esta serie, vamos, a caminar, y a aprender español.  Yo, voya hablar con otra person.",18,es,1.0000,0.0000,true,0.217
+es_02.caf,en+es,es,en,wrong,"Historias, es una de las mejores, formas, de mejorar tu español, porque cuando estas escuchano, unais.",16,es,1.0000,0.0000,true,0.271
+es_03.caf,en+es,es,en,wrong,"Plevas, siambien, me uno, podcast, mire nu maso, quiente namos a quiere macota.",13,es,1.0000,0.0000,true,0.236
+es_04.caf,en+es,es,en,wrong,"La familia.  La familia.  La familia es essential. es lo más. Pero yo diía que depende del paí.",18,es,1.0000,0.0000,true,0.212
+en_01.caf,en+es,en,en,correct,"Did you know there is a secret part in all of Apple's newest products, and this isn't the first time they've done this before?  So, fun fact, in every single Apple, M3, and M4 product,",35,en,1.0000,0.0000,true,0.242
+en_02.caf,en+es,en,en,correct,"This is having real world implications, right?  This is not just theoretical multi agent problems.  Gartner predicts 40% of agentic AI projects are going to be canceled by...",28,en,1.0000,0.0000,true,0.219
+en_03.caf,en+es,en,en,correct,"If your happiness depends on the actions of others, you're at mercy of things that you can't control.  And that's never where I want to...",25,en,0.9999,0.0001,true,0.209
+en_04.caf,en+es,en,en,correct,"I was the trophy wife from the get go.  It was very much, you know, he was doing well for himself.  He was an entrepreneur, so obviously, that was, like,  Well, of course, she's after the money.",37,en,1.0000,0.0000,true,0.221
+es_01.caf,en+es,es,es,correct,"Hola, hola. En esta serie vamos a caminar y a aprender español. Yo voy a hablar con otra persona.",19,es,1.0000,0.0000,true,0.113
+es_02.caf,en+es,es,es,correct,"historias es una de las mejores formas de mejorar tu español, porque cuando estás escuchando una historia.",17,es,1.0000,0.0000,true,0.105
+es_03.caf,en+es,es,es,correct,"Sean bienvenidos a un nuevo podcast. Miren nomás a quién tenemos de aquí de mascota, este gallo fino que vino, pues ya saben de quién es el gallo.",28,es,1.0000,0.0000,true,0.121
+es_04.caf,en+es,es,es,correct,"La familia. La familia. La familia es esencial, es lo más. Pero yo diría que depende del país.",18,es,1.0000,0.0000,true,0.113

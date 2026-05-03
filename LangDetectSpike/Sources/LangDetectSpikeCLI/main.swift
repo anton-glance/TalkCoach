@@ -1,6 +1,9 @@
+import AVFoundation
 import Foundation
 import LangDetectSpikeLib
+import NaturalLanguage
 import os
+import Speech
 
 private let logger = Logger(
     subsystem: "com.speechcoach.app",
@@ -73,7 +76,7 @@ struct LangDetectSpikeCLI {
 
         print("")
         print("SpeechTranscriber locale check:")
-        print("  (Phase B will verify locale model downloads at runtime)")
+        try await runSpeechTranscriberLocaleCheck()
         print("")
         print("NLLanguageRecognizer sanity check:")
         try runNLLanguageRecognizerSanityCheck()
@@ -85,9 +88,39 @@ struct LangDetectSpikeCLI {
     }
 
     private static func runNLLanguageRecognizerSanityCheck() throws {
-        // Deferred to Phase B — requires NaturalLanguage import and real text.
-        // Placeholder reports the check will happen at evaluation time.
-        print("  (Deferred to Phase B — sanity check runs before first evaluation)")
+        let testCases: [(label: String, expected: NLLanguage, sentence: String)] = [
+            ("en", .english,
+             "The quick brown fox jumps over the lazy dog and runs through the forest meadow"),
+            ("ru", .russian,
+             "Быстрая коричневая лиса прыгает через ленивую собаку и бежит через лес"),
+            ("ja", .japanese,
+             "速い茶色の狐が怠惰な犬を飛び越えて森を走り抜けます"),
+            ("es", .spanish,
+             "El rápido zorro marrón salta sobre el perro perezoso y corre por el bosque"),
+        ]
+
+        var allPassed = true
+        let recognizer = NLLanguageRecognizer()
+
+        for (label, expected, sentence) in testCases {
+            recognizer.reset()
+            recognizer.processString(sentence)
+            let detected = recognizer.dominantLanguage
+            let passed = detected == expected
+            if !passed { allPassed = false }
+
+            let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
+            let hypoStr = hypotheses
+                .sorted { $0.value > $1.value }
+                .map { "\($0.key.rawValue):\(String(format: "%.2f", $0.value))" }
+                .joined(separator: " ")
+
+            print("  \(label): detected=\(detected?.rawValue ?? "nil") — \(passed ? "PASS" : "FAIL") [\(hypoStr)]")
+        }
+
+        if !allPassed {
+            throw ExitError.preflightFailed
+        }
     }
 
     private static func checkParakeetModelCache() {
@@ -108,7 +141,104 @@ struct LangDetectSpikeCLI {
         }
     }
 
+    private static func runSpeechTranscriberLocaleCheck() async throws {
+        let testLocales: [(label: String, locale: Locale)] = [
+            ("en_US", Locale(identifier: "en-US")),
+            ("ja_JP", Locale(identifier: "ja-JP")),
+            ("es_ES", Locale(identifier: "es-ES")),
+        ]
+
+        var allPassed = true
+
+        for (label, locale) in testLocales {
+            print("  \(label):")
+            do {
+                guard let resolved = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
+                    print("    NOT SUPPORTED — locale not available on this device")
+                    allPassed = false
+                    continue
+                }
+                print("    Supported (resolved: \(resolved.identifier))")
+
+                let transcriber = SpeechTranscriber(locale: resolved, preset: .transcription)
+
+                let status = await AssetInventory.status(forModules: [transcriber])
+                print("    Asset status: \(assetStatusString(status))")
+
+                if status != .installed {
+                    print("    Downloading model (may take a few minutes)...")
+                    if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                        try await request.downloadAndInstall()
+                    }
+                    let newStatus = await AssetInventory.status(forModules: [transcriber])
+                    print("    Post-download status: \(assetStatusString(newStatus))")
+                    if newStatus != .installed {
+                        print("    FAIL — model not installed after download attempt")
+                        allPassed = false
+                        continue
+                    }
+                }
+
+                let sampleRate = 16000.0
+                guard let format = AVAudioFormat(
+                    commonFormat: .pcmFormatInt16,
+                    sampleRate: sampleRate,
+                    channels: 1,
+                    interleaved: true
+                ) else {
+                    print("    FAIL — could not create audio format")
+                    allPassed = false
+                    continue
+                }
+                let frameCount = AVAudioFrameCount(sampleRate)
+                guard let buffer = AVAudioPCMBuffer(
+                    pcmFormat: format, frameCapacity: frameCount
+                ) else {
+                    print("    FAIL — could not create audio buffer")
+                    allPassed = false
+                    continue
+                }
+                buffer.frameLength = frameCount
+
+                let analyzer = SpeechAnalyzer(modules: [transcriber])
+                let (inputStream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
+                continuation.yield(AnalyzerInput(buffer: buffer))
+                continuation.finish()
+
+                let lastTime = try await analyzer.analyzeSequence(inputStream)
+                if let lastTime {
+                    try await analyzer.finalizeAndFinish(through: lastTime)
+                } else {
+                    await analyzer.cancelAndFinishNow()
+                }
+
+                print("    Pipeline test: PASS (analyzer processed 1s silence without error)")
+            } catch {
+                print("    ERROR: \(error)")
+                allPassed = false
+            }
+        }
+
+        if !allPassed {
+            throw ExitError.preflightFailed
+        }
+    }
+
+    private static func assetStatusString(_ status: AssetInventory.Status) -> String {
+        switch status {
+        case .installed: "installed"
+        case .supported: "supported (needs download)"
+        case .downloading: "downloading"
+        case .unsupported: "unsupported"
+        @unknown default: "unknown"
+        }
+    }
+
     // MARK: - Evaluate B
+
+    private static let langToLocaleID: [String: String] = [
+        "en": "en-US", "ja": "ja-JP", "es": "es-ES", "ru": "ru-RU",
+    ]
 
     private static func runEvaluateB(args: [String]) async throws {
         if args.contains("--header") {
@@ -148,39 +278,97 @@ struct LangDetectSpikeCLI {
             initializedLang = groundTruth
         }
 
+        let otherLang = (groundTruth == pairParts[0]) ? pairParts[1] : pairParts[0]
+
         logger.info(
             "evaluate-b: clip=\(clipFilename) pair=\(pair) guess=\(guessModeStr) ground_truth=\(groundTruth) initialized=\(initializedLang)"
         )
 
-        // --- Phase B placeholder ---
-        // Actual transcription + NLLanguageRecognizer evaluation will be
-        // implemented in Phase B. For now, emit a placeholder row indicating
-        // the harness argument parsing and routing works correctly.
-        fputs(
-            "evaluate-b: NOT YET IMPLEMENTED — Phase B adds transcription + detection logic\n",
-            stderr
-        )
-        fputs(
-            "  Would evaluate: \(clipFilename) with \(initializedLang) transcriber, "
-            + "detect among [\(pair)], guess_mode=\(guessModeStr)\n",
-            stderr
+        guard let localeID = langToLocaleID[initializedLang] else {
+            fputs("Error: no locale mapping for '\(initializedLang)'\n", stderr)
+            throw ExitError.invalidArgument
+        }
+
+        let locale = Locale(identifier: localeID)
+        guard let resolved = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
+            logger.warning("Locale \(localeID) not supported by SpeechTranscriber — emitting UNSUPPORTED row")
+            let result = OptionBResult(
+                clip: clipFilename, pair: pair,
+                groundTruthLang: groundTruth, initializedLang: initializedLang,
+                guessMode: guessMode, partialText: "UNSUPPORTED_LOCALE",
+                wordsEmittedIn5s: -1, detectedLang: "unsupported",
+                confidenceCorrect: 0, confidenceWrong: 0,
+                correctDetection: false, timeToDecisionS: 0
+            )
+            print(result.csvRow)
+            return
+        }
+
+        let transcriber = SpeechTranscriber(locale: resolved, preset: .transcription)
+
+        do {
+            if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                logger.info("Downloading model for \(resolved.identifier)...")
+                try await request.downloadAndInstall()
+            }
+        } catch {
+            logger.warning("Model for \(resolved.identifier) unavailable: \(error.localizedDescription)")
+            let result = OptionBResult(
+                clip: clipFilename, pair: pair,
+                groundTruthLang: groundTruth, initializedLang: initializedLang,
+                guessMode: guessMode, partialText: "UNSUPPORTED_LOCALE",
+                wordsEmittedIn5s: -1, detectedLang: "unsupported",
+                confidenceCorrect: 0, confidenceWrong: 0,
+                correctDetection: false, timeToDecisionS: 0
+            )
+            print(result.csvRow)
+            return
+        }
+
+        let clipURL = URL(fileURLWithPath: clipPath)
+        let audioFile = try AVAudioFile(forReading: clipURL)
+
+        let startTime = ContinuousClock.now
+
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
+
+        var phrases: [String] = []
+        for try await result in transcriber.results {
+            let text = String(result.text.characters)
+            if !text.isEmpty {
+                phrases.append(text)
+            }
+        }
+
+        let elapsed = ContinuousClock.now - startTime
+        let elapsedS = Double(elapsed.components.seconds)
+            + Double(elapsed.components.attoseconds) / 1e18
+
+        let fullText = phrases.joined(separator: " ")
+        let wordCount = WordCounter.countWords(in: fullText)
+
+        let detection = NLDetection.detect(
+            text: fullText,
+            groundTruthLang: groundTruth,
+            otherLang: otherLang
         )
 
-        let placeholder = OptionBResult(
-            clip: clipFilename,
-            pair: pair,
-            groundTruthLang: groundTruth,
-            initializedLang: initializedLang,
-            guessMode: guessMode,
-            partialText: "<placeholder>",
-            wordsEmittedIn5s: -1,
-            detectedLang: "placeholder",
-            confidenceCorrect: 0,
-            confidenceWrong: 0,
-            correctDetection: false,
-            timeToDecisionS: 0
+        logger.info(
+            "evaluate-b result: words=\(wordCount) detected=\(detection.detectedLang) correct=\(detection.correctDetection) elapsed=\(String(format: "%.2f", elapsedS))s"
         )
-        print(placeholder.csvRow)
+
+        let result = OptionBResult(
+            clip: clipFilename, pair: pair,
+            groundTruthLang: groundTruth, initializedLang: initializedLang,
+            guessMode: guessMode, partialText: fullText,
+            wordsEmittedIn5s: wordCount, detectedLang: detection.detectedLang,
+            confidenceCorrect: detection.confidenceGroundTruth,
+            confidenceWrong: detection.confidenceOther,
+            correctDetection: detection.correctDetection,
+            timeToDecisionS: elapsedS
+        )
+        print(result.csvRow)
     }
 
     // MARK: - Evaluate C
@@ -269,7 +457,7 @@ struct LangDetectSpikeCLI {
         }
 
         let dataRows = lines.dropFirst().compactMap { line -> (pair: String, guessMode: String, words: Int)? in
-            let cols = line.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+            let cols = parseCSVLine(line)
             guard cols.count > max(pairIdx, guessIdx, wordsIdx),
                   let words = Int(cols[wordsIdx])
             else { return nil }
@@ -306,6 +494,48 @@ struct LangDetectSpikeCLI {
             }
             print("")
         }
+    }
+
+    // MARK: - CSV Parsing
+
+    private static func parseCSVLine(_ line: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var inQuotes = false
+        var chars = line.makeIterator()
+
+        while let ch = chars.next() {
+            if inQuotes {
+                if ch == "\"" {
+                    if let next = chars.next() {
+                        if next == "\"" {
+                            current.append("\"")
+                        } else {
+                            inQuotes = false
+                            if next == "," {
+                                fields.append(current)
+                                current = ""
+                            } else {
+                                current.append(next)
+                            }
+                        }
+                    } else {
+                        inQuotes = false
+                    }
+                } else {
+                    current.append(ch)
+                }
+            } else if ch == "\"" {
+                inQuotes = true
+            } else if ch == "," {
+                fields.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        fields.append(current)
+        return fields
     }
 
     // MARK: - Argument Parsing
@@ -365,4 +595,5 @@ enum ExitError: Error {
     case invalidArgument
     case clipNotInManifest
     case invalidCSV
+    case preflightFailed
 }

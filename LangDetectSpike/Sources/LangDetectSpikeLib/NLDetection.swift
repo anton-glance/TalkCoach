@@ -22,8 +22,23 @@ public struct NLDetectionResult: Sendable, Equatable {
 
 public struct NLDetection: Sendable {
 
+    private static let knownLanguages: [String: NLLanguage] = [
+        "en": .english,
+        "ru": .russian,
+        "ja": .japanese,
+        "es": .spanish,
+        "fr": .french,
+        "de": .german,
+        "it": .italian,
+        "pt": .portuguese,
+        "ko": .korean,
+        "zh": .simplifiedChinese,
+        "uk": .ukrainian,
+        "pl": .polish,
+    ]
+
     public static func langCodeToNLLanguage(_ code: String) -> NLLanguage? {
-        nil
+        knownLanguages[code]
     }
 
     public static func detect(
@@ -31,11 +46,40 @@ public struct NLDetection: Sendable {
         groundTruthLang: String,
         otherLang: String
     ) -> NLDetectionResult {
-        NLDetectionResult(
-            detectedLang: "",
-            confidenceGroundTruth: 0,
-            confidenceOther: 0,
-            correctDetection: false
+        guard !text.isEmpty else {
+            return NLDetectionResult(
+                detectedLang: "undetermined",
+                confidenceGroundTruth: 0,
+                confidenceOther: 0,
+                correctDetection: false
+            )
+        }
+
+        let recognizer = NLLanguageRecognizer()
+
+        if let gtNL = langCodeToNLLanguage(groundTruthLang),
+           let otherNL = langCodeToNLLanguage(otherLang) {
+            recognizer.languageConstraints = [gtNL, otherNL]
+        }
+
+        recognizer.processString(text)
+
+        let detected = recognizer.dominantLanguage
+        let detectedRaw = detected?.rawValue ?? "undetermined"
+
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 2)
+
+        let gtNL = langCodeToNLLanguage(groundTruthLang)
+        let otherNL = langCodeToNLLanguage(otherLang)
+
+        let confidenceGT = gtNL.flatMap { hypotheses[$0] } ?? 0
+        let confidenceOther = otherNL.flatMap { hypotheses[$0] } ?? 0
+
+        return NLDetectionResult(
+            detectedLang: detectedRaw,
+            confidenceGroundTruth: confidenceGT,
+            confidenceOther: confidenceOther,
+            correctDetection: detectedRaw == groundTruthLang
         )
     }
 }
