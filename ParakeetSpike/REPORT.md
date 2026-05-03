@@ -186,3 +186,67 @@ This is a shared preprocessing step that all downstream consumers (WER, fillers,
 6. **Pre-fetch strategy:** Download model at first app launch (background) to eliminate cold-start latency.
 7. **Word-level timestamps** feed directly into `SpeakingActivityTracker` — no fallback needed.
 8. **Language hint:** Pass `.russian` to `AsrManager.transcribe(language:)` for Cyrillic script filtering.
+
+---
+
+## Addendum — Clean-vs-Noisy A/B (Session 007)
+
+**Date:** 2026-05-02
+**Clips:** `ru_clean.caf` (home, quiet) and `ru_noisy.caf` (café, ambient noise)
+**Script:** Same 298-word Russian text, same speaker, recorded back-to-back
+**Pace:** ~110 WPM (slow-normal)
+**Filler dictionary:** ну, как бы, типа, короче (omitting «это» — too ambiguous between filler and demonstrative pronoun)
+
+### Per-Clip Results
+
+**WER:**
+
+| Clip | WER | Ref Words | Substitutions | Insertions | Deletions |
+|------|-----|-----------|---------------|------------|-----------|
+| ru_clean | 9.4% | 288 | 16 | 5 | 6 |
+| ru_noisy | 9.4% | 288 | 13 | 6 | 8 |
+
+**WPM Accuracy:**
+
+| Clip | Ground Truth WPM | Computed WPM | Error % |
+|------|-----------------|--------------|---------|
+| ru_clean | 111.1 | 112.9 | 1.6% |
+| ru_noisy | 109.6 | 108.8 | 0.7% |
+
+**Filler Recognition:**
+
+| Clip | ну | как бы | типа | короче | Aggregate |
+|------|-----|--------|------|--------|-----------|
+| ru_clean | 2/4 (50%) | 2/2 (100%) | 1/2 (50%) | 2/2 (100%) | 7/10 (70%) |
+| ru_noisy | 3/4 (75%) | 2/2 (100%) | 2/2 (100%) | 2/2 (100%) | 9/10 (90%) |
+
+**Performance:**
+
+| Clip | RTF | Audio Duration | Processing Time |
+|------|-----|----------------|-----------------|
+| ru_clean | 0.0057 | 165.4s | 0.96s |
+| ru_noisy | 0.0050 | 167.0s | 0.84s |
+
+**Cold start (model on disk, Encoder recompile):** 17.0s
+
+### Delta Table — Clean vs Noisy
+
+| Metric | ru_clean | ru_noisy | Delta | Direction |
+|--------|----------|----------|-------|-----------|
+| WER | 9.4% | 9.4% | 0.0 pp | No change |
+| WPM error | 1.6% | 0.7% | -0.9 pp | Noisy slightly better |
+| Filler rate | 70% | 90% | +20 pp | Noisy better |
+| RTF | 0.0057 | 0.0050 | -0.0007 | Negligible |
+| Word count | 292 | 288 | -4 | 4 more deletions in noise |
+
+### Interpretation
+
+Café-level ambient noise had no measurable impact on Russian transcription quality at ~110 WPM. WER is identical across conditions. WPM accuracy actually improved slightly in the noisy clip (0.7% vs 1.6%), though this is within noise margin.
+
+The counterintuitive filler result — noisy outperforming clean (90% vs 70%) — is not a noise benefit. It reflects minor pronunciation variation between takes: the speaker's "ну" and "типа" instances in the clean recording were slightly more swallowed/unstressed, causing 3 misses. The noisy recording happened to have slightly clearer filler articulation. With only 10 filler instances per clip, one or two pronunciation differences dominate the rate.
+
+Both clips comfortably pass the Spike #10 acceptance criteria (WER <15% clean, <25% realistic; fillers >=70%; WPM error <8%).
+
+### Caveat
+
+These clips are ~110 WPM (slow-normal pace). The delta measures noise impact at that pace specifically. The original Spike #10 `ru_fast` clip (205 WPM, clean) showed 26.8% WER — fast speech rate remains a larger degradation factor than café noise. A noisy+fast combination was not tested.

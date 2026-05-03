@@ -1,0 +1,9 @@
+clip,filler,expected,recognized,rate
+ru_clean,ну,4,2,0.50
+ru_clean,как бы,2,2,1.00
+ru_clean,типа,2,1,0.50
+ru_clean,короче,2,2,1.00
+ru_noisy,ну,4,3,0.75
+ru_noisy,как бы,2,2,1.00
+ru_noisy,типа,2,2,1.00
+ru_noisy,короче,2,2,1.00

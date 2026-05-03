@@ -40,6 +40,14 @@ struct ParakeetSpikeCLI {
             return
         }
 
+        if let idx = args.firstIndex(of: "--validate-ab"),
+            idx + 1 < args.count
+        {
+            let recordingsDir = args[idx + 1]
+            try await runABValidation(recordingsDir: recordingsDir)
+            return
+        }
+
         printUsage()
     }
 
@@ -280,6 +288,184 @@ struct ParakeetSpikeCLI {
         )
 
         // Print summary to stdout
+        print("=== WER ===")
+        for line in allWER { print(line) }
+        print("\n=== TIMESTAMPS + WPM ===")
+        for line in allTimestamps { print(line) }
+        print("\n=== FILLERS ===")
+        for line in allFillers { print(line) }
+    }
+
+    private static func runABValidation(
+        recordingsDir: String
+    ) async throws {
+        let clips = ["ru_clean", "ru_noisy"]
+        let fillers = ["ну", "как бы", "типа", "короче"]
+
+        let loadStart = Date()
+        let models = try await AsrModels.downloadAndLoad(
+            version: .v3
+        )
+        let compileLoadTime = Date().timeIntervalSince(loadStart)
+        fputs(
+            "Model compile+load: "
+                + "\(String(format: "%.1f", compileLoadTime))s\n",
+            stderr
+        )
+
+        let asrManager = AsrManager(models: models)
+
+        var allWER: [String] = [
+            "clip,wer,ref_words,sub,ins,del"
+        ]
+        var allTimestamps: [String] = [
+            "clip,gt_wpm,computed_wpm,error_pct,word_count,"
+                + "speaking_duration_s,granularity,avg_gap_s,median_dur_s"
+        ]
+        var allFillers: [String] = [
+            "clip,filler,expected,recognized,rate"
+        ]
+
+        for clip in clips {
+            let audioPath = "\(recordingsDir)/\(clip).caf"
+            let transcriptPath =
+                "\(recordingsDir)/transcripts/\(clip).txt"
+            let jsonPath = "\(recordingsDir)/\(clip).json"
+
+            guard FileManager.default.fileExists(atPath: audioPath) else {
+                fputs("Skipping \(clip) — no .caf file\n", stderr)
+                continue
+            }
+
+            fputs("Processing \(clip)...\n", stderr)
+
+            let audioURL = URL(fileURLWithPath: audioPath)
+            let result = try await Transcriber.transcribe(
+                audioURL: audioURL,
+                asrManager: asrManager,
+                language: .russian
+            )
+
+            fputs(
+                "  RTF: \(String(format: "%.4f", result.rtf)), "
+                    + "Words: \(result.words.count)\n",
+                stderr
+            )
+
+            let tokenCSVPath =
+                "\(recordingsDir)/../results/\(clip)_tokens.csv"
+            let tokenCSV = "token,startTime,endTime,confidence\n"
+                + result.words.map { w in
+                    let esc = w.word.replacingOccurrences(
+                        of: "\"", with: "\"\""
+                    )
+                    return "\"\(esc)\","
+                        + "\(String(format: "%.3f", w.startTime)),"
+                        + "\(String(format: "%.3f", w.endTime)),"
+                        + "\(String(format: "%.4f", w.confidence))"
+                }.joined(separator: "\n")
+            try tokenCSV.write(
+                toFile: tokenCSVPath,
+                atomically: true,
+                encoding: .utf8
+            )
+
+            if FileManager.default.fileExists(atPath: transcriptPath) {
+                let refText = try String(
+                    contentsOfFile: transcriptPath, encoding: .utf8
+                )
+                let werResult = WERCalculator.compute(
+                    hypothesis: result.words,
+                    referenceText: refText
+                )
+                allWER.append(
+                    "\(clip),"
+                        + "\(String(format: "%.3f", werResult.wer)),"
+                        + "\(werResult.referenceCount),"
+                        + "\(werResult.substitutions),"
+                        + "\(werResult.insertions),"
+                        + "\(werResult.deletions)"
+                )
+                fputs(
+                    "  WER: \(String(format: "%.1f", werResult.wer * 100))%\n",
+                    stderr
+                )
+
+                let fillerResults = WERCalculator
+                    .computeFillerRecognition(
+                        hypothesis: result.words,
+                        referenceText: refText,
+                        fillers: fillers
+                    )
+                for fr in fillerResults {
+                    allFillers.append(
+                        "\(clip),\(fr.filler),"
+                            + "\(fr.expectedCount),"
+                            + "\(fr.recognizedCount),"
+                            + "\(String(format: "%.2f", fr.rate))"
+                    )
+                }
+            }
+
+            if FileManager.default.fileExists(atPath: jsonPath) {
+                let jsonData = try Data(
+                    contentsOf: URL(fileURLWithPath: jsonPath)
+                )
+                let gt = try JSONDecoder().decode(
+                    GroundTruth.self, from: jsonData
+                )
+                let validation = TimestampValidator.validate(
+                    words: result.words,
+                    clipName: clip,
+                    groundTruthWPM: gt.groundTruthWPM
+                )
+                allTimestamps.append(
+                    "\(validation.clipName),"
+                        + "\(String(format: "%.1f", validation.groundTruthWPM)),"
+                        + "\(String(format: "%.1f", validation.computedWPM)),"
+                        + "\(String(format: "%.1f", validation.errorPercent)),"
+                        + "\(validation.wordCount),"
+                        + "\(String(format: "%.1f", validation.speakingDuration)),"
+                        + "\(validation.timestampGranularity),"
+                        + "\(String(format: "%.4f", validation.averageGapBetweenWords)),"
+                        + "\(String(format: "%.4f", validation.medianTokenDuration))"
+                )
+                fputs(
+                    "  WPM: \(String(format: "%.1f", validation.computedWPM)) "
+                        + "(gt: \(String(format: "%.1f", validation.groundTruthWPM)), "
+                        + "err: \(String(format: "%.1f", validation.errorPercent))%)\n",
+                    stderr
+                )
+            }
+        }
+
+        let resultsDir = "\(recordingsDir)/../results"
+        try FileManager.default.createDirectory(
+            atPath: resultsDir,
+            withIntermediateDirectories: true
+        )
+
+        try allWER.joined(separator: "\n").write(
+            toFile: "\(resultsDir)/ab_wer.csv",
+            atomically: true,
+            encoding: .utf8
+        )
+        try allTimestamps.joined(separator: "\n").write(
+            toFile: "\(resultsDir)/ab_timestamps.csv",
+            atomically: true,
+            encoding: .utf8
+        )
+        try allFillers.joined(separator: "\n").write(
+            toFile: "\(resultsDir)/ab_fillers.csv",
+            atomically: true,
+            encoding: .utf8
+        )
+
+        fputs(
+            "\nResults written to \(resultsDir)/ab_*.csv\n",
+            stderr
+        )
+
         print("=== WER ===")
         for line in allWER { print(line) }
         print("\n=== TIMESTAMPS + WPM ===")
