@@ -4,6 +4,12 @@ import PackageDescription
 let package = Package(
     name: "LangDetectSpike",
     platforms: [.macOS(.v26)],
+    dependencies: [
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            from: "0.9.0"
+        ),
+    ],
     targets: [
         .target(
             name: "LangDetectSpikeLib",
@@ -11,7 +17,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "LangDetectSpikeCLI",
-            dependencies: ["LangDetectSpikeLib"],
+            dependencies: [
+                "LangDetectSpikeLib",
+                .product(name: "FluidAudio", package: "FluidAudio"),
+            ],
             path: "Sources/LangDetectSpikeCLI"
         ),
         .testTarget(

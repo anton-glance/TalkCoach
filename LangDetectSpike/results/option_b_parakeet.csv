@@ -1,0 +1,9 @@
+clip,pair,ground_truth_lang,initialized_lang,guess_mode,partial_text,words_emitted_in_5s,detected_lang,confidence_correct,confidence_wrong,correct_detection,time_to_decision_s
+en_01.caf,en+ru,en,ru,wrong,"...-14.",1,undetermined,0.0000,0.0000,false,17.276
+en_02.caf,en+ru,en,ru,wrong,"'60,', '6,''0'.' '80''.'80% 40%,' ...5.",5,undetermined,0.0000,0.0000,false,0.309
+en_03.caf,en+ru,en,ru,wrong,"'.' ...",2,undetermined,0.0000,0.0000,false,0.271
+en_04.caf,en+ru,en,ru,wrong,"'..' '5,'''.' '2''. '1'4'.",4,undetermined,0.0000,0.0000,false,0.296
+ru_01.caf,en+ru,ru,ru,correct,"У меня в подкасте Мугуланд Сейсимбаев один из самых глубоких и интересных предпринимателей, которых я знаю. И я специально для этого прилетел в Казахстан, буквально на один день для того, чтобы записать подкаст.",33,ru,1.0000,0.0000,true,0.317
+ru_02.caf,en+ru,ru,ru,correct,"Как преподаватели русского языка для иностранцев мы не раз видели в сообщениях в директе, в комментариях такие сообщения.",18,ru,1.0000,0.0000,true,0.296
+ru_03.caf,en+ru,ru,ru,correct,"Друзья, всем привет! Вы смотрите и слушаете русское радио шоу, подкасты и видео для тех, кто изучает русский язык. Я Сергей, ваш учитель русского языка.",25,ru,1.0000,0.0000,true,0.310
+ru_04.caf,en+ru,ru,ru,correct,"Настя, и сегодня мы с вами увидимся в новом видео. Это видео о русских приметах. Я считаю, что это очень",20,ru,1.0000,0.0000,true,0.293

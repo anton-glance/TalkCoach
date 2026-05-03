@@ -1,4 +1,5 @@
 import AVFoundation
+import FluidAudio
 import Foundation
 import LangDetectSpikeLib
 import NaturalLanguage
@@ -240,6 +241,15 @@ struct LangDetectSpikeCLI {
         "en": "en-US", "ja": "ja-JP", "es": "es-ES", "ru": "ru-RU",
     ]
 
+    private static let parakeetOnlyLanguages: Set<String> = ["ru"]
+
+    private static func parakeetLanguage(for langCode: String) -> Language? {
+        switch langCode {
+        case "ru": .russian
+        default: nil
+        }
+    }
+
     private static func runEvaluateB(args: [String]) async throws {
         if args.contains("--header") {
             print(OptionBResult.csvHeader)
@@ -284,68 +294,91 @@ struct LangDetectSpikeCLI {
             "evaluate-b: clip=\(clipFilename) pair=\(pair) guess=\(guessModeStr) ground_truth=\(groundTruth) initialized=\(initializedLang)"
         )
 
-        guard let localeID = langToLocaleID[initializedLang] else {
-            fputs("Error: no locale mapping for '\(initializedLang)'\n", stderr)
-            throw ExitError.invalidArgument
-        }
-
-        let locale = Locale(identifier: localeID)
-        guard let resolved = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
-            logger.warning("Locale \(localeID) not supported by SpeechTranscriber — emitting UNSUPPORTED row")
-            let result = OptionBResult(
-                clip: clipFilename, pair: pair,
-                groundTruthLang: groundTruth, initializedLang: initializedLang,
-                guessMode: guessMode, partialText: "UNSUPPORTED_LOCALE",
-                wordsEmittedIn5s: -1, detectedLang: "unsupported",
-                confidenceCorrect: 0, confidenceWrong: 0,
-                correctDetection: false, timeToDecisionS: 0
-            )
-            print(result.csvRow)
-            return
-        }
-
-        let transcriber = SpeechTranscriber(locale: resolved, preset: .transcription)
-
-        do {
-            if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-                logger.info("Downloading model for \(resolved.identifier)...")
-                try await request.downloadAndInstall()
-            }
-        } catch {
-            logger.warning("Model for \(resolved.identifier) unavailable: \(error.localizedDescription)")
-            let result = OptionBResult(
-                clip: clipFilename, pair: pair,
-                groundTruthLang: groundTruth, initializedLang: initializedLang,
-                guessMode: guessMode, partialText: "UNSUPPORTED_LOCALE",
-                wordsEmittedIn5s: -1, detectedLang: "unsupported",
-                confidenceCorrect: 0, confidenceWrong: 0,
-                correctDetection: false, timeToDecisionS: 0
-            )
-            print(result.csvRow)
-            return
-        }
-
         let clipURL = URL(fileURLWithPath: clipPath)
-        let audioFile = try AVAudioFile(forReading: clipURL)
+        let useParakeet = parakeetOnlyLanguages.contains(initializedLang)
 
-        let startTime = ContinuousClock.now
+        let fullText: String
+        let elapsedS: Double
 
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-        try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
+        if useParakeet {
+            logger.info("Routing \(initializedLang) through Parakeet (FluidAudio)")
+            let startTime = ContinuousClock.now
 
-        var phrases: [String] = []
-        for try await result in transcriber.results {
-            let text = String(result.text.characters)
-            if !text.isEmpty {
-                phrases.append(text)
+            let models = try await AsrModels.downloadAndLoad(version: .v3)
+            logger.info("Parakeet model loaded")
+
+            let asrManager = AsrManager(models: models)
+            let parakeetLang = parakeetLanguage(for: initializedLang)
+            var decoderState = try TdtDecoderState()
+            let asrResult = try await asrManager.transcribe(
+                clipURL, decoderState: &decoderState, language: parakeetLang
+            )
+
+            let elapsed = ContinuousClock.now - startTime
+            elapsedS = Double(elapsed.components.seconds)
+                + Double(elapsed.components.attoseconds) / 1e18
+            fullText = asrResult.text
+        } else {
+            guard let localeID = langToLocaleID[initializedLang] else {
+                fputs("Error: no locale mapping for '\(initializedLang)'\n", stderr)
+                throw ExitError.invalidArgument
             }
+
+            let locale = Locale(identifier: localeID)
+            guard let resolved = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
+                logger.warning("Locale \(localeID) not supported by SpeechTranscriber — emitting UNSUPPORTED row")
+                let result = OptionBResult(
+                    clip: clipFilename, pair: pair,
+                    groundTruthLang: groundTruth, initializedLang: initializedLang,
+                    guessMode: guessMode, partialText: "UNSUPPORTED_LOCALE",
+                    wordsEmittedIn5s: -1, detectedLang: "unsupported",
+                    confidenceCorrect: 0, confidenceWrong: 0,
+                    correctDetection: false, timeToDecisionS: 0
+                )
+                print(result.csvRow)
+                return
+            }
+
+            let transcriber = SpeechTranscriber(locale: resolved, preset: .transcription)
+
+            do {
+                if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                    logger.info("Downloading model for \(resolved.identifier)...")
+                    try await request.downloadAndInstall()
+                }
+            } catch {
+                logger.warning("Model for \(resolved.identifier) unavailable: \(error.localizedDescription)")
+                let result = OptionBResult(
+                    clip: clipFilename, pair: pair,
+                    groundTruthLang: groundTruth, initializedLang: initializedLang,
+                    guessMode: guessMode, partialText: "UNSUPPORTED_LOCALE",
+                    wordsEmittedIn5s: -1, detectedLang: "unsupported",
+                    confidenceCorrect: 0, confidenceWrong: 0,
+                    correctDetection: false, timeToDecisionS: 0
+                )
+                print(result.csvRow)
+                return
+            }
+
+            let audioFile = try AVAudioFile(forReading: clipURL)
+            let startTime = ContinuousClock.now
+
+            let analyzer = SpeechAnalyzer(modules: [transcriber])
+            try await analyzer.start(inputAudioFile: audioFile, finishAfterFile: true)
+
+            var phrases: [String] = []
+            for try await result in transcriber.results {
+                let text = String(result.text.characters)
+                if !text.isEmpty {
+                    phrases.append(text)
+                }
+            }
+
+            let elapsed = ContinuousClock.now - startTime
+            elapsedS = Double(elapsed.components.seconds)
+                + Double(elapsed.components.attoseconds) / 1e18
+            fullText = phrases.joined(separator: " ")
         }
-
-        let elapsed = ContinuousClock.now - startTime
-        let elapsedS = Double(elapsed.components.seconds)
-            + Double(elapsed.components.attoseconds) / 1e18
-
-        let fullText = phrases.joined(separator: " ")
         let wordCount = WordCounter.countWords(in: fullText)
 
         let detection = NLDetection.detect(
@@ -450,18 +483,21 @@ struct LangDetectSpikeCLI {
         let headerColumns = lines[0].split(separator: ",").map(String.init)
         guard let pairIdx = headerColumns.firstIndex(of: "pair"),
               let guessIdx = headerColumns.firstIndex(of: "guess_mode"),
-              let wordsIdx = headerColumns.firstIndex(of: "words_emitted_in_5s")
+              let wordsIdx = headerColumns.firstIndex(of: "words_emitted_in_5s"),
+              let textIdx = headerColumns.firstIndex(of: "partial_text")
         else {
-            fputs("Error: CSV missing required columns (pair, guess_mode, words_emitted_in_5s)\n", stderr)
+            fputs("Error: CSV missing required columns (pair, guess_mode, words_emitted_in_5s, partial_text)\n", stderr)
             throw ExitError.invalidCSV
         }
 
-        let dataRows = lines.dropFirst().compactMap { line -> (pair: String, guessMode: String, words: Int)? in
+        let dataRows = lines.dropFirst().compactMap { line -> (pair: String, guessMode: String, words: Int, charCount: Int)? in
             let cols = parseCSVLine(line)
-            guard cols.count > max(pairIdx, guessIdx, wordsIdx),
+            guard cols.count > max(pairIdx, guessIdx, wordsIdx, textIdx),
                   let words = Int(cols[wordsIdx])
             else { return nil }
-            return (pair: cols[pairIdx], guessMode: cols[guessIdx], words: words)
+            let text = cols[textIdx]
+            let charCount = text.count
+            return (pair: cols[pairIdx], guessMode: cols[guessIdx], words: words, charCount: charCount)
         }
 
         let pairs = Set(dataRows.map(\.pair)).sorted()
@@ -489,6 +525,40 @@ struct LangDetectSpikeCLI {
                              Double(correctCounts.reduce(0, +)) / Double(max(1, correctCounts.count))
                              / Double(max(1, wrongCounts.reduce(0, +) / max(1, wrongCounts.count))))
                 print("  Mean word-count ratio (correct/wrong): \(separation)")
+            } else {
+                print("  No data for threshold analysis.")
+            }
+            print("")
+        }
+
+        print("")
+        print("Character-Count Analysis")
+        print("========================")
+        print("")
+
+        for pair in pairs {
+            let pairRows = dataRows.filter { $0.pair == pair }
+            let correctChars = pairRows.filter { $0.guessMode == "correct" }.map(\.charCount)
+            let wrongChars = pairRows.filter { $0.guessMode == "wrong" }.map(\.charCount)
+
+            print("Pair: \(pair)")
+            print("  Correct-guess char counts: \(correctChars.sorted())")
+            print("  Wrong-guess char counts:   \(wrongChars.sorted())")
+
+            if let result = ThresholdAnalyzer.findOptimalThreshold(
+                correctGuessWordCounts: correctChars,
+                wrongGuessWordCounts: wrongChars
+            ) {
+                print("  Optimal threshold: \(result.threshold) chars")
+                print("  Accuracy: \(String(format: "%.1f", result.accuracy * 100))%")
+                print("  TP=\(result.truePositives) FP=\(result.falsePositives) "
+                      + "TN=\(result.trueNegatives) FN=\(result.falseNegatives)")
+                let separation = correctChars.isEmpty || wrongChars.isEmpty
+                    ? "N/A"
+                    : String(format: "%.1fx",
+                             Double(correctChars.reduce(0, +)) / Double(max(1, correctChars.count))
+                             / Double(max(1, wrongChars.reduce(0, +) / max(1, wrongChars.count))))
+                print("  Mean char-count ratio (correct/wrong): \(separation)")
             } else {
                 print("  No data for threshold analysis.")
             }

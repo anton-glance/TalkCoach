@@ -1,0 +1,55 @@
+Word-Count Threshold Analysis
+=============================
+
+Pair: en+es
+  Correct-guess word counts: [17, 18, 19, 25, 28, 28, 35, 37]
+  Wrong-guess word counts:   [13, 16, 18, 18, 24, 30, 34, 35]
+  Optimal threshold: 17 words
+  Accuracy: 62.5%
+  TP=2 FP=0 TN=8 FN=6
+  Mean word-count ratio (correct/wrong): 1.1x
+
+Pair: en+ja
+  Correct-guess word counts: [1, 1, 1, 2, 25, 28, 35, 37]
+  Wrong-guess word counts:   [0, 0, 0, 0, 13, 14, 16, 20]
+  Optimal threshold: 1 words
+  Accuracy: 75.0%
+  TP=4 FP=0 TN=8 FN=4
+  Mean word-count ratio (correct/wrong): 2.3x
+
+Pair: en+ru
+  Correct-guess word counts: [18, 20, 25, 25, 28, 33, 35, 37]
+  Wrong-guess word counts:   [0, 0, 1, 2, 4, 5, 9, 12]
+  Optimal threshold: 13 words
+  Accuracy: 100.0%
+  TP=8 FP=0 TN=8 FN=0
+  Mean word-count ratio (correct/wrong): 6.9x
+
+
+Character-Count Analysis
+========================
+
+Pair: en+es
+  Correct-guess char counts: [94, 97, 106, 138, 146, 174, 184, 194]
+  Wrong-guess char counts:   [79, 95, 100, 102, 134, 174, 175, 181]
+  Optimal threshold: 103 chars
+  Accuracy: 62.5%
+  TP=4 FP=2 TN=6 FN=4
+  Mean char-count ratio (correct/wrong): 1.1x
+
+Pair: en+ja
+  Correct-guess char counts: [47, 51, 55, 61, 138, 174, 184, 194]
+  Wrong-guess char counts:   [0, 0, 0, 0, 82, 117, 118, 120]
+  Optimal threshold: 1 chars
+  Accuracy: 75.0%
+  TP=4 FP=0 TN=8 FN=4
+  Mean char-count ratio (correct/wrong): 2.1x
+
+Pair: en+ru
+  Correct-guess char counts: [104, 121, 138, 152, 174, 184, 194, 211]
+  Wrong-guess char counts:   [0, 0, 7, 7, 26, 39, 60, 63]
+  Optimal threshold: 64 chars
+  Accuracy: 100.0%
+  TP=8 FP=0 TN=8 FN=0
+  Mean char-count ratio (correct/wrong): 6.4x
+
