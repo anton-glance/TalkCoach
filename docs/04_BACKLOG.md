@@ -10,17 +10,19 @@
 
 | ID | Spike | Status | Estimate |
 |---|---|---|---|
-| S6 | WPM ground truth on real EN/RU recordings (Approach D) | 🔬 EN passed Session 005; RU pending S10 | 4h |
-| S10 | Parakeet (NVIDIA) feasibility on macOS 26 / Apple Silicon | 📋 P0 | 8–12h |
-| S7 | Power & CPU profiling: Architecture Y (Apple + Parakeet) | 📋 P0 | 6h |
-| S4 | Mic coexistence with Zoom voice processing | 📋 P0 | 3h |
-| S2 | Language auto-detect mechanism (constrained by S7) | 📋 P1 | 6h |
+| S10 | Parakeet (NVIDIA) feasibility on macOS 26 / Apple Silicon | ✅ passed Sessions 006–007 | (10h actual) |
+| S6 | WPM ground truth on real EN/RU recordings | ✅ passed (EN Session 005, RU Session 007) | (5h actual) |
+| S4 | Mic coexistence with Zoom voice processing | ✅ passed Session 008 (browser Meet has recoverable config-change caveat) | (3h actual) |
+| S2 | Language auto-detect mechanism | 📋 P1 — next | 6h |
 | S8 | Token-arrival robustness across mics & environments | 📋 P1 | 3h |
+| S7 | Power & CPU profiling Architecture Y (Apple baseline + 1hr session) | 📋 P1 — partially done by S10 Phase E | 4h (revised down from 6h) |
 | S9 | Adaptive RMS noise-floor for shouting detection | 📋 P2 | 2h |
 | S1 | Identifying activating app for blocklist | 📋 P2 | 3h |
 | S3 | ~~Russian transcription quality on `SpeechAnalyzer`~~ | ❌ superseded by S10 | — |
 
-**Phase 0 total: ~35–39h.** Run spikes in priority order. S10 gates Architecture Y — if Parakeet doesn't work on macOS 26, the architecture changes meaningfully.
+**Phase 0 remaining work: ~18h** (was 21h; S4 closed).
+
+Three P0 spikes done. Remaining are P1/P2 — none gate the architecture; they refine implementation details. S2 (language auto-detect) is next because M3.4 depends on it.
 
 Detailed spike specs in `05_SPIKES.md`.
 

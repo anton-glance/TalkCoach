@@ -4,6 +4,141 @@
 
 ---
 
+## Session 008 — 2026-05-02 — Spike #4 closed PASS WITH CAVEATS, Mic Coexistence Validated
+
+**Format:** Claude Code agent execution (Spike #4 all scenarios), user-assisted real-device testing.
+
+### What happened
+Built a throwaway `MicCoexistSpike/` CLI harness that runs `AVAudioEngine` with `isVoiceProcessingEnabled = false`, installs an input tap, and logs per-second buffer counts. Ran 10 scenarios across Zoom, Google Meet (Chrome + Safari), and FaceTime using an iPhone self-loop (iPhone joined same call, mic muted, speaker on).
+
+Headline: native conferencing apps (Zoom, FaceTime) coexist perfectly in all patterns. Browser-based conferencing (Chrome Meet, Safari Meet) works when already active, but triggers `AVAudioEngineConfigurationChange` when joining after our engine — stopping the engine. This is recoverable by restarting the engine, a well-documented Apple pattern.
+
+### Validated numbers (final)
+- **VPIO:** `false` at every checkpoint in all 10 scenarios. macOS never overrode it.
+- **Native app coexistence (Zoom, FaceTime):** 0 gaps, 0 config changes in C/D/E/G patterns. Mean ~47,900 fps on 48kHz input.
+- **Browser coexistence (Chrome Meet, Safari Meet):**
+  - App-first pattern (C): 0 gaps, 0 config changes. Perfect.
+  - Harness-first pattern (D): 1 config change → engine stopped → 30+ gaps. Recoverable.
+- **Safari channel count change:** Safari Meet changes input from 1→3 channels. Using `format: nil` handles this transparently.
+- **Conferencing audio quality:** User confirmed zero degradation in all 10 scenarios.
+
+### What changed in the docs
+- `05_SPIKES.md` — Spike #4 marked ⚠️ passed with caveats. Validated outcomes section added above original spec.
+- `01_PROJECT_JOURNAL.md` — this entry.
+
+### Swift 6 strict concurrency findings
+The harness exposed two Swift 6 runtime issues relevant to production `AudioPipeline`:
+
+1. **`@main struct` / `main.swift` top-level closures inherit `@MainActor` isolation.** The audio tap callback runs on CoreAudio's `RealtimeMessenger.mServiceQueue`. When the closure is defined in a main-actor context, Swift 6's runtime checks crash with `EXC_BREAKPOINT` / `_dispatch_assert_queue_fail`. Fix: define tap closures in a separate source file outside the main-actor context.
+
+2. **`AVAudioEngine` / `AVAudioInputNode` are non-Sendable.** When captured in closures from `main.swift` (main-actor-isolated scope), they need `nonisolated(unsafe)` annotation.
+
+These are directly relevant to how `AudioPipeline` structures its tap installation and should be documented in the architecture.
+
+### Production requirements surfaced
+`AudioPipeline` must:
+1. Observe `AVAudioEngineConfigurationChange` and restart engine + reinstall tap on receipt.
+2. Use `format: nil` for tap installation (never hardcode channel count or sample rate).
+3. Set `isVoiceProcessingEnabled = false` before any tap installation.
+4. Ensure audio tap closures do not inherit `@MainActor` isolation.
+
+### Where we left off
+- Phase 0 has 4 open spikes: S2 (language auto-detect), S8 (token robustness), S7 (power profiling), S9 (shouting detection), S1 (activating app ID).
+- Spike #4's config-change recovery is not a blocker — it's a routine `AudioPipeline` implementation detail for M2.1.
+- Working tree has uncommitted `MicCoexistSpike/` harness code. Ready for commit.
+
+### Ups
+- All native conferencing apps (the primary use case — Zoom calls) coexist with zero issues. The VPIO=false strategy is validated.
+- Browser Meet failures are recoverable, not fatal. The config-change pattern is standard Apple audio handling.
+- User confirmed audio quality was unaffected in every single scenario. Our engine is invisible to conferencing apps.
+- Swift 6 concurrency findings caught now save debugging time during production AudioPipeline implementation.
+- 3h actual vs 3h estimated. On budget.
+
+### Downs
+- Spent ~45 minutes debugging a Swift 6 runtime crash (`EXC_BREAKPOINT` in `_dispatch_assert_queue_fail`) before identifying that `@main struct` closures inherit main-actor isolation. The crash report was the key — the compiler gave no warning. This is a subtle Swift 6 gotcha that would have hit production code too.
+- Browser Meet coexistence requires engine restart logic. Not hard, but it's additional code in `AudioPipeline` that wouldn't exist if all apps used CoreAudio directly.
+
+### Next session
+- Commit MicCoexistSpike harness
+- Proceed to next P0 spike (S7 power profiling, or S2/S8 depending on priority review)
+- Update `03_ARCHITECTURE.md` with config-change recovery requirement and Swift 6 isolation note
+- Update `04_BACKLOG.md` with actual hours
+
+---
+
+## Session 007 — 2026-05-02 — Spike #10 closed PASS, Architecture Y validated
+
+**Format:** Claude Code agent execution (Spike #10 Phases A–F + clean-vs-noisy A/B addendum), fully verified, sub-agent reviewed.
+
+### What happened
+Spike #10 ran end-to-end across the day. The agent acquired FluidInference's pre-converted `parakeet-tdt-0.6b-v3` Core ML model via FluidAudio Swift SDK (saved ~20h of custom Core ML inference work). Built a small `ParakeetSpike/` harness (sibling to `WPMSpike/`), validated all six pass criteria from the original spec on the three Russian clips from Spike #6, then executed an additional clean-vs-noisy A/B with two new clips the user recorded.
+
+Headline: every gate passed comfortably except one marginal — `ru_fast` Russian WER at 26.8% vs 25% gate. Investigation in the addendum confirmed café noise is **not** the cause; the 26.8% is a fast-pace Parakeet limitation. Clean-vs-noisy A/B at ~110 WPM showed identical 9.4% WER in both conditions.
+
+### Validated numbers (final)
+- **Real-time factor:** 0.011 mean, 0.032 worst → ~90× real-time. Budget gate was 0.5.
+- **Peak working memory:** 133 MB. Budget gate was 800 MB. Architecture's earlier estimate was conservative by 6×.
+- **Cold-start (3 tiers):** ~53s first-ever model download (one-time, M3.6 toast); ~16s recompile after cache eviction; 0.4s warm subsequent runs.
+- **Russian WER:** 9.4% clean speech / 9.4% café-noisy speech at ~110 WPM; 11.6% on `ru_normal` (156 WPM); 10.8% on `ru_slow` (102 WPM); 26.8% on `ru_fast` (205 WPM, marginal).
+- **Filler recognition:** 70% / 90% across the two A/B clips (sample-size-noise dominates the spread; both above 70% gate).
+- **Word-level timestamps:** confirmed. `ASRResult.tokenTimings` provides per-token `startTime`/`endTime` after BPE subword merging via `TokenMerger`.
+- **WPM accuracy:** 1.6% / 0.7% error vs ground truth on the two A/B clips. Spike #6 gate was <8%.
+- **Sustained-run stability:** 185 iterations, RSS flat, no leaks.
+
+### What changed in the docs
+- `03_ARCHITECTURE.md` — `ParakeetTranscriberBackend` section rewritten with validated numbers replacing the conservative pre-spike estimates. Phrase-level fallback caveat removed (word-level confirmed). Open-questions table marks Spike #10 closed.
+- `05_SPIKES.md` — Spike #10 marked ✅ passed with full validated outcomes and open follow-ups (none blocking). Spike #6 marked ✅ passed with locked production constants. Original spike specifications preserved below the validated outcomes for archaeology.
+- `04_BACKLOG.md` — Phase 0 table reordered. Closed spikes (S6, S10) noted with actual hours. Remaining work: S4 next P0 (3h), then S2/S8/S7/S9/S1. Phase 0 remaining ~21h (down from 35–39h).
+- `01_PROJECT_JOURNAL.md` — this entry.
+
+### The clean-vs-noisy A/B (Session 007 addendum)
+User recorded two ~165s Russian clips back-to-back, identical 298-word script:
+- `ru_clean.caf` — quiet home environment
+- `ru_noisy.caf` — café environment (matches the original Spike #6 recording conditions)
+
+Pace was slow-normal at ~110 WPM in both. Agent ran them through Phase C of the spike harness and produced a delta table.
+
+Result: WER identical at 9.4%. WPM error 1.6% / 0.7%. RTF essentially identical. Filler-rate gap (70% / 90%) is sample-size noise — 10 instances per clip, missing one filler shifts the rate by 10 points.
+
+The big takeaway: the fast-Russian quality cliff at 26.8% WER is a *pace* issue, not an environment issue. Café noise is fine. Russian-in-meetings should work for normal-paced speakers regardless of where they're working.
+
+### Caveat documented in REPORT.md addendum
+The clean-vs-noisy A/B was at ~110 WPM only. Russian-at-fast-pace under noise is untested. If real users report degraded fast Russian in noisy conditions during early v1 use, re-test with a fast-pace café clip. Logged as a v1.x follow-up, not a v1 blocker.
+
+### Architecture corrections from validated numbers
+The architecture doc's original estimates were:
+- Cold-start <30s — actual is two numbers: 53s first-ever, 16s recompile. The 30s gate was wrong; M3.6's "Preparing Russian model…" toast must handle ~1 minute on first download.
+- <800 MB memory — actual is 133 MB. Budget gate stays at 800 MB (defense-in-depth) but the realistic number is ~6× under.
+- 600 MB INT8 / 1.2 GB FP16 — INT8 was rejected. FP16 chosen because INT8 forces CPU-only Core ML execution, losing ANE offload, which is more expensive overall despite the smaller file. Architecture doc updated.
+
+### Where we left off
+- Phase 0 still has 5 open spikes: S4 (Zoom mic coexistence) is next P0, then S2 / S8 / S7 / S9 / S1.
+- User explicitly chose Path A: complete all Phase 0 spikes before any Phase 1 production code, on the basis that the design (UI/UX) work can run in parallel and Phase 1 implementation deserves a clean session start with no spike risk hanging over it.
+- No production code committed this session beyond the spike harness in `ParakeetSpike/`.
+- Working tree clean except for `WPMSpike/recordings/m4a/` (user's source Voice Memos exports). Adding to `.gitignore` next session — minor cleanup, not blocking.
+
+### Ups
+- Pre-converted Core ML model existed publicly. Saved a major chunk of work that I would have estimated 20+ agent hours.
+- Word-level timestamps confirmed. The Session 004 `SpeakingActivityTracker` design is preserved without compromise. No fallback logic to write, no degraded-Russian-WPM path to maintain.
+- Clean-vs-noisy A/B was the user's idea, and it's the most useful experiment we've run. It surfaced that the "noise problem" we thought we had was actually a "fast-pace problem." Different mitigation entirely.
+- Agent flagged the filler-rate delta as sample-size noise without me prompting. Right call.
+- 10h actual vs 8–12h estimate. Estimate was correct.
+
+### Downs
+- The original Spike #10 acceptance criterion of "<30s cold-start" was wrong. Should have been "<30s for warm/recompile cold-start; first-ever download is a one-time UX consideration covered by M3.6 toast." When I write spike pass criteria with hard numbers, I need to think about whether the number applies to all instances of the metric or only specific ones.
+- We learned that fast-pace Russian (~205 WPM) has noticeably worse WER than normal-pace. The product implication: a user who genuinely speaks Russian at 205 WPM will get a degraded experience compared to a 110 WPM speaker. That's a real product consideration but not a spike failure — Russian filler counting and WPM math both still work.
+- I asked about Phase 0 vs Phase 1 twice before getting an answer. Could have been one sharper ask.
+
+### Lesson for future spikes
+Whenever a spike measures a "cold-start" or any latency that has a one-time vs steady-state distinction, the acceptance criterion must be split into both. Otherwise the spike's pass/fail blurs together two different user experiences (first-ever vs every-day) that have different mitigations.
+
+### Next session
+- Generate Spike #4 prompt (Zoom mic coexistence) for Claude Code
+- After Spike #4 closes, S2 / S8 / S7 / S9 / S1 in priority order
+- Once all Phase 0 spikes close, write a Phase 0 summary entry covering all validated decisions, lock-in numbers, and the Phase 1 starting state. That's the entry the new session reads to begin Phase 1 implementation cleanly.
+
+---
+
 ## Session 006 — 2026-05-02 — Architecture Pivot Y: Apple + Parakeet, Russian via Core ML
 
 **Format:** Architecture decision triggered by Spike #6 incidentally discovering Russian is not on macOS 26.4.1's `SpeechTranscriber.supportedLocales`.

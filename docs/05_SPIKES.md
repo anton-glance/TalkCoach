@@ -13,7 +13,7 @@
 
 ## Spike #6 — WPM ground truth on real EN/RU recordings
 
-**Status:** 🔬 in progress (revised Session 004) · **Priority:** P0 · **Estimate:** 4h
+**Status:** ✅ passed (English Session 005, Russian Session 007 via Spike #10) · **Production constants locked:** window=6, alpha=0.3, tokenSilenceTimeout=1.5
 
 ### Question
 Does the WPM number we plan to display match what a stopwatch + manual word count says, in both English and Russian, across normal/fast/slow speech — using `SpeechAnalyzer` token timestamps as the speaking-duration source (not energy VAD)?
@@ -154,9 +154,18 @@ This spike's outputs (WER bars, filler recognition rates, word-boundary expectat
 
 ## Spike #4 — Mic coexistence with Zoom voice processing
 
-**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 3h
+**Status:** ⚠️ passed with caveats (Session 008). Full report at `MicCoexistSpike/REPORT.md`.
 
-### Question
+### Validated outcomes (Spike closed Session 008)
+- **VPIO stays false:** `isVoiceProcessingEnabled` remained `false` at every checkpoint across all 10 scenarios. macOS never overrode it. `setVoiceProcessingEnabled(false)` works as documented.
+- **Native apps (Zoom, FaceTime) coexist perfectly:** Zero gaps, zero config changes, zero audio degradation in either direction. Both C-pattern (app first) and D-pattern (harness first) pass cleanly. Zoom toggle (leave + rejoin mid-session) also clean.
+- **Browser Meet (Chrome, Safari) coexist with one caveat:** When Meet is already active before our engine starts, no issue. When Meet joins *after* our engine, it triggers `AVAudioEngineConfigurationChange` which stops the engine. Safari additionally changes channel count from 1→3. Conferencing audio is never degraded in either case.
+- **Production requirement:** `AudioPipeline` must observe `AVAudioEngineConfigurationChange` and restart engine + reinstall tap. Must use `format: nil` (never hardcode channel count). This is a well-documented Apple recovery pattern.
+- **Swift 6 concurrency finding:** Audio tap closures must NOT inherit `@MainActor` isolation — Swift 6's strict concurrency crashes at runtime (`_dispatch_assert_queue_fail`) if the tap closure is defined in a main-actor context. Define tap callbacks in a separate non-main-actor source file.
+- **Conferencing never degraded:** User confirmed hearing themselves clearly on the iPhone self-loop in all 10 scenarios.
+- **Total spike effort:** ~3h actual vs 3h estimated.
+
+### Original question
 Can our app continuously read mic input while Zoom is in a call, without degrading Zoom's audio for the user or remote participants?
 
 ### Why it matters
@@ -360,7 +369,30 @@ The shouting detector is the only audio-energy-based feature in the app (per Ses
 
 ## Spike #10 — Parakeet (NVIDIA) feasibility on macOS 26 / Apple Silicon
 
-**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 8–12h
+**Status:** ✅ passed (Sessions 006–007). Validated outcomes below; full implementation report at `ParakeetSpike/REPORT.md`.
+
+### Validated outcomes (Spike closed Session 007)
+- **Acquisition:** FluidInference's `parakeet-tdt-0.6b-v3-coreml` exists pre-converted on Hugging Face. FluidAudio (Apache 2.0 Swift SDK) wraps it with a clean API. Spike used FluidAudio as SPM dependency; production `ParakeetTranscriberBackend` (M3.5b) decides whether to keep that dependency or extract the model.
+- **Quantization tier:** FP16/ANE-optimized chosen. INT8 was rejected — INT8 forces CPU-only execution and gives up ANE offload, costing more battery overall despite smaller model file.
+- **Real-time factor:** 0.011 mean (≈90× real-time). 45× under the budget gate of 0.5.
+- **Peak working memory:** 133 MB. 6× under the 800 MB budget. Architecture doc updated to reflect actual measurement.
+- **Cold-start (3 tiers):** ~53s first-ever model download (one-time, M3.6 toast covers); ~16s recompile after cache eviction; 0.4s warm subsequent launches.
+- **Russian WER:** 9.4% on clean speech at ~110 WPM; 9.4% on café-noisy speech at same pace (clean-vs-noisy A/B in Session 007 confirmed café noise has zero measurable WER impact); 26.8% on fast speech at ~205 WPM (marginal — fast Russian is the actual quality cliff, not noise).
+- **Filler recognition:** 70–93% across the seed dictionary («ну», «как бы», «типа», «короче»), with sample-size variance dominating the spread — gate ≥70% met.
+- **Word-level timestamps:** confirmed. `ASRResult.tokenTimings` provides per-token `startTime`/`endTime`. After BPE subword merging via `TokenMerger`, words feed directly into `SpeakingActivityTracker`. Proportional-estimation fallback designed in Session 006 is **not needed** and dropped from M3.5b.
+- **Sustained run:** 185 iterations over 5 minutes with no memory leak, RSS flat. Confirms long-session stability.
+- **Total spike effort:** ~10h actual vs 8–12h estimated.
+
+### Open follow-ups (NOT blockers — all v1.x or routine)
+- Russian-at-fast-pace under noise: untested. The clean-vs-noisy A/B was at ~110 WPM only. If real users report degraded fast Russian in noisy meetings, re-test with a fast-pace café clip in v1.x.
+- Self-hosted CDN vs Hugging Face download: M3.6 (model download flow) decides whether production keeps Hugging Face as the source or relocates the model to an Anthropic-controlled CDN. Spike used HF; either is acceptable.
+- "Preparing Russian model…" toast copy: needs to handle ~1 minute on first-ever download, not 30 seconds. Update copy in M3.6.
+
+---
+
+### Original spike specification (preserved for reference)
+
+**Original priority:** P0 · **Original estimate:** 8–12h
 
 ### Question
 Can NVIDIA Parakeet (multilingual, v3) run as a Core ML model on macOS 26 / Apple Silicon, in real time, with word-level timestamps, at acceptable quality for Russian transcription, within a power/memory budget compatible with Architecture Y?

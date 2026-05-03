@@ -94,10 +94,15 @@
 
 **Implementation:**
 - `AVAudioEngine` with `inputNode` tap
-- **Voice Processing IO disabled** (`isVoiceProcessingEnabled = false`) — avoids fighting Zoom's echo cancellation
+- **Voice Processing IO disabled** (`isVoiceProcessingEnabled = false`) — set before `prepare()`/`start()`. Validated stable across all 10 Spike #4 scenarios; macOS never overrode it.
+- **Tap installed with `format: nil`** — lets the system provide whatever format the device negotiates. Required because Safari Meet changes input channel count from 1→3 mid-session (Spike #4); a hardcoded format would crash on that transition.
+- **Subscribe to `AVAudioEngineConfigurationChange` notifications.** When fired (browser-based Meet joining mid-session is the known trigger), the engine has stopped — re-fetch the input format, reinstall the tap with `format: nil`, and call `engine.start()` again. Native conferencing apps (Zoom, FaceTime) do not trigger this; only browser-based audio stacks do, and they only trigger it in the harness-first ordering. Recovery is a routine Apple pattern, not an exception case.
 - Tap callback delivers buffers to a fan-out:
   - → `TranscriptionEngine` (forwarded to whichever backend serves the active locale)
   - → RMS calculation (~10×/sec, fed to `ShoutingDetector` for adaptive noise-floor tracking)
+
+**Swift 6 concurrency requirement (Spike #4 finding):**
+The audio tap callback runs on Core Audio's `RealtimeMessenger.mServiceQueue`. If the closure is defined in a `@MainActor`-isolated context (e.g., inside `@main struct` body or `main.swift` top level), Swift 6's runtime checks crash with `_dispatch_assert_queue_fail` because the closure inherits main-actor isolation. Define tap closures in a separate non-main-actor source file. `AVAudioEngine`/`AVAudioInputNode` are non-Sendable; when captured in such closures, annotate with `nonisolated(unsafe)`. The compiler does NOT warn — this only surfaces at runtime.
 
 **Outputs:**
 - Audio buffers (for `TranscriptionEngine`)
@@ -129,13 +134,16 @@ The previous design included a standalone VAD module (energy-based or `SoundAnal
 - This is essentially "Apple does it for free" — minimal CPU/memory cost (validated in Spike #7 Phase A)
 
 **Backend B — `ParakeetTranscriberBackend` (fallback for locales Apple doesn't cover):**
-- Wraps an NVIDIA Parakeet v3 multilingual Core ML model (variant and quantization tier locked by Spike #10 outcome)
-- Used for any locale NOT in `SpeechTranscriber.supportedLocales` but in Parakeet's supported list (notably `ru_RU` for v1)
-- Realistic model size: 600 MB (INT8) to 1.2 GB (FP16); Spike #10 picks the tier
-- Downloaded on first use of any non-Apple locale, similar UX to Apple's first-use download (widget shows "Preparing [language] model…" toast). Self-hosted on a CDN we control; no analytics on the download.
-- Cold-start: <30s on first session (validated in Spike #10)
-- Real-time factor: <0.5 at chosen tier (i.e., processes 60s of audio in <30s; 2× real-time leaves headroom; validated in Spike #10)
-- Resource budget materially higher than Apple's: <15% CPU, <800 MB memory (validated in Spike #7 Phase B)
+- Wraps NVIDIA's `parakeet-tdt-0.6b-v3` multilingual model (Core ML conversion by FluidInference, distributed via FluidAudio Swift SDK — selected and validated in Spike #10)
+- Used for any locale NOT in `SpeechTranscriber.supportedLocales` but in Parakeet's supported list (notably `ru_RU` for v1; 25 European languages total)
+- Model file size on disk: ~1.2 GB (FP16, ANE-optimized). INT8 alternative exists but forces CPU-only execution and was rejected (Spike #10 — ANE offload preserves CPU/GPU headroom for Zoom)
+- Downloaded on first use of any non-Apple locale via FluidAudio's Hugging Face fetch on first invocation, with widget showing "Preparing [language] model…" toast. M3.6 may relocate this to a self-hosted CDN before launch — TBD.
+- Cold-start (validated Spike #10): three tiers — first-ever download ~53s on broadband (one-time, M3.6 toast covers this); recompile after cache eviction ~16s; warm subsequent runs 0.4s
+- Real-time factor (validated Spike #10): 0.011 mean, 0.032 worst (≈90× real-time) — well under the 0.5 budget gate
+- Peak working memory (validated Spike #10): 133 MB — far under the 800 MB budget. Architecture's earlier estimate was conservative by ~6×.
+- Sustained-run validation (Spike #10 Phase E): 185 iterations, no memory leak, RSS flat
+- Russian transcription quality (validated Spike #10 + Session 007 addendum): WER 9.4% on clean and noisy speech at ~110 WPM (gate <15%); WER 26.8% on fast speech at ~205 WPM (marginal — fast Russian is the actual quality cliff, not noise); filler recognition 70–93% (gate ≥70%); WPM accuracy <2% error in normal-pace conditions
+- Word-level timestamps confirmed (Spike #10 Phase D) — feed directly into `SpeakingActivityTracker`, no proportional-estimation fallback needed
 
 **Routing layer — `TranscriptionEngine` itself:**
 - Receives detected locale from `LanguageDetector`
@@ -150,7 +158,7 @@ The previous design included a standalone VAD module (energy-based or `SoundAnal
 **Outputs:** Stream of `(token, startTime, endTime, isFinal)` records — identical schema regardless of backend; downstream `SpeakingActivityTracker` and `Analyzer` are unaware of which backend produced them.
 
 **Caveats:**
-- Word-level vs phrase-level timestamps: `SpeechAnalyzer` produces word-level. Parakeet-Core-ML may produce phrase-level (Spike #10 Phase D validates). If Parakeet emits phrase-level only, `ParakeetTranscriberBackend` does proportional estimation within phrases (N words over T seconds → each word `T/N` duration centered in the phrase) before emitting tokens. WPM accuracy may degrade slightly for Russian sessions; documented as known limitation in journal if so.
+- Word-level vs phrase-level timestamps: `SpeechAnalyzer` produces word-level. Parakeet's Core ML port (FluidAudio) was validated word-level in Spike #10 Phase D — `ASRResult.tokenTimings` provides per-token `startTime`/`endTime` after BPE subword tokens are merged. The proportional-estimation fallback designed in Session 006 is not needed and is dropped from `ParakeetTranscriberBackend`'s scope.
 - First use of any locale triggers a model download — handled silently with widget toast.
 - Apple's `AssetInventory.status(forModules:)` returns `.unsupported` for locales the platform actually doesn't support, even if `supportedLocale(equivalentTo:)` returns the locale. The routing layer must check `supportedLocales` (the list), not `supportedLocale(equivalentTo:)` (the misleading helper). Spike #6 / Session 006 found this the hard way.
 
@@ -190,7 +198,7 @@ The "two transcribers in parallel" approach (Option A) is **disqualified** by po
 #### `WPMCalculator`
 - Maintains a sliding window of (token timestamp, word count) pairs
 - Window length: 5–8 seconds (final value tuned in Spike #6)
-- **Speaking duration source:** `SpeakingActivityTracker.speakingDuration(in:)` — i.e., the active backend's speech/non-speech classification, not energy VAD. For Apple backend this comes from `SpeechAnalyzer`'s ML-based classification; for Parakeet backend, from token arrival timestamps in the same `(startTime, endTime)` schema (with proportional estimation within phrases if Spike #10 finds Parakeet emits phrase-level only).
+- **Speaking duration source:** `SpeakingActivityTracker.speakingDuration(in:)` — i.e., the active backend's speech/non-speech classification, not energy VAD. For Apple backend this comes from `SpeechAnalyzer`'s ML-based classification; for Parakeet backend, from word-level token timestamps (validated Spike #10 Phase D — both backends produce the same `(startTime, endTime)` schema natively).
 - When `speakingDuration` is 0 in the window, return last smoothed value (hold-on-disagreement, prevents jitter)
 - Smooths with EMA (alpha ~0.3) to prevent jitter
 - Emits short-window WPM and running session average
@@ -422,11 +430,11 @@ SessionStore: persist Session via SwiftData
 |---|---|
 | How to identify the app activating the mic? | Spike #1 |
 | Which language auto-detect approach? | Spike #2 |
-| Mic coexistence with Zoom voice processing? | Spike #4 |
-| WPM accuracy vs ground truth? | Spike #6 (English ✅ passed Session 005; Russian validated via Spike #10) |
-| Architecture Y power envelope (Apple + Parakeet)? | Spike #7 (revised Session 006) |
+| Mic coexistence with Zoom voice processing? | Spike #4 ✅ passed Session 008 (browser Meet has recoverable config-change caveat) |
+| WPM accuracy vs ground truth? | Spike #6 (English ✅ passed Session 005; Russian ✅ passed Session 007) |
+| Architecture Y power envelope (Apple + Parakeet)? | Spike #7 (Parakeet portion already characterized in Spike #10 Phase E; Apple portion still open) |
 | Token-arrival robustness across mics/environments? | Spike #8 |
 | Adaptive RMS noise-floor for shouting? | Spike #9 |
-| Parakeet feasibility on macOS for Russian? | Spike #10 (replaces Spike #3) |
+| Parakeet feasibility on macOS for Russian? | Spike #10 ✅ passed Session 006–007 |
 
-If any of Spike #4, #6 (Russian leg), #7, or #10 fail, this architecture changes meaningfully. Run #10 first — it gates Architecture Y.
+Spike #10 closed Architecture Y as feasible. Remaining open spikes: #4, #2, #8, #9, #1, plus #7's Apple-baseline phase. If any of those fail, the architecture may shift but Architecture Y itself is now locked.
