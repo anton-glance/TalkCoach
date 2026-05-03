@@ -165,21 +165,32 @@ The previous design included a standalone VAD module (energy-based or `SoundAnal
 ---
 
 ### 5. `LanguageDetector`
-**Job:** Decide which locale to initialize `TranscriptionEngine` with.
+**Job:** Decide which of the user's declared locales to initialize `TranscriptionEngine` with for the current session.
 
-**Implementation:** TBD — to be selected by Spike #2. Options on the table:
-- **Option B:** Best-guess (last-used or system locale) → transcribe → use `NLLanguageRecognizer` on the partial transcript → swap if wrong
-- **Option C:** Small audio language-ID model (Whisper-tiny LID head as Core ML, or alternative)
+**Inputs:**
+- `declaredLocales: [Locale]` from `Settings` (1 or 2 entries — locked at onboarding, editable in settings)
+- Optionally: live audio buffers and/or partial transcript (depending on which detection mechanism Spike #2 selects)
 
-The "two transcribers in parallel" approach (Option A) is **disqualified** by power budget (FM4).
+**Behavior by N (count of declared languages):**
 
-**Architecture Y interaction (Session 006):**
-- `LanguageDetector` outputs a `Locale`, not a backend choice. `TranscriptionEngine` decides routing.
-- For Option B (best-guess + swap): the "best guess" must be a locale Apple supports if at all reasonable, since Apple's path is materially cheaper. Defaults: last-used locale → system locale → `en_US`. Only escalate to a Parakeet locale if `NLLanguageRecognizer` confidently detects one.
-- For Option C: language-ID model output feeds `TranscriptionEngine`'s router; same routing rules.
-- A swap mid-session may cross the backend boundary (e.g., user starts in English, switches to Russian). `TranscriptionEngine` handles the actual backend swap; `LanguageDetector` just emits the new locale.
+**N=1 (most common case):**
+- No detection runs. `LanguageDetector` returns the single declared locale immediately.
+- `TranscriptionEngine` routes to the locale's backend. No swap ever happens — only one language is in scope.
+- This path is correct by construction; no spike validation needed for N=1.
 
-**Outputs:** A `Locale` to use for the session, possibly with a "low confidence, re-evaluate after 5s" flag.
+**N=2 (bilingual users):**
+- Binary classifier between exactly the two declared locales. The auto-detect mechanism never has to consider any other language in the world — only these two.
+- Detection mechanism selected by Spike #2:
+  - **Option B:** Initialize transcription with a "best guess" (last-used locale → declaredLocales[0]). After ~5 seconds of partials, run `NLLanguageRecognizer` on the accumulated text. If detected language matches a different declared locale than the current one → swap. The cost is ~5 seconds of potentially-wrong-language transcription before the swap.
+  - **Option C:** Run a small audio language-ID model on the first ~3 seconds of audio before transcription begins. The widget shows "Listening…" during those 3 seconds, then commits to a backend with no swap. The cost is ~3 seconds of pre-transcription latency.
+- The "two transcribers in parallel" approach (Option A) is **disqualified** by power budget (FM4).
+
+**Architecture Y interaction (Session 006, refined Session 008):**
+- `LanguageDetector` outputs a `Locale`, not a backend choice. `TranscriptionEngine` decides routing per the locale → backend rule.
+- A swap (N=2 only) may cross the backend boundary if the two declared locales are served by different backends (e.g., English via Apple, Russian via Parakeet). `TranscriptionEngine` handles the actual backend swap; `LanguageDetector` just emits the new locale.
+- Both backends are pre-known at onboarding (the user's two declared locales determine which backends ever get loaded). Models for both are downloaded on first session per backend, never speculatively.
+
+**Outputs:** A `Locale` to use for the session, possibly with a "low confidence, re-evaluate after 5s" flag (Option B only).
 
 ---
 
@@ -297,12 +308,14 @@ The "two transcribers in parallel" approach (Option A) is **disqualified** by po
 **Job:** UserDefaults-backed preferences.
 
 **Keys:**
+- `declaredLocales` ([String], 1–2 entries, locale identifiers like "en_US", "ru_RU"). Set at onboarding; editable from Settings. No default — onboarding requires the user to pick at least one. System locale pre-checked at onboarding.
 - `wpmTargetMin`, `wpmTargetMax` (Int, defaults 130, 170)
 - `blocklistAppBundleIDs` ([String])
-- `fillerDictEN`, `fillerDictRU`, `fillerDictES` ([String], merged with seed if empty)
+- `fillerDict[<localeIdentifier>]` ([String], one entry per declared locale, merged with bundled seed if available for that locale; empty otherwise)
 - `widgetPositionByDisplay` ([String: CGPoint])
 - `coachingEnabled` (Bool, default true)
 - `hotkeyEnabled` (Bool, default true)
+- `hasCompletedOnboarding` (Bool, default false; set to true after the user picks their declared languages)
 
 ---
 
@@ -429,7 +442,7 @@ SessionStore: persist Session via SwiftData
 | Question | Resolved by |
 |---|---|
 | How to identify the app activating the mic? | Spike #1 |
-| Which language auto-detect approach? | Spike #2 |
+| Which auto-detect mechanism for N=2 declared-locale binary classification? | Spike #2 |
 | Mic coexistence with Zoom voice processing? | Spike #4 ✅ passed Session 008 (browser Meet has recoverable config-change caveat) |
 | WPM accuracy vs ground truth? | Spike #6 (English ✅ passed Session 005; Russian ✅ passed Session 007) |
 | Architecture Y power envelope (Apple + Parakeet)? | Spike #7 (Parakeet portion already characterized in Spike #10 Phase E; Apple portion still open) |

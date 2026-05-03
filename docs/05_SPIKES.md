@@ -198,55 +198,78 @@ FM4 (no performance impact). Apple Developer Forums show that VPIO (Voice Proces
 
 ---
 
-## Spike #2 — Language auto-detect mechanism
+## Spike #2 — Language auto-detect mechanism (N=2 binary classifier)
 
-**Status:** 📋 planned · **Priority:** P1 (run after S7) · **Estimate:** 6h
+**Status:** 📋 planned · **Priority:** P1 (next P1 after S4 closed Session 008) · **Estimate:** 5h
+
+### Scope (locked Session 008)
+
+The product makes a fundamentally simpler choice than the original Spike #2 envisioned: users declare 1 or 2 languages at first-launch onboarding, from the union of Apple's 27 + Parakeet's 25 supported locales (~50 distinct languages). N=1 needs no detection at all (return the single declared locale). Only N=2 requires a runtime detector, and it only ever has to pick between two specific pre-declared locales — never against the full set of world languages.
+
+This narrows the spike to: **does our chosen mechanism reliably pick the correct one of two arbitrary declared locales, on short clips, across language pairs that vary in similarity?**
 
 ### Question
-Which approach to language auto-detection:
-- (B) Best-guess locale → transcribe → use `NLLanguageRecognizer` on partials → swap if wrong
-- (C) Small dedicated audio language-ID model (e.g., Whisper LID head, alternative Core ML model) → identify locale → start transcription
+Which approach for the N=2 binary classifier:
+- **(B)** Best-guess (last-used or `declaredLocales[0]`) → transcribe → use `NLLanguageRecognizer` on partials after ~5s → swap if detected language ≠ initialized language
+- **(C)** Small audio language-ID model → identify locale on first ~3s of audio → commit to a backend before transcription begins
 
-(Option A — two transcribers in parallel — is **disqualified** by Spike #7 power budget regardless of outcome.)
+(Option A — two transcribers in parallel — is **disqualified** by power budget, FM4.)
 
 ### Why it matters
-User wants pure auto-detect every session. Both options have real costs and accuracy questions. Need data before committing.
+The user-facing behavior of `LanguageDetector` differs materially between the two:
+- Option B: instant transcription start; first ~5 seconds of words may be discarded if language guess was wrong (cost: words missed at session start)
+- Option C: ~3-second "Listening…" delay before any transcription; once committed, no swap (cost: latency at session start)
+
+The wrong choice degrades FM2 (unreliable data) at the start of every session. We need empirical data on which is less bad.
 
 ### Method
 
-**Test corpus:** 10 short clips (10s each), mixed:
-- 4 EN
-- 4 RU
-- 2 ES
-- (later) some borderline cases: code-switched, mumbled start, ambient music + speech
+**Test corpus:** YouTube clips, ~10 seconds each, ~4 per language. Single speaker, monologue/news/interview content, no music, no overlapping voices. The user (Anton) sources from YouTube, downloads audio via `yt-dlp` or similar, converts to `.caf` for the harness.
+
+Three representative pairs covering different similarity regimes:
+- **EN + RU** (Latin + Cyrillic, very different acoustic and tokenization profile) — primary use case, easiest acoustic distinction
+- **EN + JA** (Latin + non-Latin, different from EN+RU because Japanese phonology is also very different from English) — stress test
+- **EN + ES** (both Latin alphabet, both Apple-routed, more similar acoustic profile) — the harder case; if this works, the easier pairs work too
+
+For each pair, the harness presents a clip from one of the two languages and the detector must say which. 4 clips × 2 languages × 3 pairs = 24 clip evaluations total. Source 4 clips per language, so 16 raw clips needed (4 EN × 1 + 4 RU + 4 JA + 4 ES, with EN reused across the three pairs).
 
 **Option B test:**
-1. Initialize `SpeechTranscriber(locale: en_US)` for all clips (worst-case wrong-guess scenario)
-2. After 5s of partials, run `NLLanguageRecognizer` on accumulated text
-3. If detected locale ≠ initialized locale, swap recognizer
-4. Measure: detection accuracy, time-to-detection, words-discarded during swap
+1. For each clip: initialize the transcriber with the *opposite* language from what the clip actually contains (worst-case wrong-guess to stress the swap logic)
+2. After 5 seconds of partials, run `NLLanguageRecognizer` on the accumulated text
+3. Record: did the detector identify the correct language? How many words were emitted in the wrong-language interpretation before the swap (count from the partial transcript)?
+4. Measure: detection accuracy %, mean wrong-language words emitted, time from clip start to detection decision
 
 **Option C test:**
-1. Find a Core ML language-ID model (Whisper-tiny LID head; alternative: train one in CreateML if needed; alternative: a third-party model)
-2. Run on first 3s of each clip's audio
-3. Measure: detection accuracy, time-to-detection, model size, CPU cost
+1. Find a Core ML language-ID model. First check: does a small public LID model exist (e.g., from Hugging Face) covering at least the 50 candidate locales? Whisper-tiny LID head, or alternative.
+2. For each clip: run the LID model on the first 3 seconds, get a locale identifier or score vector restricted to the two declared locales
+3. Record: did the model identify the correct one? What was the model's confidence?
+4. Measure: detection accuracy %, model size in MB, CPU/inference time per clip
 
 ### Pass criteria
 
-For whichever option performs better:
-- ≥85% language detection accuracy across the corpus
-- Time-to-decision <5s
-- Cost (Option C) within budget per Spike #7
-- Discarded-words count (Option B) low enough that the user doesn't notice the first few words being missed
+For the option chosen for production:
+- ≥90% accuracy on the EN+RU pair (the bilingual case the architecture was designed around)
+- ≥90% accuracy on the EN+JA pair (the stress test)
+- ≥85% accuracy on the EN+ES pair (acceptable given more similar acoustic profile)
+- Time-to-decision: Option B ≤5s after session start; Option C ≤3s (the "Listening…" window) before session starts
+- Option C model must be ≤200 MB on disk; CPU cost validated against Spike #7's residual budget after the Apple/Parakeet stacks
 
 ### Fail mode → action
-- **Both options weak:** propose hybrid — use Option B with system-locale-as-best-guess (most likely right anyway), live with occasional wrong-language-first-5s. Document as known limitation.
-- **Option C model unavailable / huge:** fall back to Option B
-- **Option B accuracy too low:** Option C is the only path; if no model fits, scope decision: ship with manual language picker only, defer auto-detect to v1.x
+- **Both options below 85% on the harder pairs (EN+ES):** declare auto-detect unsuitable for some pairs; ship with a UI-level manual override prompt for those pairs at session start. Document.
+- **Option C model unavailable, large, or below 90% on EN+RU:** Option B is the path. Accept the ~5s start-of-session penalty.
+- **Option B's wrong-guess interval emits too many wrong-language words:** consider using `declaredLocales[0]` as best-guess (the user's primary) instead of `last-used`, on the assumption that primary language is more common per session.
+- **Both options fail across all pairs:** ship with manual language switcher in menu bar only, defer auto-detect to v1.x. The product still works; user has to flip a menu bar control when they start a different-language session.
 
 ### Outputs
-- Selected approach + tuned parameters
-- Implementation sketch for `LanguageDetector` module (M3.4)
+- Selected mechanism (B or C) with measured numbers per pair
+- Implementation sketch for `LanguageDetector` M3.4 module (a few hundred lines max)
+- The chosen mechanism's tuned parameters: detection-window length (Option B) or first-N-seconds (Option C), confidence threshold, hysteresis if any
+
+### Out of scope
+- N=1 case (no detection needed, return declaredLocales[0])
+- N>2 case (forbidden by product spec; user can pick max 2)
+- Mid-session re-detection (Option B's swap *is* mid-session re-evaluation; Option C does not support mid-session swap by construction)
+- Detection across all 50 candidate locales (the spike only validates the binary case actual users encounter)
 
 ---
 

@@ -4,6 +4,82 @@
 
 ---
 
+## Session 009 — 2026-05-02 — Language model simplified to N≤2 declared at onboarding; Spike #2 rescoped
+
+**Format:** Architecture decision triggered by user observation about real-user multilingual frequency.
+
+### What happened
+While prepping the Spike #2 prompt, the user (Anton) raised an onboarding question that reframed the entire language-detection design: *"I'm thinking about an onboarding question: which languages do you speak and want to improve. Allow to select 3 max, expecting most of the users select 1 and some 2. Hardly believe multilingual audience for this app."*
+
+That observation flips Spike #2's premise. The original design assumed runtime auto-detection across the v1 supported languages with no user input — a 3-way classifier (EN/RU/ES) at minimum, potentially harder if v1 added languages later. The user's read of the audience says: most users will declare 1 language, some will declare 2, almost none will declare 3+.
+
+After working through implications, the user simplified further: **v1 supports max 2 declared languages, picked at first-launch onboarding from the union of Apple's 27 + Parakeet's 25 supported locales (~50 distinct languages).**
+
+### Decision: declared-languages model (locked Session 009)
+
+**At onboarding (M1.7, new module):**
+- Single screen, one question: "Which 1–2 languages do you speak in meetings?"
+- Combined alphabetized list of ~50 locales (Apple ∪ Parakeet supported sets). Backend choice (Apple vs Parakeet) is invisible to the user — app decides routing internally.
+- System locale pre-checked as default. User must affirmatively pick at least one. Max 2 selectable.
+- Editable from Settings later.
+- Sets `declaredLocales: [Locale]` (1 or 2 entries) and `hasCompletedOnboarding: Bool` in `Settings`/`UserDefaults`.
+
+**At runtime (`LanguageDetector` module, simplified):**
+- N=1: no detection. Return `declaredLocales[0]` immediately. Most users — most sessions — never run any auto-detect machinery.
+- N=2: binary classifier between exactly the two declared locales. Never has to consider any other language in the world. Spike #2 picks the mechanism (Option B vs C).
+- The "two transcribers in parallel" approach (Option A) remains disqualified by FM4.
+
+### Why this is materially cleaner
+- A 2-way classifier is meaningfully more accurate than a 3-way or N-way one. Smaller candidate set, fewer wrong calls.
+- Backend routing is fully precomputed at onboarding. A user who picks only English never downloads Parakeet, never sees a Russian-related anything. The 1.2 GB Parakeet download becomes opt-in.
+- "Unsupported language at runtime" disappears as a concept — onboarding gates it. If the user can't pick a language, they can't speak it to the app.
+- Language-specific assets (filler dictionary, WPM target, locale model) are seeded only for declared languages.
+- Spike #2 simplifies — fewer pairs to test, smaller harness, narrower acceptance criteria.
+
+### Why this works within FM3 (no setup)
+The product spec previously locked "no dedicated onboarding screen, ≤2 first-launch user actions." This decision technically adds an onboarding screen but the user-action count stays at 2: (1) language picker (one screen, one question), (2) mic permission grant (system dialog at first session start). The product spec's FM3 wording is updated to "Minimal setup" instead of "No setup" — that's a more accurate framing of where v1 actually lands.
+
+### Scope impact
+
+**Added:**
+- New module **M1.7** in Phase 1: onboarding language picker (3h)
+- New `Settings` keys: `declaredLocales: [Locale]`, `hasCompletedOnboarding: Bool`. Filler dict keys move to `fillerDict[<localeIdentifier>]` instead of fixed `fillerDictEN/RU/ES`.
+
+**Reduced:**
+- **M3.4** `LanguageDetector` estimate: 6–10h → 4–6h. Binary classifier is materially smaller than the N-way version, and N=1 case is a no-op.
+
+**Revised:**
+- **Spike #2** rewritten in `05_SPIKES.md` to test the binary classifier across three representative language pairs: EN+RU, EN+JA, EN+ES. Test corpus sourced from YouTube (public monologue/news clips, ~10s each, 4 per language). Pass criteria tightened: ≥90% on EN+RU and EN+JA, ≥85% on EN+ES (the more similar pair). Estimate revised 6h → 5h.
+- **`02_PRODUCT_SPEC.md`** Languages and Language Handling sections rewritten to reflect onboarding picker and ~50 locale union. Filler dictionary scope generalized.
+- **`03_ARCHITECTURE.md`** `LanguageDetector` section rewritten: explicit N=1 trivial path + N=2 binary classifier behavior. Settings keys updated. Open questions table reflects narrower Spike #2 scope.
+- **`04_BACKLOG.md`** Phase 1 totals 11h → 14h (+M1.7). Phase 3 totals 40–48h → 38–44h (M3.4 reduced). Project total roughly net zero.
+
+### Where we left off
+- All four affected docs (02, 03, 04, 05) updated and ready for replacement in repo
+- No agent prompt for Spike #2 has been generated yet — that's the immediate next session task
+- No production code committed this session beyond previous commits
+- Session 008's Spike #4 commit (`a31231d`) and prior commits remain the head of main; this session adds doc updates only
+
+### Ups
+- User caught an over-engineering instinct in my Spike #2 framing. I had been designing for "auto-detect any language anywhere," which was the wrong product premise for an audience that's mostly monolingual or bilingual.
+- The simpler model genuinely is simpler at every layer: spec, architecture, spike, module, runtime cost. Rare to find a simplification that wins on all axes.
+- Confirmed via the conversation that the architecture's `TranscriptionEngine` routing layer (locked Session 006) survives this change unmodified — it just gets fewer locales to route in practice. Good signal that the underlying abstraction is sound.
+
+### Downs
+- This is the second time in the project's planning that an "obvious" requirement (here: real-time auto-detection) turned out to be over-scoped relative to actual audience behavior. The first was Session 001's hotkey-vs-auto-detect oscillation. Lesson: when designing a feature for a hypothetical user, double-check the hypothesis against the *actual* user (Anton) before locking it in.
+- Slight re-scope cost on `02_PRODUCT_SPEC.md` and `03_ARCHITECTURE.md`. Not a huge edit, but it's the third "small" architecture-doc rewrite this week. Each one is justified, but each one also hurts confidence in the locked-ness of "locked" decisions.
+
+### Lesson for future planning
+**Before a spike defines its test corpus, the architect must verify the spike's runtime scope matches the real product scope, not an inflated worst-case scope.** Spike #2 was originally scoped for "auto-detect any of v1's 3 languages, plus future flexibility" — but the runtime never needed to do that, because the user pre-declares which languages matter. The corpus was sized for a problem the product doesn't actually solve. Add to `00_COLLABORATION_INSTRUCTIONS.md` next session: when reviewing a spike's plan, explicitly ask "what does the runtime *actually* see in production, not in theory."
+
+### Next session
+- Generate revised Spike #2 prompt for Claude Code with the N=2 binary-classifier scope
+- User sources YouTube clips for the EN+RU, EN+JA, EN+ES test corpus
+- Agent runs Spike #2 phases A through D, reports outcome
+- After Spike #2 closes, S8 (token-arrival robustness) is the next P1
+
+---
+
 ## Session 008 — 2026-05-02 — Spike #4 closed PASS WITH CAVEATS, Mic Coexistence Validated
 
 **Format:** Claude Code agent execution (Spike #4 all scenarios), user-assisted real-device testing.

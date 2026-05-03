@@ -48,14 +48,13 @@ If felt experience and displayed data disagree, trust collapses.
 - Filler counts must be obvious-case correct (catching "so", "um", "ну", "это")
 - Calibration validated on real recordings before shipping
 
-### FM3 — No setup
-First launch must be ≤2 user actions.
-- No dedicated onboarding screen
-- Permissions requested at point of use
-- English model pre-bundled (or silent-downloaded with no UI)
-- Russian via Parakeet backend silent-downloads on first detected Russian session — ~600 MB one-time, widget shows "Preparing Russian model…" toast (Architecture Y, Session 006)
-- Spanish via Apple backend silent-downloads on first detected Spanish session
-- Sensible defaults for everything (WPM band, widget position, filler dictionary)
+### FM3 — Minimal setup
+First launch must be ≤2 user actions total.
+- **One question at first launch:** "Which 1–2 languages do you speak in meetings?" Default: system locale, single selection. User can change in Settings later. Counts as one user action.
+- **Mic permission grant** at first session start (point-of-use, system dialog). Counts as the second user action.
+- No further setup required. No "tutorial," no "tour," no "configure your preferences."
+- Models silent-download on first use of each declared language: Apple-served languages (~150 MB) silently via `AssetInventory`; Parakeet-served languages (~1.2 GB) one-time CDN download with widget toast "Preparing [language] model…"
+- Sensible defaults for everything else (WPM band, widget position, filler dictionary, hotkey)
 
 ### FM4 — No performance impact
 Invisible cost during 1hr Zoom calls on battery.
@@ -90,15 +89,18 @@ Invisible cost during 1hr Zoom calls on battery.
 - Volume/shouting events
 
 ### Filler-word dictionary (v1: seeded + manually editable)
-- Per-language seed lists for EN, RU, ES
-- User can add/remove words via settings
+- Bundled seed lists for high-priority languages (EN, RU, ES at minimum, plus any others we have native-speaker seed contributions for at launch). For declared languages without a bundled seed dictionary, the user starts with an empty list and adds fillers via settings as they notice them.
+- User can add/remove words via settings, per language
 - *Auto-learning is NOT in v1 — parked for v1.x*
 
 ### Language handling
-- Auto-detect per session (mechanism TBD via Spike #2)
-- Manual override always one click away in menu bar
-- Models download silently on first use of each language
-- Initial set: en-US (Apple backend), ru-RU (Parakeet backend), es-ES (Apple backend). Backend routing is automatic per locale — see Architecture Y in `03_ARCHITECTURE.md`.
+- User declares 1 or 2 languages at first-launch onboarding. Editable anytime in Settings.
+- Available choices: any locale in the union of Apple `SpeechTranscriber.supportedLocales` (27) ∪ Parakeet v3 supported locales (25) ≈ 50 distinct languages.
+- Single combined alphabetized list at the picker; backend (Apple vs Parakeet) is invisible to the user. App decides routing internally.
+- When N=1: no auto-detect runs; the declared locale is used for every session.
+- When N=2: auto-detect chooses between the two declared locales per session (mechanism TBD via Spike #2).
+- Manual override always one click away in menu bar (toggle between the two declared languages).
+- Filler dictionaries, model downloads, and per-language assets are seeded only for the user's declared languages — users who pick only English never see "Preparing Russian model…" or pay the Parakeet download cost.
 
 ### Session storage (local only, metrics-only schema)
 ```
@@ -145,31 +147,35 @@ No transcripts persisted. No app names persisted. No timestamps within day excep
 |---|---|
 | WPM target band | 130–170 (single global, language-agnostic in v1) |
 | Widget position | Top-right of main display |
-| Auto-detect language | On |
+| Declared languages | System locale, single (user can change to any pair at onboarding or later in Settings) |
+| Auto-detect language | Active only when user has declared 2 languages (otherwise no-op) |
 | Per-app blocklist | Empty |
-| Filler dictionary | Built-in seeded for EN, RU, ES |
+| Filler dictionary | Built-in seeded for EN/RU/ES + any others bundled at launch; empty for other declared languages until user adds entries |
 | Session retention | Forever (metrics are tiny) |
 | Menu bar icon | Visible (user can hide via 3rd-party tools if desired) |
 | Hotkey | Cmd+Shift+M to toggle coaching on/off (override auto) |
 
-All settings are accessible but no setting is required to start using the app.
+All settings are accessible. The only required first-launch step is the language picker (1 question) plus the mic permission grant on first session.
 
 ---
 
 ## Languages at launch
 
-Architecture Y (Session 006) routes each locale to the right backend:
+The user picks 1 or 2 languages at first-launch onboarding from a single combined alphabetized list. The list contains the union of:
+- Apple `SpeechTranscriber.supportedLocales` on macOS 26 (currently 27 locales, including English variants, Spanish variants, French, German, Italian, Portuguese, Korean, Japanese, several Chinese variants)
+- Parakeet v3 supported locales (25 European languages, including Russian and most Apple locales — overlap is fine; Apple is preferred when both cover a locale)
 
-**Apple `SpeechAnalyzer` path** (cheap, OS-integrated, ~free per session):
-- **en-US** — primary, silent-downloaded by `AssetInventory` on first session
-- **es-ES / es-MX / es-US** — silent download on first Spanish session (specific locale auto-detected)
+Total ≈ 50 distinct languages available at launch.
 
-**Parakeet (Core ML) path** (Apple-unsupported locales; one-time CDN download of ~600 MB on first use):
-- **ru-RU** — Russian transcription via `ParakeetTranscriberBackend` because `SpeechTranscriber.supportedLocales` does not include Russian on macOS 26.4.1 (discovered Session 006). First Russian session triggers a one-time model download with widget toast "Preparing Russian model…"
+**Routing is invisible to the user.** The picker shows just language names. Internally:
+- If the chosen locale is in Apple's list → routed to `AppleTranscriberBackend`. Model silent-downloads via `AssetInventory` on first session, ~150 MB. No toast.
+- If only Parakeet covers the locale (e.g., Russian) → routed to `ParakeetTranscriberBackend`. Model one-time CDN download on first session with widget toast "Preparing [language] model…", ~1.2 GB.
 
-The user-visible behavior is identical regardless of backend — both show a "Preparing [language] model…" toast on first use, both stream tokens through the same downstream pipeline, both produce the same metrics. The backend split is invisible to the user except for the larger one-time download for Russian.
+**A user who picks only English** never downloads Parakeet, never sees a Russian-related anything. The app stays small and Apple-native for that user.
 
-Other locales (other Parakeet-supported European languages, additional Apple-supported locales) are not v1 priorities. Adding a new locale post-launch is a config change once the routing layer is in place.
+**A user who picks English + Russian** (the bilingual case the architecture was designed around) downloads both: Apple's English model on first English session (no toast), Parakeet's multilingual model on first Russian session (toast).
+
+Adding a new locale post-launch is a one-line registry update — no architecture change required.
 
 ---
 

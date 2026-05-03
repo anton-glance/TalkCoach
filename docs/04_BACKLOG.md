@@ -37,11 +37,12 @@ Goal: a runnable menu bar app with no real functionality, but all the structural
 | M1.1 | Xcode project setup, entitlements, Info.plist, code signing | 📋 | 2h | — |
 | M1.2 | App lifecycle: `TalkCoachApp`, `LSUIElement`, `MenuBarExtra` skeleton | 📋 | 2h | M1.1 |
 | M1.3 | Empty `StatsWindow` opening from menu bar | 📋 | 1h | M1.2 |
-| M1.4 | `Settings` (UserDefaults wrapper) skeleton | 📋 | 1h | M1.2 |
+| M1.4 | `Settings` (UserDefaults wrapper) skeleton + `declaredLocales` schema | 📋 | 1h | M1.2 |
 | M1.5 | SwiftData `Session` schema + empty `SessionStore` | 📋 | 3h | M1.1 |
 | M1.6 | Permission request flow for mic + speech (point-of-use, not pre-emptive) | 📋 | 2h | M1.2 |
+| M1.7 | Onboarding language picker: single screen, one question, EN/RU/ES + ~50 other locales, max 2 selected, system locale pre-checked, sets `declaredLocales` and `hasCompletedOnboarding` | 📋 | 3h | M1.4 |
 
-**Phase 1 total: ~11h.**
+**Phase 1 total: ~14h** (was 11h; +3h for M1.7 onboarding language picker added Session 008).
 
 **End-of-phase checkpoint:** App builds, runs, shows menu bar icon, opens empty stats window, requests permissions when needed, exits cleanly.
 
@@ -76,7 +77,7 @@ Goal: while a session is active, audio is being captured, transcribed in the rig
 | M3.1 | `AudioPipeline`: AVAudioEngine setup, voice-processing-OFF, raw input tap | 📋 | 4h | S4 (passed) |
 | M3.2 | `SpeakingActivityTracker`: derive speaking duration from token timestamps | 📋 | 2h | M3.5, S6/S8 (passed) |
 | M3.3 | RMS calculation on audio buffers | 📋 | 1h | M3.1 |
-| M3.4 | `LanguageDetector` (mechanism per Spike #2) | 📋 | 6–10h | S2 (passed) |
+| M3.4 | `LanguageDetector`: N=1 trivial path + N=2 binary classifier (mechanism per Spike #2) | 📋 | 4–6h | S2 (passed), M1.7 |
 | M3.5 | `TranscriptionEngine` routing layer: locale → backend selection, unified token stream output | 📋 | 4h | M3.5a, M3.5b, M3.4 |
 | M3.5a | `AppleTranscriberBackend`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | 📋 | 4h | M3.4 |
 | M3.5b | `ParakeetTranscriberBackend`: Core ML model load, inference loop, timestamp normalization | 📋 | 8–12h | S10 (passed) |
@@ -178,16 +179,16 @@ Goal: take the working app to public-release quality.
 | Phase | Goal | Estimate |
 |---|---|---|
 | 0 | Spikes (incl. S10 Parakeet) | 35–39h |
-| 1 | Foundation | 11h |
+| 1 | Foundation (incl. onboarding language picker) | 14h |
 | 2 | Mic detection + session lifecycle | 20h |
-| 3 | Audio pipeline + transcription engine (Architecture Y) | 40–48h |
+| 3 | Audio pipeline + transcription engine (Architecture Y) | 38–44h |
 | 4 | Analyzer | 19h |
 | 5 | Widget UI | 22h |
 | 6 | Stats window | 16h |
 | 7 | Polish & ship | 29h |
-| **Total** | **v1 complete** | **~192–204h focused effort** |
+| **Total** | **v1 complete** | **~193–203h focused effort** |
 
-Architecture Y (Session 006) added ~22–31h: Parakeet feasibility spike (S10), expanded Spike #7, plus the second transcription backend (M3.5b) and routing layer.
+Session 008 net effect: +3h (onboarding picker M1.7) − 2–4h (simpler `LanguageDetector` for binary classifier vs N-way) = roughly net zero, but the work split is clearer.
 
 Multiplier for "macOS new to user" learning curve: ~1.3–1.5×. Realistic calendar:
 
