@@ -26,14 +26,43 @@ public struct OptionCResult: Sendable, Equatable {
         modelName: String,
         modelSizeMb: Double
     ) {
-        fatalError("Not implemented — red phase stub")
+        self.clip = clip
+        self.pair = pair
+        self.groundTruthLang = groundTruthLang
+        self.declaredPair = declaredPair
+        self.windowS = windowS
+        self.detectedLang = detectedLang
+        self.confidenceCorrect = confidenceCorrect
+        self.confidenceWrong = confidenceWrong
+        self.correctDetection = correctDetection
+        self.inferenceTimeMs = inferenceTimeMs
+        self.modelName = modelName
+        self.modelSizeMb = modelSizeMb
     }
 
     public static var csvHeader: String {
-        fatalError("Not implemented — red phase stub")
+        [
+            "clip", "pair", "ground_truth_lang", "declared_pair",
+            "window_s", "detected_lang", "confidence_correct",
+            "confidence_wrong", "correct_detection", "inference_time_ms",
+            "model_name", "model_size_mb",
+        ].joined(separator: ",")
     }
 
     public var csvRow: String {
-        fatalError("Not implemented — red phase stub")
+        [
+            clip,
+            pair,
+            groundTruthLang,
+            declaredPair,
+            String(format: "%.1f", windowS),
+            detectedLang,
+            String(format: "%.4f", confidenceCorrect),
+            String(format: "%.4f", confidenceWrong),
+            correctDetection ? "true" : "false",
+            String(format: "%.1f", inferenceTimeMs),
+            modelName,
+            String(format: "%.1f", modelSizeMb),
+        ].joined(separator: ",")
     }
 }

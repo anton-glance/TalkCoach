@@ -31,14 +31,45 @@ public struct OptionBResult: Sendable, Equatable {
         correctDetection: Bool,
         timeToDecisionS: Double
     ) {
-        fatalError("Not implemented — red phase stub")
+        self.clip = clip
+        self.pair = pair
+        self.groundTruthLang = groundTruthLang
+        self.initializedLang = initializedLang
+        self.guessMode = guessMode
+        self.partialText = partialText
+        self.wordsEmittedIn5s = wordsEmittedIn5s
+        self.detectedLang = detectedLang
+        self.confidenceCorrect = confidenceCorrect
+        self.confidenceWrong = confidenceWrong
+        self.correctDetection = correctDetection
+        self.timeToDecisionS = timeToDecisionS
     }
 
     public static var csvHeader: String {
-        fatalError("Not implemented — red phase stub")
+        [
+            "clip", "pair", "ground_truth_lang", "initialized_lang",
+            "guess_mode", "partial_text", "words_emitted_in_5s",
+            "detected_lang", "confidence_correct", "confidence_wrong",
+            "correct_detection", "time_to_decision_s",
+        ].joined(separator: ",")
     }
 
     public var csvRow: String {
-        fatalError("Not implemented — red phase stub")
+        let escapedText = partialText
+            .replacingOccurrences(of: "\"", with: "\"\"")
+        return [
+            clip,
+            pair,
+            groundTruthLang,
+            initializedLang,
+            guessMode.rawValue,
+            "\"\(escapedText)\"",
+            "\(wordsEmittedIn5s)",
+            detectedLang,
+            String(format: "%.4f", confidenceCorrect),
+            String(format: "%.4f", confidenceWrong),
+            correctDetection ? "true" : "false",
+            String(format: "%.3f", timeToDecisionS),
+        ].joined(separator: ",")
     }
 }

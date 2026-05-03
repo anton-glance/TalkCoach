@@ -19,7 +19,10 @@ public struct ClipEntry: Codable, Sendable, Equatable {
         description: String,
         approximateWPM: Int? = nil
     ) {
-        fatalError("Not implemented — red phase stub")
+        self.filename = filename
+        self.language = language
+        self.description = description
+        self.approximateWPM = approximateWPM
     }
 }
 
@@ -27,14 +30,15 @@ public struct ClipManifest: Codable, Sendable {
     public let clips: [ClipEntry]
 
     public init(clips: [ClipEntry]) {
-        fatalError("Not implemented — red phase stub")
+        self.clips = clips
     }
 
     public static func load(from url: URL) throws -> ClipManifest {
-        fatalError("Not implemented — red phase stub")
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode(ClipManifest.self, from: data)
     }
 
     public func clips(forLanguage language: String) -> [ClipEntry] {
-        fatalError("Not implemented — red phase stub")
+        clips.filter { $0.language == language }
     }
 }
