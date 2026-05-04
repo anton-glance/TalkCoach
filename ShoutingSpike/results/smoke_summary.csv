@@ -1,0 +1,2 @@
+clip_name,duration_s,n_events,first_event_t_s,floor_min_dbfs,floor_max_dbfs,floor_mean_dbfs,peak_dbfs
+en_normal,107.95,0,,-50.38,-40.11,-44.98,-21.69
