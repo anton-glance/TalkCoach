@@ -1,0 +1,23 @@
+{
+    "clips": [
+        {"filename": "en_01.caf", "language": "en", "description": "TED talk excerpt — single speaker, normal pace", "approximate_wpm": 150},
+        {"filename": "en_02.caf", "language": "en", "description": "News anchor — BBC or CNN, clear enunciation", "approximate_wpm": 160},
+        {"filename": "en_03.caf", "language": "en", "description": "Podcast monologue — casual register", "approximate_wpm": 140},
+        {"filename": "en_04.caf", "language": "en", "description": "Interview clip — single voice segment", "approximate_wpm": 145},
+
+        {"filename": "ru_01.caf", "language": "ru", "description": "News anchor — clear studio audio", "approximate_wpm": 130},
+        {"filename": "ru_02.caf", "language": "ru", "description": "Lecture or talk — academic register", "approximate_wpm": 120},
+        {"filename": "ru_03.caf", "language": "ru", "description": "News segment — moderate pace", "approximate_wpm": 135},
+        {"filename": "ru_04.caf", "language": "ru", "description": "Interview clip — single voice", "approximate_wpm": 125},
+
+        {"filename": "ja_01.caf", "language": "ja", "description": "NHK news — clear studio audio", "approximate_wpm": 200},
+        {"filename": "ja_02.caf", "language": "ja", "description": "Lecture or talk", "approximate_wpm": 180},
+        {"filename": "ja_03.caf", "language": "ja", "description": "News segment", "approximate_wpm": 190},
+        {"filename": "ja_04.caf", "language": "ja", "description": "Podcast or interview — single voice", "approximate_wpm": 170},
+
+        {"filename": "es_01.caf", "language": "es", "description": "News anchor — BBC Mundo or CNN en Espanol", "approximate_wpm": 160},
+        {"filename": "es_02.caf", "language": "es", "description": "TED-es talk excerpt", "approximate_wpm": 150},
+        {"filename": "es_03.caf", "language": "es", "description": "News segment — clear audio", "approximate_wpm": 155},
+        {"filename": "es_04.caf", "language": "es", "description": "Interview or lecture — single voice", "approximate_wpm": 145}
+    ]
+}

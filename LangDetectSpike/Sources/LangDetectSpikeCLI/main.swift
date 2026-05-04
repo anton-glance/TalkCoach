@@ -5,6 +5,7 @@ import LangDetectSpikeLib
 import NaturalLanguage
 import os
 import Speech
+import WhisperKit
 
 private let logger = Logger(
     subsystem: "com.speechcoach.app",
@@ -243,6 +244,26 @@ struct LangDetectSpikeCLI {
 
     private static let parakeetOnlyLanguages: Set<String> = ["ru"]
 
+    // MARK: - WhisperKit LID
+
+    private static let whisperModelName = "openai_whisper-tiny"
+    private static let whisperModelSizeMb = 75.5
+
+    nonisolated(unsafe) private static var _whisperKit: WhisperKit?
+
+    private static func getWhisperKit() async throws -> WhisperKit {
+        if let existing = _whisperKit { return existing }
+        logger.info("Loading WhisperKit model: \(whisperModelName)")
+        let config = WhisperKitConfig(
+            model: whisperModelName,
+            verbose: false,
+            logLevel: .none
+        )
+        let kit = try await WhisperKit(config)
+        _whisperKit = kit
+        return kit
+    }
+
     private static func parakeetLanguage(for langCode: String) -> Language? {
         switch langCode {
         case "ru": .russian
@@ -430,36 +451,57 @@ struct LangDetectSpikeCLI {
             throw ExitError.clipNotInManifest
         }
 
+        let pairParts = pair.split(separator: "+").map(String.init)
+        guard pairParts.count == 2 else {
+            fputs("Error: --pair must be in format 'en+ru'\n", stderr)
+            throw ExitError.invalidArgument
+        }
+
+        let groundTruth = clipEntry.language
+        let otherLang = (groundTruth == pairParts[0]) ? pairParts[1] : pairParts[0]
+
         logger.info(
-            "evaluate-c: clip=\(clipFilename) pair=\(pair) window=\(windowStr)s ground_truth=\(clipEntry.language)"
+            "evaluate-c: clip=\(clipFilename) pair=\(pair) window=\(windowStr)s ground_truth=\(groundTruth)"
         )
 
-        // --- Phase C placeholder ---
-        fputs(
-            "evaluate-c: NOT YET IMPLEMENTED — Phase C adds LID model inference\n",
-            stderr
+        let whisperKit = try await getWhisperKit()
+
+        let audioBuffer = try AudioProcessor.loadAudio(
+            fromPath: clipPath,
+            startTime: 0,
+            endTime: windowS
         )
-        fputs(
-            "  Would evaluate: \(clipFilename) with \(windowStr)s window, "
-            + "detect among [\(pair)]\n",
-            stderr
+        let audioArray = AudioProcessor.convertBufferToArray(buffer: audioBuffer)
+
+        let startTime = ContinuousClock.now
+        let (detectedLang, langProbs) = try await whisperKit.detectLangauge(audioArray: audioArray)
+        let elapsed = ContinuousClock.now - startTime
+        let elapsedMs = Double(elapsed.components.seconds) * 1000.0
+            + Double(elapsed.components.attoseconds) / 1e15
+
+        let confidenceCorrect = Double(langProbs[groundTruth] ?? 0)
+        let confidenceWrong = Double(langProbs[otherLang] ?? 0)
+        let correctDetection = detectedLang == groundTruth
+
+        logger.info(
+            "evaluate-c result: detected=\(detectedLang) correct=\(correctDetection) conf_gt=\(String(format: "%.4f", confidenceCorrect)) elapsed=\(String(format: "%.1f", elapsedMs))ms"
         )
 
-        let placeholder = OptionCResult(
+        let result = OptionCResult(
             clip: clipFilename,
             pair: pair,
-            groundTruthLang: clipEntry.language,
+            groundTruthLang: groundTruth,
             declaredPair: pair,
             windowS: windowS,
-            detectedLang: "placeholder",
-            confidenceCorrect: 0,
-            confidenceWrong: 0,
-            correctDetection: false,
-            inferenceTimeMs: 0,
-            modelName: "none",
-            modelSizeMb: 0
+            detectedLang: detectedLang,
+            confidenceCorrect: confidenceCorrect,
+            confidenceWrong: confidenceWrong,
+            correctDetection: correctDetection,
+            inferenceTimeMs: elapsedMs,
+            modelName: whisperModelName,
+            modelSizeMb: whisperModelSizeMb
         )
-        print(placeholder.csvRow)
+        print(result.csvRow)
     }
 
     // MARK: - Analyze Wordcount

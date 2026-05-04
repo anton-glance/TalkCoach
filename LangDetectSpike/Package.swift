@@ -9,6 +9,10 @@ let package = Package(
             url: "https://github.com/FluidInference/FluidAudio.git",
             from: "0.9.0"
         ),
+        .package(
+            url: "https://github.com/argmaxinc/WhisperKit.git",
+            from: "0.9.0"
+        ),
     ],
     targets: [
         .target(
@@ -20,6 +24,7 @@ let package = Package(
             dependencies: [
                 "LangDetectSpikeLib",
                 .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "WhisperKit", package: "WhisperKit"),
             ],
             path: "Sources/LangDetectSpikeCLI"
         ),
