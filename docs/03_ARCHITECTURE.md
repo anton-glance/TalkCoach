@@ -36,7 +36,7 @@
 │                      │  └─────────────────────────────┘  │   │
 │                      │  ┌─────────────────────────────┐  │   │
 │                      │  │ LanguageDetector            │  │   │
-│                      │  │  (Spike #2 outcome)         │  │   │
+│                      │  │  (script-aware hybrid)      │  │   │
 │                      │  └─────────────────────────────┘  │   │
 │                      │  ┌─────────────────────────────┐  │   │
 │                      │  │ SessionStore (SwiftData)    │  │   │
@@ -164,12 +164,13 @@ The previous design included a standalone VAD module (energy-based or `SoundAnal
 
 ---
 
-### 5. `LanguageDetector`
+### 5. `LanguageDetector` (locked Session 010, Spike #2)
 **Job:** Decide which of the user's declared locales to initialize `TranscriptionEngine` with for the current session.
 
 **Inputs:**
 - `declaredLocales: [Locale]` from `Settings` (1 or 2 entries — locked at onboarding, editable in settings)
-- Optionally: live audio buffers and/or partial transcript (depending on which detection mechanism Spike #2 selects)
+- For Strategy 1 & 2: partial transcript from `TranscriptionEngine` (first ~5s)
+- For Strategy 3: raw audio buffers from `AudioPipeline` (first ~3s)
 
 **Behavior by N (count of declared languages):**
 
@@ -178,19 +179,62 @@ The previous design included a standalone VAD module (energy-based or `SoundAnal
 - `TranscriptionEngine` routes to the locale's backend. No swap ever happens — only one language is in scope.
 - This path is correct by construction; no spike validation needed for N=1.
 
-**N=2 (bilingual users):**
-- Binary classifier between exactly the two declared locales. The auto-detect mechanism never has to consider any other language in the world — only these two.
-- Detection mechanism selected by Spike #2:
-  - **Option B:** Initialize transcription with a "best guess" (last-used locale → declaredLocales[0]). After ~5 seconds of partials, run `NLLanguageRecognizer` on the accumulated text. If detected language matches a different declared locale than the current one → swap. The cost is ~5 seconds of potentially-wrong-language transcription before the swap.
-  - **Option C:** Run a small audio language-ID model on the first ~3 seconds of audio before transcription begins. The widget shows "Listening…" during those 3 seconds, then commits to a backend with no swap. The cost is ~3 seconds of pre-transcription latency.
-- The "two transcribers in parallel" approach (Option A) is **disqualified** by power budget (FM4).
+**N=2 (bilingual users) — script-aware hybrid:**
+- Binary classifier between exactly the two declared locales. Detection strategy selected at onboarding based on the Unicode script properties of the two languages. Three strategies, each empirically validated in Spike #2 at 100% accuracy:
 
-**Architecture Y interaction (Session 006, refined Session 008):**
+**Strategy selection at onboarding (one-time):**
+```
+dominantScript(locale) → .latin | .cyrillic | .cjk | .arabic | .devanagari | ...
+
+if script1 == script2           → Strategy 1 (NLLanguageRecognizer)
+if script1.isCJK || script2.isCJK → Strategy 3 (Whisper audio LID)
+else                             → Strategy 2 (word-count threshold)
+```
+
+**Strategy 1 — NLLanguageRecognizer (same-script pairs, e.g., EN+ES):**
+- Initialize transcription with best-guess locale (last-used → `declaredLocales[0]`)
+- After ~5s of partials, run `NLLanguageRecognizer` constrained to `{locale1, locale2}`
+- If detected language ≠ current → swap `TranscriptionEngine` backend
+- Validated: 100% accuracy on EN+ES (16/16 evaluations). Cost: zero model overhead; ~5s of wrong-language words if initial guess was wrong.
+
+**Strategy 2 — Word-count threshold (cross-script non-CJK pairs, e.g., EN+RU):**
+- Initialize transcription with best-guess locale
+- After ~5s of partials, count words emitted
+- If word count < threshold (empirically: 13 words) → current locale is wrong → swap
+- Validated: 100% accuracy on EN+RU (16/16 evaluations). The wrong-locale transcriber produces dramatically fewer words (0–6 vs 14–42). Cost: zero model overhead; ~5s swap window.
+
+**Strategy 3 — Whisper-tiny audio LID (Latin↔CJK pairs, e.g., EN+JA):**
+- Widget shows "Listening…"
+- Buffer first 3s of audio
+- Run `openai_whisper-tiny` language detection via WhisperKit Core ML, constrained to `{locale1, locale2}`
+- Commit to detected locale → start `TranscriptionEngine`
+- Validated: 100% accuracy on EN+JA at both 3s and 5s (16/16 evaluations). Cost: 75.5 MB model (downloaded on first CJK-language use); ~600ms inference + ~3s audio buffering.
+- The "two transcribers in parallel" approach (Option A) remains **disqualified** by power budget (FM4).
+
+**What each user pays (decided at onboarding, not runtime):**
+
+| Declared pair type | Model cost | Detection latency | Wrong-start risk |
+|--------------------|-----------|-------------------|-----------------|
+| N=1                | None      | 0ms               | None            |
+| Same-script (EN+ES)| None      | ~5s (background)  | ~5s wrong-lang  |
+| Cross-script (EN+RU)| None     | ~5s (background)  | ~5s wrong-lang  |
+| Latin↔CJK (EN+JA) | 75.5 MB   | ~3s (blocking)    | None            |
+
+**Whisper-tiny model details (Strategy 3 only):**
+- Model: `openai_whisper-tiny` via WhisperKit (Argmax), pre-converted Core ML
+- Size: 75.5 MB (~25 MB compressed in app bundle)
+- Compute units: `.cpuAndNeuralEngine` (ANE requested, same as Parakeet)
+- Inference: ~600ms mean, independent of audio window length (fixed encoder pass)
+- Downloaded on first use of a CJK language, consistent with Parakeet model download flow (M3.6)
+- Detection is pair-constrained in production: logits suppressed for all languages outside the declared pair
+
+**Architecture Y interaction (Session 006, refined Session 008, concrete Session 010):**
 - `LanguageDetector` outputs a `Locale`, not a backend choice. `TranscriptionEngine` decides routing per the locale → backend rule.
-- A swap (N=2 only) may cross the backend boundary if the two declared locales are served by different backends (e.g., English via Apple, Russian via Parakeet). `TranscriptionEngine` handles the actual backend swap; `LanguageDetector` just emits the new locale.
+- A swap (Strategy 1 or 2 only) may cross the backend boundary if the two declared locales are served by different backends (e.g., English via Apple, Russian via Parakeet). `TranscriptionEngine` handles the actual backend swap; `LanguageDetector` just emits the new locale.
 - Both backends are pre-known at onboarding (the user's two declared locales determine which backends ever get loaded). Models for both are downloaded on first session per backend, never speculatively.
+- Strategy 3 (Whisper) runs before transcription starts, so no backend swap occurs — the locale is committed before `TranscriptionEngine` initializes.
 
-**Outputs:** A `Locale` to use for the session, possibly with a "low confidence, re-evaluate after 5s" flag (Option B only).
+**Outputs:** A `Locale` to use for the session. For Strategies 1 & 2, the initial locale may be revised after ~5s (emitted as a locale-change event to `SessionCoordinator`). For Strategy 3, the locale is final.
 
 ---
 
@@ -334,7 +378,7 @@ SessionCoordinator: blocklist check → not blocked → start session
      │
      ├──► AudioPipeline: start AVAudioEngine tap
      │         │
-     │         ├──► LanguageDetector: identify locale (Spike #2 method)
+     │         ├──► LanguageDetector: identify locale (script-aware hybrid)
      │         │         │
      │         │         ▼
      │         │    Locale decided (e.g., ru-RU)
@@ -442,7 +486,7 @@ SessionStore: persist Session via SwiftData
 | Question | Resolved by |
 |---|---|
 | How to identify the app activating the mic? | Spike #1 |
-| Which auto-detect mechanism for N=2 declared-locale binary classification? | Spike #2 |
+| Which auto-detect mechanism for N=2 declared-locale binary classification? | Spike #2 ✅ passed Session 010 (script-aware hybrid: NLLanguageRecognizer + word-count + Whisper-tiny) |
 | Mic coexistence with Zoom voice processing? | Spike #4 ✅ passed Session 008 (browser Meet has recoverable config-change caveat) |
 | WPM accuracy vs ground truth? | Spike #6 (English ✅ passed Session 005; Russian ✅ passed Session 007) |
 | Architecture Y power envelope (Apple + Parakeet)? | Spike #7 (Parakeet portion already characterized in Spike #10 Phase E; Apple portion still open) |
@@ -450,4 +494,4 @@ SessionStore: persist Session via SwiftData
 | Adaptive RMS noise-floor for shouting? | Spike #9 |
 | Parakeet feasibility on macOS for Russian? | Spike #10 ✅ passed Session 006–007 |
 
-Spike #10 closed Architecture Y as feasible. Remaining open spikes: #4, #2, #8, #9, #1, plus #7's Apple-baseline phase. If any of those fail, the architecture may shift but Architecture Y itself is now locked.
+Spike #10 closed Architecture Y as feasible. Spike #4 closed mic coexistence. Spike #2 closed language auto-detect with a script-aware hybrid mechanism. Remaining open spikes: #8, #9, #1, plus #7's full power profiling. If any of those fail, implementation details may shift but Architecture Y and the language detection design are now locked.

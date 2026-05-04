@@ -4,6 +4,81 @@
 
 ---
 
+## Session 010 — 2026-05-03 — Spike #2 closed PASS, Language Auto-Detect Validated as Script-Aware Hybrid
+
+**Format:** Claude Code agent execution (Spike #2 Phases A–D), fully verified, sub-agent reviewed.
+
+### What happened
+Ran Spike #2 end-to-end across two conversation sessions. Built a `LangDetectSpike/` harness (SPM package, CLI with `preflight`, `evaluate-b`, `evaluate-c`, `analyze-wordcount` subcommands) to test two detection approaches across three representative language pairs (EN+RU, EN+JA, EN+ES) using 16 real audio clips (4 per language, sourced from YouTube by user).
+
+**Phase A (preflight):** Validated test corpus, confirmed Apple `SpeechTranscriber` locale support (en, ja, es — not ru), confirmed `NLLanguageRecognizer` sanity, checked Parakeet model cache.
+
+**Phase B (Option B — transcribe-then-detect):** 48 evaluations total. Two signals emerged:
+- `NLLanguageRecognizer` on transcribed text: 100% for same-script pairs (EN+ES), 0% for cross-script wrong-guess transcripts (EN+RU). The wrong-locale transcriber produces garbled text that the text classifier cannot parse.
+- Word-count on wrong-guess transcript: 100% for EN+RU (threshold 13 words), 62.5% for EN+ES. Cross-script transcription produces dramatically fewer words; same-script does not.
+- Character-count tested post-hoc: identical accuracy to word-count, no additional value.
+- Russian evaluations initially blocked by Apple `SpeechTranscriber` not supporting `ru_RU`. Resolved by routing Russian through Parakeet (FluidAudio) — the same backend Architecture Y uses in production.
+
+**Phase C (Option C — Whisper-tiny audio LID):** 48 evaluations. Used WhisperKit's `openai_whisper-tiny` Core ML model (75.5 MB).
+- EN+JA: **100% at both 3s and 5s windows** — the load-bearing gate (≥90% required).
+- EN+RU: 100% at both windows (informational — already covered by word-count).
+- EN+ES: 75% at 3s, 100% at 5s. Two Spanish clips misclassified as Portuguese and Arabic at 3s. Detection was unconstrained across 99 languages — no pair restriction applied. Informational only — EN+ES handled by NLLanguageRecognizer.
+
+**Phase D (this entry):** Wrote canonical REPORT.md, investigated compute units (ANE confirmed by default configuration), analyzed the unconstrained detection finding, updated four docs.
+
+### The empirically-confirmed Risk A prediction
+The spike's Risk A from the original plan was: "What if Option B's NLLanguageRecognizer fails on cross-script pairs because the wrong-locale transcript is garbled?" This is exactly what happened — and it's exactly why the spike ran both options. The word-count signal catches what NLLanguageRecognizer misses (cross-script), and NLLanguageRecognizer catches what word-count misses (same-script). Neither alone is sufficient. The hybrid is stronger than either.
+
+### The surprise EN+ES finding
+NLLanguageRecognizer achieved 100% accuracy on EN+ES — a pair many text classifiers struggle with due to shared vocabulary. This was not expected at this confidence level. It means the production path for same-script pairs (the most common user scenario) needs zero additional models and zero detection latency beyond the ~5s transcription window.
+
+### Compute unit finding
+WhisperKit's `ModelComputeOptions` defaults to `.cpuAndNeuralEngine` for audio encoder and text decoder on macOS 14+ (our target is macOS 26). This matches Parakeet's compute unit configuration. Apple does not expose a runtime API to verify actual hardware dispatch, but the Core ML configuration explicitly requests ANE. Spike #7's power profiling should use Instruments to measure actual hardware utilization.
+
+### Unconstrained detection finding
+WhisperKit's `detectLangauge` method runs argmax over all 99 language tokens — no pair-based filtering. The API only returns the single argmax token, discarding the full probability distribution. Pair-constrained detection would require modifying WhisperKit's `LanguageLogitsFilter` (~20 lines). For production M3.4, this is a straightforward enhancement. Not retested because the unconstrained failure only affects same-script pairs (EN+ES), which are handled by NLLanguageRecognizer, not Whisper.
+
+### Script-aware hybrid recommendation (locked)
+```
+User declares 2 languages at onboarding
+  → dominantScript(locale1) vs dominantScript(locale2)
+    → same script?        → Strategy 1: NLLanguageRecognizer (0 MB, ~5s background)
+    → one is CJK?         → Strategy 3: Whisper-tiny LID (75.5 MB, ~3s blocking)
+    → otherwise (Cyrillic) → Strategy 2: Word-count threshold (0 MB, ~5s background)
+```
+
+### What changed in the docs
+- `05_SPIKES.md` — Spike #2 marked ✅ passed with validated outcomes above original spec
+- `03_ARCHITECTURE.md` — `LanguageDetector` section rewritten: placeholder "Spike #2 will pick" replaced with concrete three-strategy design, strategy selection logic, per-user cost table, Whisper-tiny model details, architecture interaction notes
+- `04_BACKLOG.md` — S2 marked ✅ passed (6h actual), Phase 0 remaining reduced to ~12h, M3.4 description updated to reflect three-strategy router (estimate confirmed at 4–6h)
+- `01_PROJECT_JOURNAL.md` — this entry
+
+### Where we left off
+- Phase 0 has 4 open spikes: S8 (token-arrival robustness, next P1), S7 (power profiling), S9 (shouting detection), S1 (activating app ID)
+- Spike #2 code in `LangDetectSpike/` — throwaway harness, not production code
+- Working tree has uncommitted LangDetectSpike additions (WhisperKit dependency, evaluate-c implementation, REPORT.md, run_option_c.sh). Ready for commit.
+- Spike #7 note: should now include Whisper-tiny's ~600ms inference in its power budget for CJK-language users (adds to the language-detection phase, not to sustained transcription)
+
+### Ups
+- Both options (B and C) exceeded their accuracy gates. EN+JA at 100% on both windows was decisive — no ambiguity about whether the Whisper-tiny model is adequate.
+- The hybrid recommendation emerged naturally from the data — each signal has a complementary strength. This is a cleaner architecture than either option alone would have been.
+- Parakeet integration for Russian evaluations (Phase B blocker) was resolved quickly by reusing the FluidAudio API pattern from the ParakeetSpike.
+- NLLanguageRecognizer's 100% on EN+ES was a positive surprise — eliminates model cost for the most common pair type.
+- 6h actual vs 5h estimated. Slight overrun due to the Parakeet routing addition and WhisperKit model search, both of which were not in the original scope but were necessary.
+
+### Downs
+- The original spike plan assumed Apple `SpeechTranscriber` supports Russian. It doesn't — same finding as Session 006 / Spike #10, but re-encountered here. We needed Parakeet as a transcription backend for the Russian evaluations, adding ~1h of unplanned integration work. This was already known from the architecture but wasn't reflected in the spike's method section.
+- WhisperKit has a typo in its public API: `detectLangauge` (swapped a/u). This will need to be tracked if the API is ever fixed in a future WhisperKit version.
+- The EN+ES 3s misclassifications (Spanish→Portuguese, Spanish→Arabic) could not be retested with pair restriction because WhisperKit's API doesn't support it. The finding is documented but the fix is deferred to production implementation.
+
+### Next session
+- S8 (token-arrival robustness across mics/environments) is next P1
+- After S8, S7 (power profiling) can run — it now has all the compute-unit information from S2 and S10
+- Commit LangDetectSpike harness code
+- Once all Phase 0 spikes close, write Phase 0 summary and begin Phase 1
+
+---
+
 ## Session 009 — 2026-05-02 — Language model simplified to N≤2 declared at onboarding; Spike #2 rescoped
 
 **Format:** Architecture decision triggered by user observation about real-user multilingual frequency.

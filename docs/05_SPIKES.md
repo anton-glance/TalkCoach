@@ -200,7 +200,30 @@ FM4 (no performance impact). Apple Developer Forums show that VPIO (Voice Proces
 
 ## Spike #2 — Language auto-detect mechanism (N=2 binary classifier)
 
-**Status:** 📋 planned · **Priority:** P1 (next P1 after S4 closed Session 008) · **Estimate:** 5h
+**Status:** ✅ passed (Session 010) · **Production mechanism locked:** script-aware hybrid — NLLanguageRecognizer for same-script, word-count threshold for Latin↔Cyrillic, Whisper-tiny audio LID for Latin↔CJK
+
+### Validated outcomes (Spike closed Session 010)
+- **Recommendation: script-aware hybrid of three signals.** No single signal covers all pair types. The detection strategy is selected at onboarding based on the Unicode script properties of the user's two declared languages.
+- **Same-script pairs (EN+ES):** `NLLanguageRecognizer` on ~5s of transcribed text. 100% accuracy across all 16 evaluations (8 wrong-guess + 8 correct-guess). Zero model cost.
+- **Latin↔Cyrillic pairs (EN+RU):** Word-count threshold (t=13) on the wrong-guess transcript. 100% accuracy across 16 evaluations. Wrong-locale Russian transcription produces 0–6 words vs 14–42 for correct-locale. Zero model cost. (Parakeet used as transcription backend for Russian since Apple `SpeechTranscriber` doesn't support `ru_RU`.)
+- **Latin↔CJK pairs (EN+JA):** Whisper-tiny audio LID (WhisperKit, `openai_whisper-tiny`). 100% accuracy at both 3s and 5s windows across 16 evaluations. Model cost: 75.5 MB (one-time download for CJK users only).
+- **EN+ES at 3s with Whisper-tiny (informational):** 75% accuracy — 2/8 Spanish clips misclassified as Portuguese and Arabic. Detection was unconstrained across 99 languages (no pair restriction). Irrelevant for production: EN+ES is handled by NLLanguageRecognizer, not Whisper.
+- **Whisper-tiny compute units:** Audio encoder and text decoder configured as `.cpuAndNeuralEngine` (ANE requested) on macOS 14+. Spike #7 will measure actual hardware utilization via Instruments.
+- **Whisper-tiny inference:** ~600ms mean, consistent across 3s and 5s windows (fixed-size encoder pass). One-time model load adds ~7s on first invocation.
+- **Character-count signal (tested post-hoc):** Identical accuracy to word-count signal for all pairs. No additional discriminative value. Dropped.
+- **Model selection:** Whisper-tiny chosen over SpeechBrain voxlingua107-ecapa (Core ML conversion fails on Emphasis layers), Meta MMS-LID (no public Core ML conversion, 300MB+), and FluidAudio/Parakeet (no LID API).
+- **Total spike effort:** ~6h actual vs 5h estimated.
+
+### Open follow-ups (NOT blockers)
+- Untested same-script pairs: EN+FR, EN+DE, EN+PT, EN+IT. NLLanguageRecognizer expected to work (100% on EN+ES), but unvalidated.
+- Untested CJK pairs: EN+KO, EN+ZH. Whisper-tiny supports both; EN+JA at 100% is a strong signal, but unvalidated.
+- Pair-constrained Whisper detection: currently unconstrained over 99 languages. Adding `allowedLanguages` filter to `LanguageLogitsFilter` would improve edge-case robustness. Low priority — script-aware routing avoids the scenario where unconstrained detection fails.
+- Mid-session language re-detection: v1 detects once at session start. v1.x could periodically re-evaluate with hysteresis.
+- Whisper-tiny model distribution: download on first CJK-language use (consistent with Parakeet pattern) vs bundle in app. Recommendation: download on first use.
+
+---
+
+### Original spike specification (preserved for reference)
 
 ### Scope (locked Session 008)
 

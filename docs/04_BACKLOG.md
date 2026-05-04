@@ -13,16 +13,16 @@
 | S10 | Parakeet (NVIDIA) feasibility on macOS 26 / Apple Silicon | ✅ passed Sessions 006–007 | (10h actual) |
 | S6 | WPM ground truth on real EN/RU recordings | ✅ passed (EN Session 005, RU Session 007) | (5h actual) |
 | S4 | Mic coexistence with Zoom voice processing | ✅ passed Session 008 (browser Meet has recoverable config-change caveat) | (3h actual) |
-| S2 | Language auto-detect mechanism | 📋 P1 — next | 6h |
+| S2 | Language auto-detect mechanism | ✅ passed Session 010 | (6h actual) |
 | S8 | Token-arrival robustness across mics & environments | 📋 P1 | 3h |
 | S7 | Power & CPU profiling Architecture Y (Apple baseline + 1hr session) | 📋 P1 — partially done by S10 Phase E | 4h (revised down from 6h) |
 | S9 | Adaptive RMS noise-floor for shouting detection | 📋 P2 | 2h |
 | S1 | Identifying activating app for blocklist | 📋 P2 | 3h |
 | S3 | ~~Russian transcription quality on `SpeechAnalyzer`~~ | ❌ superseded by S10 | — |
 
-**Phase 0 remaining work: ~18h** (was 21h; S4 closed).
+**Phase 0 remaining work: ~12h** (was 18h; S2 closed at 6h actual).
 
-Three P0 spikes done. Remaining are P1/P2 — none gate the architecture; they refine implementation details. S2 (language auto-detect) is next because M3.4 depends on it.
+Four P0 spikes done plus S2 (P1). Remaining are P1/P2 — none gate the architecture; they refine implementation details. S8 (token-arrival robustness) is next P1.
 
 Detailed spike specs in `05_SPIKES.md`.
 
@@ -77,7 +77,7 @@ Goal: while a session is active, audio is being captured, transcribed in the rig
 | M3.1 | `AudioPipeline`: AVAudioEngine setup, voice-processing-OFF, raw input tap | 📋 | 4h | S4 (passed) |
 | M3.2 | `SpeakingActivityTracker`: derive speaking duration from token timestamps | 📋 | 2h | M3.5, S6/S8 (passed) |
 | M3.3 | RMS calculation on audio buffers | 📋 | 1h | M3.1 |
-| M3.4 | `LanguageDetector`: N=1 trivial path + N=2 binary classifier (mechanism per Spike #2) | 📋 | 4–6h | S2 (passed), M1.7 |
+| M3.4 | `LanguageDetector`: N=1 trivial path + N=2 script-aware hybrid (3 strategies: NLLanguageRecognizer, word-count, Whisper-tiny LID) | 📋 | 4–6h | S2 (passed), M1.7 |
 | M3.5 | `TranscriptionEngine` routing layer: locale → backend selection, unified token stream output | 📋 | 4h | M3.5a, M3.5b, M3.4 |
 | M3.5a | `AppleTranscriberBackend`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | 📋 | 4h | M3.4 |
 | M3.5b | `ParakeetTranscriberBackend`: Core ML model load, inference loop, timestamp normalization | 📋 | 8–12h | S10 (passed) |
