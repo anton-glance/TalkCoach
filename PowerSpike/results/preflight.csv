@@ -1,0 +1,2 @@
+elapsed_s,cpu_user_pct,cpu_system_pct,cpu_total_pct,rss_mb,words_total,speaking_duration_s,avg_wpm,rms_avg,thermal_state,marker
+10.0,0.00,0.00,0.00,23.8,0,0.0,0.0,0.002169,0,SCENARIO_BOUNDARY
