@@ -1,0 +1,6 @@
+clip,onset_truth_s
+quiet_normal,nan
+quiet_shout,FILL_IN
+noisy_normal,nan
+noisy_shout,FILL_IN
+transition,FILL_IN
