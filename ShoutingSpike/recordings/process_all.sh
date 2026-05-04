@@ -9,7 +9,7 @@ MANIFEST="$SCRIPT_DIR/manifest.csv"
 rm -f "$RESULTS_DIR/summary.csv"
 mkdir -p "$RESULTS_DIR"
 
-tail -n +2 "$MANIFEST" | while IFS=, read -r clip onset; do
+tail -n +2 "$MANIFEST" | while IFS=, read -r clip onset || [ -n "$clip" ]; do
     AUDIO="$SCRIPT_DIR/${clip}.caf"
     if [ ! -f "$AUDIO" ]; then
         echo "SKIP: $clip ($AUDIO not found)" >&2
