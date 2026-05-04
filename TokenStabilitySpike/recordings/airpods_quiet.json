@@ -1,0 +1,14 @@
+{
+  "clipName": "airpods_quiet",
+  "language": "en",
+  "paceLabel": "normal",
+  "mic": "airpods",
+  "environment": "quiet",
+  "durationSeconds": 43.008000,
+  "totalWords": 96,
+  "groundTruthWPM": 133.93,
+  "scriptSource": "fresh_script_session_011_not_en_normal",
+  "noiseSourceUrl": "n/a",
+  "airpodsModel": "AirPods Pro 2",
+  "noiseCancellationOn": true
+}

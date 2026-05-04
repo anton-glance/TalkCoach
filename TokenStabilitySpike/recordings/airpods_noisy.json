@@ -1,0 +1,14 @@
+{
+  "clipName": "airpods_noisy",
+  "language": "en",
+  "paceLabel": "normal",
+  "mic": "airpods",
+  "environment": "noisy",
+  "durationSeconds": 40.021333,
+  "totalWords": 96,
+  "groundTruthWPM": 143.92,
+  "scriptSource": "fresh_script_session_011_not_en_normal",
+  "noiseSourceUrl": "https://www.youtube.com/watch?v=0QKdqm5TX6c",
+  "airpodsModel": "AirPods Pro 2",
+  "noiseCancellationOn": true
+}

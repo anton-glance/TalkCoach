@@ -1,0 +1,6 @@
+clip_name,mic,environment,gt_wpm,gt_total_words,duration_s,words_recognized,avg_wpm,peak_wpm,error_pct,total_speaking_duration_s,speaking_pct
+en_normal,unknown,unknown,136.8,237,103.9,247,142.1,165.9,3.9,97.6,93.9
+mbp_quiet,mbp,quiet,146.4,96,39.3,99,145.6,164.7,0.6,37.1,94.3
+mbp_noisy,mbp,noisy,139.8,96,41.2,99,144.6,164.2,3.5,36.2,87.9
+airpods_quiet,airpods,quiet,133.9,96,43.0,99,121.6,165.9,9.2,38.2,88.7
+airpods_noisy,airpods,noisy,143.9,96,40.0,99,149.7,170.1,4.0,35.3,88.2
