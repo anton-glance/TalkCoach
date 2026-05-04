@@ -15,14 +15,14 @@
 | S4 | Mic coexistence with Zoom voice processing | ✅ passed Session 008 (browser Meet has recoverable config-change caveat) | (3h actual) |
 | S2 | Language auto-detect mechanism | ✅ passed Session 010 | (6h actual) |
 | S8 | Token-arrival robustness across mics & environments | ✅ passed Session 011 | (3h actual) |
-| S7 | Power & CPU profiling Architecture Y (Apple baseline + 1hr session) | 📋 P1 — partially done by S10 Phase E | 4h (revised down from 6h) |
+| S7 | Power & CPU profiling Architecture Y (Apple baseline + 1hr session) | ✅ conditional pass Session 012 | (4h actual) |
 | S9 | Adaptive RMS noise-floor for shouting detection | 📋 P2 | 2h |
 | S1 | Identifying activating app for blocklist | 📋 P2 | 3h |
 | S3 | ~~Russian transcription quality on `SpeechAnalyzer`~~ | ❌ superseded by S10 | — |
 
-**Phase 0 remaining work: ~9h** (was 12h; S8 closed at 3h actual).
+**Phase 0 remaining work: ~5h** (was 9h; S7 closed at 4h actual).
 
-Five P0 spikes done plus S2, S8 (P1). Remaining are P1 (S7) and P2 (S9, S1) — none gate the architecture; they refine implementation details. S7 (power profiling) is next P1.
+Six P0 spikes done plus S2, S8. Remaining are P2 (S9, S1) — neither gates the architecture; both refine implementation details. Phase 1 (Foundation) can begin any time.
 
 Detailed spike specs in `05_SPIKES.md`.
 

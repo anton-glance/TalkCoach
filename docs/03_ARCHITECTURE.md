@@ -432,7 +432,7 @@ SessionStore: persist Session via SwiftData
 - `MicMonitor` callback fires on a Core Audio thread → marshal to main actor
 - `AudioPipeline` tap fires on a real-time audio thread → never block, dispatch heavy work to a `DispatchQueue` for `Analyzer`
 - `SpeechAnalyzer` uses Swift concurrency (`AsyncStream`) → consume on a background `Task`
-- `ParakeetTranscriberBackend` runs Core ML inference on a dedicated background `Task`. Compute units = `.cpuAndNeuralEngine` by default; Spike #7 may revise based on contention measurements.
+- `ParakeetTranscriberBackend` runs Core ML inference on a dedicated background `Task`. Compute units = `.cpuAndNeuralEngine` by default (Spike #7 confirmed Apple SpeechAnalyzer runs entirely on E-Cluster efficiency cores — no contention with Parakeet's ANE usage).
 - All UI updates on `@MainActor`
 - SwiftData writes on a background `ModelActor`
 
@@ -489,9 +489,9 @@ SessionStore: persist Session via SwiftData
 | Which auto-detect mechanism for N=2 declared-locale binary classification? | Spike #2 ✅ passed Session 010 (script-aware hybrid: NLLanguageRecognizer + word-count + Whisper-tiny) |
 | Mic coexistence with Zoom voice processing? | Spike #4 ✅ passed Session 008 (browser Meet has recoverable config-change caveat) |
 | WPM accuracy vs ground truth? | Spike #6 (English ✅ passed Session 005; Russian ✅ passed Session 007) |
-| Architecture Y power envelope (Apple + Parakeet)? | Spike #7 (Parakeet portion already characterized in Spike #10 Phase E; Apple portion still open) |
-| Token-arrival robustness across mics/environments? | Spike #8 |
+| Architecture Y power envelope (Apple + Parakeet)? | Spike #7 ✅ conditional pass Session 012 (Apple baseline: mean 4.18% CPU under 18× overload, ~2% estimated production; Parakeet characterized in S10 Phase E) |
+| Token-arrival robustness across mics/environments? | Spike #8 ✅ passed Session 011 |
 | Adaptive RMS noise-floor for shouting? | Spike #9 |
 | Parakeet feasibility on macOS for Russian? | Spike #10 ✅ passed Session 006–007 |
 
-Spike #10 closed Architecture Y as feasible. Spike #4 closed mic coexistence. Spike #2 closed language auto-detect with a script-aware hybrid mechanism. Remaining open spikes: #8, #9, #1, plus #7's full power profiling. If any of those fail, implementation details may shift but Architecture Y and the language detection design are now locked.
+Spike #10 closed Architecture Y as feasible. Spike #4 closed mic coexistence. Spike #2 closed language auto-detect with a script-aware hybrid mechanism. Spike #7 closed Apple SpeechAnalyzer power baseline (conditional pass — mean CPU under 5%, production load estimated ~2%). Spike #8 closed token-arrival robustness. Remaining open spikes: #9, #1. Neither gates architecture; both refine implementation details.

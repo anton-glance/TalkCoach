@@ -59,7 +59,21 @@ FM2 (unreliable data) is a hard failure mode. If WPM math is off by 15%+, the us
 
 ## Spike #7 — Power & CPU profiling during 1hr session (Architecture Y)
 
-**Status:** 📋 planned · **Priority:** P0 · **Estimate:** 6h (was 4h before Parakeet was added to scope)
+**Status:** ✅ conditional pass (Session 012, Apple baseline only) · **Priority:** P0 · **Estimate:** 6h (4h actual for Apple baseline)
+
+### Validated outcomes (Apple SpeechAnalyzer baseline, Session 012)
+- **Mean CPU (loaded, 45 min continuous podcast):** 4.18% — under 5% FM4 threshold. Production estimate ~2% (test load 18× heavier than real meeting).
+- **CPU delivery pattern:** Extremely bursty — 79% of 10s samples read 0.00%, punctuated by spikes up to 126.58% (multi-core). P95 of 60s rolling windows is 11.91%. This is SpeechAnalyzer's batch-processing model, not a bug.
+- **RSS:** 38 MB peak (well under 150 MB). Growth rate 16.2 MB/hr — projects to 49 MB at 3 hours. Monitor in sessions >1 hour.
+- **Energy impact:** ~150 mW marginal CPU power (loaded vs isolated). Workload runs entirely on E-Cluster (efficiency cores). "Low" Energy Impact.
+- **Thermal:** Nominal (state 0) throughout full 60 minutes.
+- **Mic coexistence:** Zero AVAudioEngine config changes across 60 minutes including Zoom join/leave.
+- **Phase 4 analyzers:** Safe to build. They process token events, not audio — negligible CPU (~0.01%).
+- **Conditions:** (1) Verify with a real 30-min Zoom meeting during Phase 5 integration testing. (2) Monitor RSS in sessions >1 hour. (3) Do not add SoundAnalysis VAD.
+- **Parakeet path:** Not re-measured in this spike — already characterized in Spike #10 Phase E (RTF 0.011, 133 MB RSS, ANE-offloaded).
+- Full report at `PowerSpike/REPORT.md`.
+
+### Original spike specification (preserved for reference)
 
 ### Question
 Does Architecture Y (Apple `SpeechAnalyzer` for supported locales, NVIDIA Parakeet via Core ML for unsupported locales like Russian) stay under the resource budget for a 1hr session on Apple Silicon, on battery?

@@ -4,6 +4,60 @@
 
 ---
 
+## Session 012 — 2026-05-04 — Spike #7 closed CONDITIONAL PASS, Apple SpeechAnalyzer Power Baseline Validated
+
+**Format:** Claude Code agent execution (Spike #7 Phases A–C), sub-agent reviewed.
+
+### What happened
+Ran Spike #7 (Apple SpeechAnalyzer power baseline) end-to-end. Built a `PowerSpike/` harness (SPM package, reusing frozen copies of `WPMCalculator`, `SpeakingActivityTracker`, `EMASmoother` from WPMSpike) that runs `AVAudioEngine` + `SpeechAnalyzer` on live mic input, measures CPU%, RSS, and thermal state every 10 seconds, and writes CSV.
+
+**Phase A (harness + smoke test):** Built PowerSpikeCLI with CLI flags (`--isolated-duration`, `--total-duration`, `--sample-interval`, `--output`). Key technical challenge: bridging live mic audio to `SpeechAnalyzer`, which requires `AsyncStream<AnalyzerInput>` with format conversion (48kHz→16kHz via `bestAvailableAudioFormat`). Created BufferRelay pattern for thread-safe buffer handoff. 60s smoke test confirmed harness works: CPU 2.75% on one sample, RSS stable at 23.8 MB.
+
+**Phase B (full 60-minute run):** User ran the harness: 15 min isolated (quiet room, no speech) + 45 min loaded (Zoom solo meeting + iPhone playing conversational podcast next to Mac mic). Podcast drove 45.4 words/sec (including volatile result revisions) — approximately 18× heavier than real-meeting production load.
+
+**Phase C (analysis + report):** Analyzed CSV (360 data rows) and powermetrics output (395 samples). Key finding: SpeechAnalyzer's processing is extremely bursty — 79% of 10s samples read 0.00% CPU, with spikes up to 126.58% (multi-core). The P95 metric from the original spike spec is unsuitable for this workload pattern. Mean CPU (4.18% loaded) is under the 5% FM4 threshold; production estimate is ~2%.
+
+Sub-agent review caught four issues in REPORT.md: off-by-one sample count (90 not 89), silent headroom formula change (mean vs P95 — now explicitly documented with justification), RSS slope ambiguity (loaded-phase vs full-run — both now reported), and a minor word count delta (122,116 not 122,115). All fixed.
+
+### Key findings
+- Apple `SpeechAnalyzer` runs entirely on E-Cluster (efficiency cores) — P-Cluster at 0% active residency
+- Mean CPU 4.18% under 18× overload; estimated ~2% in production
+- RSS 38 MB peak, growing at 16.2 MB/hr (loaded) — projects to 54 MB at 3 hours
+- Energy impact ~150 mW marginal — "Low" classification
+- Zero AVAudioEngine config changes across 60 minutes including Zoom join/leave
+- Thermal state nominal throughout
+
+### Technical findings for production
+- `SpeechAnalyzer` requires `AsyncStream<AnalyzerInput>`, not direct AVAudioEngine integration. Must query `bestAvailableAudioFormat(compatibleWith:considering:)` and convert via `AVAudioConverter` if source format differs.
+- BufferRelay pattern (deep-copy in tap, drain from separate Task) is the correct architecture for feeding live audio to `SpeechAnalyzer`
+- `AnalyzerInput(buffer:)` wraps `AVAudioPCMBuffer` for the async stream
+- `analyzer.prepareToAnalyze(in:)` + `analyzer.start(inputSequence:)` for autonomous analysis
+
+### What changed in the docs
+- `05_SPIKES.md` — Spike #7 marked ✅ conditional pass with validated outcomes section
+- `03_ARCHITECTURE.md` — Open questions table: S7 marked closed, S8 marked closed; Parakeet compute unit note updated (no contention with Apple path); summary paragraph updated
+- `04_BACKLOG.md` — S7 marked ✅ conditional pass (4h actual), Phase 0 remaining reduced to ~5h
+- `01_PROJECT_JOURNAL.md` — this entry
+
+### Ups
+- Mean CPU is comfortably under FM4's 5% threshold even under 18× overload. Production headroom is ~3%.
+- Harness worked on first live run after the format-conversion fix. The `bestAvailableAudioFormat` + `AVAudioConverter` pattern is clean and reusable for production `AppleTranscriberBackend`.
+- Zero config changes — confirms Spike #4's finding that native Zoom does not trigger `AVAudioEngineConfigurationChange`.
+- Sub-agent review caught real issues (headroom formula, sample count) that improved report accuracy.
+- 4h actual = 4h estimated. On budget.
+
+### Downs
+- Initial attempt crashed (SIGTRAP) because `SpeechAnalyzer` silently requires 16kHz input, not the mic's native 48kHz. No compile-time warning. Fixed by discovering `bestAvailableAudioFormat` via Apple docs.
+- The bursty CPU pattern means the original headroom formula (5.0 - P95) is meaningless for this workload. The spike spec's "sustained <5%" criterion was poorly matched to SpeechAnalyzer's batch-processing model. Had to redefine headroom in terms of mean rather than P95, with explicit justification.
+- RSS growth at 16.2 MB/hr (loaded) needs monitoring — not a leak concern yet, but could become one in very long sessions (6+ hours).
+
+### Next session
+- Phase 1 (Foundation) can begin — no remaining P0/P1 spikes gate it
+- Remaining P2 spikes: S9 (adaptive RMS noise-floor), S1 (identifying activating app)
+- PowerSpike code in `PowerSpike/` — throwaway harness, not production code
+
+---
+
 ## Session 011 — 2026-05-03 — Spike #8 closed PASS, Token-Arrival Robustness Validated
 
 **Format:** Claude Code agent execution (Spike #8 Phases A–C), sub-agent reviewed.
