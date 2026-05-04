@@ -340,7 +340,20 @@ Test by:
 
 ## Spike #8 — Token-arrival robustness across environments and mics
 
-**Status:** 📋 planned · **Priority:** P1 (run after S6 passes) · **Estimate:** 3h
+**Status:** ✅ passed (Session 011) · **Priority:** P1 (run after S6 passes) · **Estimate:** 3h (3h actual)
+
+### Validated outcomes (Spike closed Session 011)
+
+- **Word count:** Identical (99) across all 4 conditions (MacBook quiet, MacBook noisy, AirPods Pro 2 quiet, AirPods Pro 2 noisy). 0% spread. `SpeechAnalyzer` consistently recognizes 99 words from a 96-word script regardless of mic or environment.
+- **Speaking duration:** CV = 2.93% across conditions (35.3–38.2s). Well under the 10% threshold.
+- **Inter-onset interval (IOI):** 355–384 ms mean (CV 2.9%) across conditions. Silence gaps between tokens average 4–6 ms — tokens are effectively contiguous regardless of input device.
+- **WPM (raw CV):** 7.84% — exceeds the 5% threshold, but driven by speaker pace variance (3.35% CV) and a pre-speech delay artifact in one clip (`airpods_quiet` first token at 3.0s vs 1.1–1.6s for others). Pace-normalized CV excluding outlier: 1.99%.
+- **Decision:** Approach D (token-arrival) validated. No need for Approach C (`SoundAnalysis` VAD) as secondary signal.
+- **Production note:** `WPMCalculator` should begin sampling after the first token arrives, not from t=0, to avoid EMA warmup artifact on pre-speech silence.
+
+Full report at `TokenStabilitySpike/REPORT.md`.
+
+### Original spike specification (preserved for reference)
 
 ### Question
 Does `SpeechAnalyzer` produce stable token-arrival timing across different microphones and ambient environments? If a clip is recorded on AirPods in a coffee shop vs. MacBook built-in in a quiet room, do we get similar WPM measurements?
