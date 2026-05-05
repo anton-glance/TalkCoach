@@ -317,4 +317,32 @@ final class SessionStoreTests: XCTestCase {
             "Session must not contain transcript-like fields, but found: \(violations)"
         )
     }
+
+    func testNoTranscriptFieldOnAnyRecordType() {
+        let forbiddenNames: Set<String> = [
+            "text", "transcript", "transcription", "utterance", "content"
+        ]
+
+        let instances: [(String, Any)] = [
+            ("SessionRecord", makeSampleRecord()),
+            ("WPMSampleRecord", WPMSampleRecord(timestamp: .now, wpm: 0)),
+            ("FillerCountRecord", FillerCountRecord(word: "", count: 0, language: "")),
+            ("RepeatedPhraseRecord", RepeatedPhraseRecord(phrase: "", count: 0))
+        ]
+
+        var allViolations: [String] = []
+        for (typeName, instance) in instances {
+            let mirror = Mirror(reflecting: instance)
+            let names = mirror.children.compactMap { $0.label }
+            let hits = names.filter { forbiddenNames.contains($0.lowercased()) }
+            for hit in hits {
+                allViolations.append("\(typeName).\(hit)")
+            }
+        }
+
+        XCTAssertEqual(
+            allViolations, [],
+            "Record types must not contain transcript-like fields, but found: \(allViolations)"
+        )
+    }
 }
