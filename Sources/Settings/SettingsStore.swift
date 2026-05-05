@@ -103,6 +103,30 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    // MARK: - Locale management
+
+    func toggleLocale(_ identifier: String) {
+        if let index = declaredLocales.firstIndex(of: identifier) {
+            declaredLocales.remove(at: index)
+        } else {
+            guard declaredLocales.count < 2 else { return }
+            declaredLocales.append(identifier)
+            if !hasCompletedSetup {
+                hasCompletedSetup = true
+            }
+        }
+    }
+
+    func commitSystemLocaleIfApplicable(systemLocaleIdentifier: String) {
+        guard !hasCompletedSetup, declaredLocales.isEmpty else { return }
+        let normalized = systemLocaleIdentifier.replacingOccurrences(of: "-", with: "_")
+        guard LocaleRegistry.allLocales.contains(where: { $0.identifier == normalized }) else {
+            return
+        }
+        declaredLocales = [normalized]
+        hasCompletedSetup = true
+    }
+
     private func syncFromDefaults() {
         isSyncing = true
         defer { isSyncing = false }

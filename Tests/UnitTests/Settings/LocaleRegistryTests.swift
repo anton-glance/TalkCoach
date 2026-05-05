@@ -1,6 +1,7 @@
 import XCTest
 @testable import TalkCoach
 
+@MainActor
 final class LocaleRegistryTests: XCTestCase {
 
     func testRegistryContainsAtLeast50Locales() {

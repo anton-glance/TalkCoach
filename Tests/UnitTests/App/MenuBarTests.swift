@@ -1,6 +1,7 @@
 import XCTest
 @testable import TalkCoach
 
+@MainActor
 final class MenuBarTests: XCTestCase {
 
     private let coachingKey = "coachingEnabled"
@@ -53,10 +54,14 @@ final class MenuBarTests: XCTestCase {
         )
     }
 
-    // MARK: - Settings window ID constant
+    // MARK: - Settings window contract
 
-    func testSettingsWindowIdMatchesExpected() {
-        XCTAssertEqual(SettingsWindow.id, "settings")
+    func testSettingsWindowOpenedViaAppDelegateOpenSettings() {
+        let delegate = AppDelegate()
+        delegate.openSettings()
+        XCTAssertNotNil(delegate.settingsWindow)
+        XCTAssertTrue(delegate.settingsWindow?.isVisible == true)
+        delegate.settingsWindow?.close()
     }
 
     // MARK: - App body smoke test
