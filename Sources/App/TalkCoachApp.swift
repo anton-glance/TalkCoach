@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let settingsStore = SettingsStore()
     let permissionManager = PermissionManager()
+    let micMonitor = MicMonitor()
     private(set) var settingsWindow: NSWindow?
 
     override init() {
@@ -65,6 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+#if DEBUG
+extension AppDelegate: MicMonitorDelegate {
+    func micActivated() {
+        Logger.mic.info("[DEBUG] Mic activated")
+    }
+
+    func micDeactivated() {
+        Logger.mic.info("[DEBUG] Mic deactivated")
+    }
+}
+#endif
+
 @main
 struct TalkCoachApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
@@ -105,6 +118,15 @@ struct MenuBarContent: View {
                     manager.showDeniedAlert(for: outcome)
                 }
             }
+        }
+        // M2.1 scaffolding — removed in M2.3 when SessionCoordinator becomes the production caller.
+        Button("Start Mic Monitor") {
+            guard let appDelegate = AppDelegate.current else { return }
+            appDelegate.micMonitor.delegate = appDelegate
+            appDelegate.micMonitor.start()
+        }
+        Button("Stop Mic Monitor") {
+            AppDelegate.current?.micMonitor.stop()
         }
         #endif
 

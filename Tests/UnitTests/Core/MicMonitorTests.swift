@@ -80,36 +80,39 @@ private final class DelegateSpy: MicMonitorDelegate {
 @MainActor
 final class MicMonitorTests: XCTestCase {
 
+    private var sut: MicMonitor!
+    private var fake: FakeCoreAudioDeviceProvider!
+    private var spy: DelegateSpy!
+
     private func makeSUT(
         defaultDeviceID: AudioObjectID? = 42,
         isRunning: Bool = false
-    ) -> (MicMonitor, FakeCoreAudioDeviceProvider, DelegateSpy) {
-        let fake = FakeCoreAudioDeviceProvider()
+    ) {
+        fake = FakeCoreAudioDeviceProvider()
         fake.stubbedDefaultDeviceID = defaultDeviceID
         fake.stubbedIsRunning = isRunning
-        let sut = MicMonitor(provider: fake)
-        let spy = DelegateSpy()
+        sut = MicMonitor(provider: fake)
+        spy = DelegateSpy()
         sut.delegate = spy
-        return (sut, fake, spy)
     }
 
     // MARK: - Start / Stop basics
 
     func testStartSetsIsMonitoringTrue() {
-        let (sut, _, _) = makeSUT()
+        makeSUT()
         sut.start()
         XCTAssertTrue(sut.isRunning)
     }
 
     func testStopSetsIsMonitoringFalse() {
-        let (sut, _, _) = makeSUT()
+        makeSUT()
         sut.start()
         sut.stop()
         XCTAssertFalse(sut.isRunning)
     }
 
     func testStartIdempotent() {
-        let (sut, fake, _) = makeSUT()
+        makeSUT()
         sut.start()
         sut.start()
         XCTAssertEqual(fake.addIsRunningListenerCallCount, 1)
@@ -117,7 +120,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testStopIdempotent() {
-        let (sut, fake, _) = makeSUT()
+        makeSUT()
         sut.stop()
         XCTAssertEqual(fake.removeIsRunningListenerCallCount, 0)
         XCTAssertEqual(fake.removeDefaultDeviceListenerCallCount, 0)
@@ -126,14 +129,14 @@ final class MicMonitorTests: XCTestCase {
     // MARK: - Initial state emission
 
     func testStartMicAlreadyRunningEmitsActivated() {
-        let (sut, _, spy) = makeSUT(isRunning: true)
+        makeSUT(isRunning: true)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 1)
         XCTAssertEqual(spy.deactivatedCount, 0)
     }
 
     func testStartMicNotRunningDoesNotEmit() {
-        let (sut, _, spy) = makeSUT(isRunning: false)
+        makeSUT(isRunning: false)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 0)
         XCTAssertEqual(spy.deactivatedCount, 0)
@@ -142,7 +145,7 @@ final class MicMonitorTests: XCTestCase {
     // MARK: - Runtime transitions
 
     func testRunningTransitionFalseToTrueEmitsActivated() async {
-        let (sut, fake, spy) = makeSUT(isRunning: false)
+        makeSUT(isRunning: false)
         sut.start()
         fake.stubbedIsRunning = true
         fake.simulateIsRunningChange()
@@ -151,7 +154,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testRunningTransitionTrueToFalseEmitsDeactivated() async {
-        let (sut, fake, spy) = makeSUT(isRunning: true)
+        makeSUT(isRunning: true)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 1)
         fake.stubbedIsRunning = false
@@ -161,7 +164,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testSameValueNotificationDoesNotDoubleEmit() async {
-        let (sut, fake, spy) = makeSUT(isRunning: true)
+        makeSUT(isRunning: true)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 1)
         fake.simulateIsRunningChange()
@@ -172,7 +175,7 @@ final class MicMonitorTests: XCTestCase {
     // MARK: - Default device change
 
     func testDefaultDeviceChangeOldListenerRemoved() async {
-        let (sut, fake, _) = makeSUT()
+        makeSUT()
         sut.start()
         fake.stubbedDefaultDeviceID = 99
         fake.simulateDefaultDeviceChange()
@@ -181,7 +184,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testDefaultDeviceChangeNewListenerAttached() async {
-        let (sut, fake, _) = makeSUT()
+        makeSUT()
         sut.start()
         XCTAssertEqual(fake.addIsRunningListenerCallCount, 1)
         fake.stubbedDefaultDeviceID = 99
@@ -191,16 +194,22 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testDefaultDeviceChangeSameDeviceIsNoOp() async {
-        let (sut, fake, _) = makeSUT(defaultDeviceID: 42)
+        makeSUT(defaultDeviceID: 42)
         sut.start()
         fake.simulateDefaultDeviceChange()
         await Task.yield()
-        XCTAssertEqual(fake.removeIsRunningListenerCallCount, 0, "Same device should not detach listener")
-        XCTAssertEqual(fake.addIsRunningListenerCallCount, 1, "Same device should not re-attach listener")
+        XCTAssertEqual(
+            fake.removeIsRunningListenerCallCount, 0,
+            "Same device should not detach listener"
+        )
+        XCTAssertEqual(
+            fake.addIsRunningListenerCallCount, 1,
+            "Same device should not re-attach listener"
+        )
     }
 
     func testDefaultDeviceChangeNoReplacementTreatsAsNotRunning() async {
-        let (sut, fake, spy) = makeSUT(isRunning: true)
+        makeSUT(isRunning: true)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 1)
         fake.stubbedDefaultDeviceID = nil
@@ -210,7 +219,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testDefaultDeviceChangeNewDeviceRunningEmitsActivation() async {
-        let (sut, fake, spy) = makeSUT(isRunning: false)
+        makeSUT(isRunning: false)
         sut.start()
         fake.stubbedDefaultDeviceID = 99
         fake.stubbedIsRunning = true
@@ -220,7 +229,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testDefaultDeviceChangeNewDeviceNotRunningEmitsDeactivation() async {
-        let (sut, fake, spy) = makeSUT(isRunning: true)
+        makeSUT(isRunning: true)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 1)
         fake.stubbedDefaultDeviceID = 99
@@ -233,7 +242,7 @@ final class MicMonitorTests: XCTestCase {
     // MARK: - Cleanup
 
     func testStopRemovesBothListeners() {
-        let (sut, fake, _) = makeSUT()
+        makeSUT()
         sut.start()
         sut.stop()
         XCTAssertGreaterThanOrEqual(fake.removeIsRunningListenerCallCount, 1)
@@ -241,7 +250,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testStopStopsEmittingAfterSubsequentChanges() async {
-        let (sut, fake, spy) = makeSUT(isRunning: false)
+        makeSUT(isRunning: false)
         sut.start()
         sut.stop()
         fake.stubbedIsRunning = true
@@ -252,7 +261,7 @@ final class MicMonitorTests: XCTestCase {
     }
 
     func testStartAfterStopWorks() async {
-        let (sut, fake, spy) = makeSUT(isRunning: false)
+        makeSUT(isRunning: false)
         sut.start()
         sut.stop()
         XCTAssertFalse(sut.isRunning)
