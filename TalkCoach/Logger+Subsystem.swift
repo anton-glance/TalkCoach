@@ -1,0 +1,13 @@
+import OSLog
+
+extension Logger {
+    private static let subsystem = "placeholder"
+
+    static let app = Logger(subsystem: subsystem, category: "app")
+    static let audio = Logger(subsystem: subsystem, category: "audio")
+    static let speech = Logger(subsystem: subsystem, category: "speech")
+    static let analyzer = Logger(subsystem: subsystem, category: "analyzer")
+    static let widget = Logger(subsystem: subsystem, category: "widget")
+    static let session = Logger(subsystem: subsystem, category: "session")
+    static let mic = Logger(subsystem: subsystem, category: "mic")
+}
