@@ -16,13 +16,14 @@
 | S2 | Language auto-detect mechanism | ✅ passed Session 010 | (6h actual) |
 | S8 | Token-arrival robustness across mics & environments | ✅ passed Session 011 | (3h actual) |
 | S7 | Power & CPU profiling Architecture Y (Apple baseline + 1hr session) | ✅ conditional pass Session 012 | (4h actual) |
-| S9 | Adaptive RMS noise-floor for shouting detection | 📋 P2 | 2h |
+| S9 | Adaptive RMS noise-floor for shouting detection | ❌ invalidated Session 013 (algorithm fundamentally wrong; feature → v2) | (3h actual) |
 | S1 | Identifying activating app for blocklist | 📋 P2 | 3h |
+| S11 | `MonologueDetector` VAD source: validate `SpeakingActivityTracker` is sufficient (vs Silero alternative) | 📋 P1 | 3h |
 | S3 | ~~Russian transcription quality on `SpeechAnalyzer`~~ | ❌ superseded by S10 | — |
 
-**Phase 0 remaining work: ~5h** (was 9h; S7 closed at 4h actual).
+**Phase 0 remaining work: ~6h** (S1 P2 + S11 P1; S11 added Session 013 to gate `MonologueDetector` VAD-source choice).
 
-Six P0 spikes done plus S2, S8. Remaining are P2 (S9, S1) — neither gates the architecture; both refine implementation details. Phase 1 (Foundation) can begin any time.
+Six P0 spikes done plus S2, S8. S9 ❌ closed → feature deferred to v2. S11 added (P1, gates M4.5 `MonologueDetector`). S1 remains (P2 — does not gate architecture). Phase 1 (Foundation) is unblocked and can begin in parallel with S11.
 
 Detailed spike specs in `05_SPIKES.md`.
 
@@ -58,11 +59,11 @@ Goal: the app knows when the mic turns on, shows an empty placeholder widget, kn
 | M2.2 | Activating-app identification for blocklist | 📋 | 3h | S1 (passed) |
 | M2.3 | `SessionCoordinator` skeleton: receive mic events, manage session state | 📋 | 3h | M2.1, M2.2 |
 | M2.4 | Blocklist UI in settings + check at activation | 📋 | 2h | M2.3 |
-| M2.5 | `FloatingPanel`: NSPanel + SwiftUI host, show/hide, "Listening…" placeholder | 📋 | 5h | M2.3 |
+| M2.5 | `FloatingPanel`: NSPanel + SwiftUI host, panel state machine (listening/active/dismissed), "Listening…" placeholder, on-widget close affordance with confirmation dialog | 📋 | 6h | M2.3 |
 | M2.6 | Per-display widget position memory | 📋 | 2h | M2.5 |
 | M2.7 | Session persistence (empty metrics) at end of session | 📋 | 1h | M1.5, M2.3 |
 
-**Phase 2 total: ~20h.**
+**Phase 2 total: ~21h** (was 20h; M2.5 +1h Session 013 for persistent-state machine and close-affordance with confirmation).
 
 **End-of-phase checkpoint:** Open Zoom → widget appears in chosen position → close Zoom → widget fades out → `~/Library/Application Support/TalkCoach/` shows a session record with timestamps.
 
@@ -76,7 +77,7 @@ Goal: while a session is active, audio is being captured, transcribed in the rig
 |---|---|---|---|---|
 | M3.1 | `AudioPipeline`: AVAudioEngine setup, voice-processing-OFF, raw input tap | 📋 | 4h | S4 (passed) |
 | M3.2 | `SpeakingActivityTracker`: derive speaking duration from token timestamps | 📋 | 2h | M3.5, S6/S8 (passed) |
-| M3.3 | RMS calculation on audio buffers | 📋 | 1h | M3.1 |
+| M3.3 | ~~RMS calculation on audio buffers~~ | ❌ removed Session 013 (S9 invalidated; shouting → v2) | — | — |
 | M3.4 | `LanguageDetector`: N=1 trivial path + N=2 script-aware hybrid (3 strategies: NLLanguageRecognizer, word-count, Whisper-tiny LID) | 📋 | 4–6h | S2 (passed), M1.7 |
 | M3.5 | `TranscriptionEngine` routing layer: locale → backend selection, unified token stream output | 📋 | 4h | M3.5a, M3.5b, M3.4 |
 | M3.5a | `AppleTranscriberBackend`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | 📋 | 4h | M3.4 |
@@ -93,7 +94,7 @@ Goal: while a session is active, audio is being captured, transcribed in the rig
 
 ## Phase 4 — Analyzer (the brain)
 
-Goal: tokens + VAD + RMS turn into meaningful real-time metrics.
+Goal: tokens turn into meaningful real-time metrics.
 
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
@@ -101,13 +102,14 @@ Goal: tokens + VAD + RMS turn into meaningful real-time metrics.
 | M4.2 | `FillerDetector`: seeded dictionaries (EN/RU/ES), match logic | 📋 | 4h | M3.7 |
 | M4.3 | Filler dictionary editor in settings (per language) | 📋 | 3h | M4.2 |
 | M4.4 | `RepeatedPhraseDetector`: n-gram window | 📋 | 3h | M3.7 |
-| M4.5 | `ShoutingDetector`: adaptive noise-floor (10th percentile rolling window) + threshold | 📋 | 3h | M3.3, S9 (passed) |
+| M4.5 | `MonologueDetector`: state machine (IDLE/SPEAKING/PAUSED), 2.5s grace window (4s on Bluetooth), Gong-anchored thresholds (60/90/150s), once-per-second emission | 📋 | 4h | M3.2, S11 |
+| M4.5a | If S11 fails: add Silero VAD as parallel path on `AudioPipeline` buffers, route to `MonologueDetector` | 🔬 | 0–4h | S11 (decision) |
 | M4.6 | `EffectiveSpeakingDuration`: accumulate from `SpeakingActivityTracker` | 📋 | 1h | M3.2 |
-| M4.7 | Final session aggregation at session end | 📋 | 2h | M4.1–M4.6 |
+| M4.7 | Final session aggregation at session end (incl. `monologueEvents`) | 📋 | 2h | M4.1–M4.6 |
 
-**Phase 4 total: ~19h.**
+**Phase 4 total: ~20h** (revised Session 013: M4.5 revived as `MonologueDetector` 4h; M4.5a contingent 0–4h pending S11 outcome).
 
-**End-of-phase checkpoint:** End a session → `SessionStore` shows accurate `totalWords`, `averageWPM`, `wpmSamples` array, `fillerCounts`, `repeatedPhrases`, `shoutingEvents`, `effectiveSpeakingDuration`. Numbers match a manual stopwatch + count on the same recording.
+**End-of-phase checkpoint:** End a session → `SessionStore` shows accurate `totalWords`, `averageWPM`, `wpmSamples` array, `fillerCounts`, `repeatedPhrases`, `effectiveSpeakingDuration`, `monologueEvents`. Numbers match a manual stopwatch + count on the same recording.
 
 ---
 
@@ -122,12 +124,12 @@ Goal: replace the placeholder widget with the real glanceable display.
 | M5.3 | Smooth color interpolation (FM1 — anti-jitter) | 📋 | 3h | M5.2 |
 | M5.4 | Average WPM display under primary | 📋 | 1h | M5.2 |
 | M5.5 | Filler list: append-only, no reorder, count updates in place | 📋 | 3h | M5.1 |
-| M5.6 | Shouting indicator icon | 📋 | 1h | M5.1 |
+| M5.6 | Monologue indicator: visual treatment for soft (60s)/warning (90s)/urgent (150s) levels, gradual transitions, no flash | 📋 | 3h | M5.1, M4.5 |
 | M5.7 | Liquid Glass material styling (macOS 26 native) | 📋 | 4h | M5.2 |
 | M5.8 | Drag-to-move with snap-to-screen-edge | 📋 | 3h | M2.5 |
 | M5.9 | Fade in/out animations on session start/end | 📋 | 2h | M2.5 |
 
-**Phase 5 total: ~22h.**
+**Phase 5 total: ~24h** (revised Session 013: M5.6 revived as monologue indicator at 3h).
 
 **End-of-phase checkpoint:** Real-world test in a 30-min Zoom call. Widget is glanceable, doesn't pull attention when nothing changes, smoothly indicates pace shifts. Self-test against FM1 ("destructive UI") criteria.
 
@@ -160,7 +162,7 @@ Goal: take the working app to public-release quality.
 | M7.1 | Hotkey toggle (Cmd+Shift+M) for manual coaching on/off | 📋 | 2h | M2.3 |
 | M7.2 | Manual language override in menu bar | 📋 | 2h | M3.4 |
 | M7.3 | Session-end UX: show brief summary, allow immediate label | 📋 | 3h | M4.7 |
-| M7.4 | Settings sheet polish: target WPM band slider, blocklist UI, filler editor | 📋 | 4h | M4.3, M2.4 |
+| M7.4 | Settings sheet polish: target WPM band slider, blocklist UI, filler editor, presentation-mode toggle (suppresses monologue widget warnings while still recording events) | 📋 | 5h | M4.3, M2.4, M4.5 |
 | M7.5 | Accessibility audit: VoiceOver labels on widget, Dynamic Type in stats | 📋 | 3h | All UI |
 | M7.6 | Dark mode / light mode visual check | 📋 | 2h | All UI |
 | M7.7 | First-launch defaults verified end-to-end (FM3 — no setup) | 📋 | 2h | All |
@@ -168,7 +170,7 @@ Goal: take the working app to public-release quality.
 | M7.9 | Localized strings for app UI (EN, RU, ES) | 📋 | 4h | All UI |
 | M7.10 | Notarization & DMG creation script (or App Store Connect setup) | 📋 | 4h | All |
 
-**Phase 7 total: ~29h.**
+**Phase 7 total: ~30h** (revised Session 013: M7.4 +1h for presentation-mode toggle).
 
 **End-of-phase checkpoint:** A signed, notarized DMG exists. App passes all four success criteria from `02_PRODUCT_SPEC.md` after 2 weeks of personal use.
 
@@ -178,15 +180,17 @@ Goal: take the working app to public-release quality.
 
 | Phase | Goal | Estimate |
 |---|---|---|
-| 0 | Spikes (incl. S10 Parakeet) | 35–39h |
+| 0 | Spikes (incl. S10 Parakeet, S11 monologue VAD) | 38–42h |
 | 1 | Foundation (incl. onboarding language picker) | 14h |
-| 2 | Mic detection + session lifecycle | 20h |
+| 2 | Mic detection + session lifecycle (incl. persistent panel state) | 21h |
 | 3 | Audio pipeline + transcription engine (Architecture Y) | 38–44h |
-| 4 | Analyzer | 19h |
-| 5 | Widget UI | 22h |
+| 4 | Analyzer (incl. `MonologueDetector`; M4.5a Silero contingent) | 20–24h |
+| 5 | Widget UI (incl. monologue indicator) | 24h |
 | 6 | Stats window | 16h |
-| 7 | Polish & ship | 29h |
-| **Total** | **v1 complete** | **~193–203h focused effort** |
+| 7 | Polish & ship (incl. presentation-mode toggle) | 30h |
+| **Total** | **v1 complete** | **~201–215h focused effort** |
+
+Session 013 net effect: +12h (S11 +3h, M2.5 +1h, M4.5 revived +4h, M4.5a contingent 0–4h, M5.6 revived +3h, M7.4 +1h) − 4h (M3.3, original M4.5, original M5.6 removed earlier same session) = net +8 to +12h. v1 estimate moves from 189–199h to 201–215h. The change is the monologue-detector decision (Session 013 second half), not S9. Trail-off detector and v2 voice analysis (the v2-bound features) do NOT count against v1.
 
 Session 008 net effect: +3h (onboarding picker M1.7) − 2–4h (simpler `LanguageDetector` for binary classifier vs N-way) = roughly net zero, but the work split is clearer.
 

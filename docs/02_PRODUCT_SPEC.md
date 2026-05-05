@@ -79,14 +79,20 @@ Invisible cost during 1hr Zoom calls on battery.
 - Color band: green (in target range), yellow (drifting out), red (well outside)
 - Arrow icon: ↑ when too fast, ↓ when too slow, hidden when on-pace
 - Filler word list below (growing): word + count, e.g., "so 15"
-- Volume/shouting icon appears when triggered
+- **Monologue indicator:** appears at 60s of uninterrupted speaking (soft cue), strengthens at 90s (warning) and 150s (urgent). Visual treatment per FM1: gradual color/intensity transitions over 600ms, no flash, no pulse. Disappears when monologue clock resets (user yields ≥2.5s or genuinely stops).
 - Liquid Glass translucent material, draggable per-display memory
+
+### Persistent / no-speech behavior (locked Session 013)
+- Widget stays visible for the entire mic-active session, even when no speech is detected. State shows "Listening…" or equivalent low-attention placeholder; metrics show no values rather than zeroed values (zeros would imply "you're at 0 WPM" — misleading).
+- The user can manually dismiss the widget via an on-widget close affordance. Dismissal triggers a confirmation prompt: "Are you sure you are not going to speak during this session?" with Yes/No.
+- Dismissal is scoped to the **current session only**. The widget re-appears on the next mic activation. There is no per-session "remember dismissal" persistence.
+- Rationale: a widget that disappears on silence creates anxiety (did it crash?); a widget that auto-hides for known no-speech meetings (45-min webinars) is the listen-only edge case M2.4 blocklist already covers via the per-app blocklist for known offenders.
 
 ### Speaking metrics (real-time + logged)
 - WPM (rolling window + session average)
 - Filler-word counts per language
 - Repeated phrases ("I think, I think")
-- Volume/shouting events
+- **Monologue events:** start time, duration, peak warning level reached. A "monologue" is uninterrupted speaking for 60s+ where pauses ≤2.5s do not break the streak (breath, "uh… so" bridges, thinking pauses are part of the same monologue). Algorithm and validation in `03_ARCHITECTURE.md` and `05_SPIKES.md` Spike #11.
 
 ### Filler-word dictionary (v1: seeded + manually editable)
 - Bundled seed lists for high-priority languages (EN, RU, ES at minimum, plus any others we have native-speaker seed contributions for at launch). For declared languages without a bundled seed dictionary, the user starts with an empty list and adds fillers via settings as they notice them.
@@ -107,10 +113,11 @@ Invisible cost during 1hr Zoom calls on battery.
 Session {
   id, startedAt, endedAt, language, userLabel?
   totalWords, averageWPM, peakWPM, wpmStandardDeviation
-  shoutingEvents, effectiveSpeakingDuration
+  effectiveSpeakingDuration
   wpmSamples: [{timestamp, wpm}]   // every 3s
   fillerCounts: [{word, count, language}]
   repeatedPhrases: [{phrase, count}]
+  monologueEvents: [{startedAt, durationSeconds, peakWarningLevel}]
 }
 ```
 
@@ -130,6 +137,8 @@ No transcripts persisted. No app names persisted. No timestamps within day excep
 - Acoustic non-word detection ("hmm", "ahh") — v1.x
 - Auto-learn fillers — v1.x
 - Pitch / tone analysis — v1.x or v2
+- **Trail-off / vocal-cliff detector — v2.** A "vocal cliff" is voice fading at the end of a phrase; the v2 widget would briefly flash an edge cue. Algorithm preserved in `05_SPIKES.md` Spike #12 (parked) so we don't re-derive in v2. Headline: maintain rolling RMS over 200ms windows and a 5-min adaptive baseline; fire an event when (a) recent RMS drops ≥6 dB below the prior 1.5s AND (b) a SPEAKING→PAUSED transition fires within 300ms — the conjunction is what distinguishes a trail-off from a mid-sentence dip. Rate-limit to one event per 10s. Reasons for v1 deferral: (1) shares S9's risk shape (per-user-tunable dB threshold violates FM3); (2) v1 doesn't currently capture RMS — we removed it in Session 013 with S9; (3) the conjunction ("drop AND silence") makes it more defensible than S9 was, but still needs a validation spike before commit. v2-blocking work: Spike #12 (parked, 2h) — prove the 6dB-then-silence rule generalizes across at least 2 voice samples.
+- **Shouting / aggressive-tone detection — v2.** Originally scoped for v1 (Session 004 architecture decision). Spike #9 (Session 013) invalidated the planned algorithm: an RMS-based adaptive noise floor with a +25 dB threshold cannot distinguish shouting from (a) normal speech-after-pause in quiet rooms (the floor calibrates to silence between sentences, so any speech triggers), or (b) Lombard-effect raised voice in noisy rooms (genuine shouting fails to clear floor+25 dB because ambient floor is already high). Both failure modes are a violation of FM1. v2 will explore an intelligent voice-analysis approach (likely a multi-signal model: pitch/F0 elevation, spectral tilt, sudden vs gradual onset). Full diagnosis in `05_SPIKES.md` Spike #9.
 - Long-pause tracking as user-visible metric — never
 - Speaker diarization (mixed-room your-voice-only) — v2
 - Cloud LLM analysis — v2+

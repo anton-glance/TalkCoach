@@ -404,37 +404,58 @@ This addresses FM2 (unreliable data) under the realistic condition that the user
 
 ## Spike #9 — Adaptive RMS noise-floor for shouting detection
 
-**Status:** 📋 planned · **Priority:** P2 (run before M4.5) · **Estimate:** 2h
+**Status:** ❌ closed Session 013 — algorithm invalidated, feature deferred to v2 · **Estimate vs actual:** 2h estimate, ~3h actual
 
-### Question
+### Original question
 Does the adaptive noise-floor approach (rolling 5s buffer, 10th percentile = noise floor, threshold = floor + 25 dB) reliably detect shouting across environments without false positives?
 
-### Why it matters
-The shouting detector is the only audio-energy-based feature in the app (per Session 004 architecture decision). It must work in any environment without calibration to satisfy FM3 (no setup). Fixed-dBFS thresholds break across mics and rooms.
+### Verdict
+**No.** The algorithm cannot perform the task. Two failure modes, both fundamental, neither tunable:
 
-### Method
-1. Record short clips (~20s each):
-   - Quiet room, normal speech (no shouting expected)
-   - Quiet room, deliberate shouting at end
-   - Noisy environment (HVAC + nearby conversation), normal speech (no shouting expected)
-   - Noisy environment, deliberate shouting at end
-2. Build a small harness: ingest RMS samples → run adaptive threshold → output detected shouting events
-3. Validate: shouting clips trigger events, non-shouting clips don't
+1. **In quiet rooms with natural speech, every sentence-after-pause looks like a shout.** The 10th percentile of a 5-second buffer dominated by speech-with-pauses calibrates to *the silences between sentences* (e.g. -62 dBFS), not to room ambience (e.g. -38 dBFS). Normal speech at -32 dBFS is then 30 dB above floor — over the +25 dB threshold. Validated on `quiet_normal.caf`: 3 false positives at architecture defaults.
 
-### Pass criteria
-- Shouting clips: at least one shouting event detected with timestamp matching the actual shouting onset (±1s)
-- Non-shouting clips: zero shouting events
-- Adaptive floor adjusts within 5s when ambient noise changes (validate by switching environments mid-clip)
+2. **In noisy rooms, genuine raised-voice cannot clear the threshold.** The Lombard effect causes speakers to raise their voice 10-15 dB automatically in noise — that's automatic, non-aggressive vocal compensation, not shouting. In a noisy room the floor IS the noise (no silent gaps), so it sits at e.g. -33 dBFS. Genuine shouting peaks at e.g. -10 dBFS — 23 dB above floor, below threshold. Validated on `noisy_shout.caf`: 0 events detected at architecture defaults despite a clear deliberate shout in the recording.
 
-### Fail mode → action
-- **False positives in noisy environments:** floor estimation too low — try 25th percentile instead of 10th, or longer rolling window
-- **False negatives on actual shouting:** threshold too conservative — try 20 dB margin instead of 25
-- **Adaptation too slow:** shorten rolling buffer from 5s to 3s
-- **Adaptation too jumpy:** lengthen to 8s
+The cleaner the room, the more silences in speech, the lower the floor, the easier to false-trigger. The noisier the room, the harder to true-trigger. Inverse of what's wanted.
 
-### Outputs
-- Tuned constants for adaptive floor: rolling buffer length, percentile, threshold dB
-- These become production constants in `ShoutingDetector`
+### Root cause
+RMS dBFS is the wrong signal for shouting. The algorithm is a *loudness detector* — and loudness alone cannot distinguish:
+- Genuine shouting (aggressive, intentional, destructive)
+- Lombard compensation (automatic, non-aggressive, environment-appropriate)
+- Emphasis (passionate but not aggressive)
+- Plosives, laughs, clearings of throat (transient energy, not voice)
+
+No combination of percentile / threshold / sustain / buffer length resolves this — the input signal does not carry the information needed.
+
+### Implementation status
+The `ShoutingSpike/` harness is correct and well-engineered. Tests pass 12/12, sub-agent independent review passed 7/7, byte-identical re-runs verified. The implementation faithfully realizes the architecture's algorithm. The *algorithm* is what's wrong, not the code. Harness is preserved in the repo for v2 reference.
+
+### Tuning attempts (all failed)
+- Architecture defaults (p10, +25 dB): 2/5 gates pass — false positives on `quiet_normal` and `transition`, missed shout on `noisy_shout`.
+- Targeted variants from this spike's "Fail mode → action" list (p25 +20 dB, p25 +20 dB / b8, etc.): best variant achieves 4/5 gates by hiding the quiet-room false positives behind a higher percentile, but `noisy_shout` still misses because the Lombard problem is structural.
+- No combination passes all five gates because the two failure modes pull in opposite directions: tighter threshold → more false negatives in noise; looser threshold → more false positives in quiet.
+
+### Decision (Session 013)
+Shouting detection removed from v1 entirely. Deferred to v2 with explicit framing: "intelligent voice analysis."
+
+Removed from v1:
+- `02_PRODUCT_SPEC.md`: shouting metric, widget icon, `shoutingEvents` from Session schema, "Volume/shouting events" feature
+- `03_ARCHITECTURE.md`: `ShoutingDetector` sub-component, RMS path on `AudioPipeline`, `isShouting` on `WidgetViewModel`
+- `04_BACKLOG.md`: M3.3 (RMS calculation), M4.5 (ShoutingDetector), M5.6 (Shouting indicator icon)
+- v1 effort estimate dropped by ~4h.
+
+### What v2 needs to revisit
+A real shouting detector likely needs a multi-signal model. Candidates worth exploring in a future spike:
+- **Pitch / fundamental frequency (F0):** shouted speech raises F0 substantially (~20-50%); Lombard compensation raises it slightly (~5-10%). The gradient discriminates.
+- **Spectral tilt:** shouted speech has more high-frequency energy (raspier, more "edge"). Measurable via spectral centroid or rolloff.
+- **Onset rate-of-change:** shouting is sudden (1-2s ramp); Lombard adaptation is gradual (5-10s ramp). A signal that captures derivative-of-loudness, not absolute loudness.
+- **Small ML model:** an on-device classifier trained on labeled shout/non-shout audio. The SpeechAnalyzer audio buffers we're already capturing are a viable input.
+
+A v2 spike should record a much larger and more diverse clip set (noisy office, café, quiet bedroom, post-Lombard adapted speech, emphatic-but-not-shouting examples, laughs, plosives) before committing to any approach.
+
+### Artifacts
+- `ShoutingSpike/` — full harness, tests, recordings, results, REPORT.md (note: REPORT.md as committed by the agent overstates the result; this entry is the authoritative verdict)
+- Recordings (`quiet_normal.caf`, `quiet_shout.caf`, `noisy_normal.caf`, `noisy_shout.caf`, `transition.caf`) and time-series CSVs are kept for v2 reference
 
 ---
 
@@ -540,6 +561,106 @@ This spike was originally Spike #3 ("Russian quality on `SpeechAnalyzer`"). Spik
 - Word-level vs phrase-level timestamp finding (and fallback design if needed)
 - Per-second power profile to feed into Spike #7
 - Documentation of the conversion path (so the production app can repeat it as part of build, or pin a conversion artifact)
+
+---
+
+## Spike #11 — `MonologueDetector` VAD source validation
+
+**Status:** 📋 P1 (gates M4.5 `MonologueDetector`) · **Estimate:** 3h · **Added:** Session 013
+
+### Question
+Is `SpeakingActivityTracker`'s token-arrival-derived speaking signal a sufficient VAD source for `MonologueDetector`, or do we need to add a parallel frame-level VAD (Silero) running on `AudioPipeline` buffers?
+
+### Why it matters
+`MonologueDetector` is a v1 feature (Session 013 product decision). Its state machine is straightforward but its accuracy is bounded by the granularity and timing-fidelity of its `isSpeech` input. `SpeakingActivityTracker` is already wired and free; Silero adds a Core ML model + module + buffer fan-out. We want to use the existing signal if it's adequate, and only add Silero if the existing signal materially under-counts or mis-times monologues.
+
+The 60s/90s/150s thresholds tolerate ~1-2s of timing slop in start-of-monologue detection (<3% error at 60s threshold). The risks are:
+1. `SpeakingActivityTracker` reports speaking with a 1.5s `tokenSilenceTimeout`. A 2.5s grace window minus 1.5s timeout = effective 1s grace from the user's perspective — too tight; may fragment monologues that have natural 2s breath pauses.
+2. Backchannels ("mm-hmm" while listening) may produce tokens that start a monologue clock that takes 1.5s to clear. Spurious 1.5s "monologues" don't reach the 60s threshold but could thrash the IDLE/SPEAKING state.
+3. `SpeechAnalyzer` may suppress short utterances entirely (no token = no speaking signal), in which case backchannels are correctly invisible. We don't know which.
+
+### Method
+1. Record 3 conversation clips (~3-5 min each) with the user as one speaker:
+   - **Clip A — Q&A:** user answers questions in 30-60s chunks. No long monologues. ~6-10 turn-takings. Goal: validate that turn-yields cleanly transition PAUSED → IDLE.
+   - **Clip B — Long answer + backchannels:** user delivers one ~2-min answer with the other speaker injecting "mm-hmm" / "right" backchannels every ~20s. Goal: validate that backchannels do not fragment the user's monologue or spuriously start one.
+   - **Clip C — Mixed:** ~5 min of varied conversational rhythm — short answers, one ~90s answer, two ~45s answers, several brief exchanges. Goal: validate detection of the 90s answer as a monologue without false positives elsewhere.
+   For each clip, the user manually annotates "ground truth" monologue events with start time + duration via stopwatch (audio review post-hoc is fine).
+2. Build a small harness `MonologueSpike/` (mirror `ShoutingSpike/` structure):
+   - Read audio file.
+   - Run two parallel pipelines: (a) feed audio buffers through a stub `SpeakingActivityTracker` reproducing the production logic (token arrival via `SpeechAnalyzer` for English clips, 1.5s timeout); (b) feed the same buffers through Silero VAD (Core ML, ~1MB).
+   - Both pipelines emit `[(speakingStart, speakingEnd)]` interval lists.
+   - Run `MonologueDetector`'s state machine over each interval list; emit `[MonologueEvent]` per pipeline.
+   - Compare both outputs to the ground-truth annotations.
+3. Per clip, compute:
+   - **Recall:** fraction of ground-truth monologues correctly detected (start time within ±3s, duration within ±5s).
+   - **Precision:** fraction of detected monologues that are real (vs spurious).
+   - **Backchannel false positives:** count of "monologue starts" emitted during the other speaker's backchannels in Clip B.
+
+### Pass criteria
+- `SpeakingActivityTracker` pipeline alone hits ≥90% recall and ≥90% precision across all three clips.
+- Zero backchannel false positives in Clip B (or all such false positives clear before reaching the 60s threshold, so they're invisible to the user).
+- Detected monologue start times match ground truth within ±3s; durations within ±5s.
+
+If `SpeakingActivityTracker` passes, M4.5a (Silero parallel path) is dropped from the backlog — production uses `SpeakingActivityTracker` only.
+
+### Fail mode → action
+- **Recall too low (< 90%):** the 1.5s `tokenSilenceTimeout` is fragmenting monologues at natural breath pauses. Try increasing the `MonologueDetector` grace window from 2.5s to 3.5s (within `MonologueDetector` itself, not changing `SpeakingActivityTracker`). Re-run. If still failing, M4.5a needs to ship with Silero as the source.
+- **Precision too low (false positives):** likely backchannels or environmental noise getting transcribed. Check whether tightening `SpeakingActivityTracker`'s minimum-tokens-to-count-as-speech helps. If `SpeechAnalyzer` is mis-attributing backchannels to the user (single-mic limitation), this is solvable only with mic-side improvements (beamforming) or speaker diarization — both v2 territory; M4.5a Silero would not help. Document and accept the limitation.
+- **Silero outperforms substantially:** ship M4.5a with Silero as the production VAD source for `MonologueDetector` only. `SpeakingActivityTracker` continues to feed `WPMCalculator` and `EffectiveSpeakingDuration` (which need different things from a VAD signal).
+
+### Outputs
+- Per-clip CSV: ground-truth monologues vs `SpeakingActivityTracker` detections vs Silero detections.
+- Decision: `SpeakingActivityTracker` alone, or M4.5a Silero parallel path required.
+- If M4.5a is required: documented integration design (where the Silero buffer fan-out attaches in `AudioPipeline`, how the `MonologueDetector` chooses its source).
+- Updated `MonologueDetector` parameter values (grace window, smoothing — if any tuning was needed during validation).
+
+### Out of scope
+- Actual ML model conversion or training. Silero ships pre-converted; we use it as-is.
+- Multi-speaker / diarization. v1 `MonologueDetector` is mic-only; conversation-aware (resetting clock when other party speaks) is v2.
+- Power profiling of the Silero parallel path. If we add it (M4.5a), do a mini-spike or fold into M7.8 (final perf pass). At ~1MB and ANE-resident, it's expected to be near-zero overhead.
+
+---
+
+## Spike #12 — Trail-off / vocal-cliff detector validation
+
+**Status:** ⏸ parked for v2 · **Estimate:** 2h · **Added:** Session 013
+
+### Question
+Does the "6 dB drop in recent RMS AND SPEAKING→PAUSED transition within 300ms" rule reliably detect deliberate trail-offs without false-positiving on normal sentence ends, across at least 2 voice samples, without per-user tuning?
+
+### Why it matters (v2)
+Trail-off detection is a v2 feature (parked in `02_PRODUCT_SPEC.md` non-goals). Captured here so v2 doesn't re-derive the algorithm.
+
+### Algorithm
+- Maintain rolling RMS over 200ms windows (recompute every 100ms).
+- Maintain 5-min adaptive baseline RMS (silence excluded). Personal calibration; works regardless of mic/room.
+- While in `SPEAKING`, compare recent RMS (last 200ms) against prior RMS (avg over the prior 1.5s).
+- Fire trail-off event when: (a) recent dropped ≥6 dB below prior, AND (b) `SPEAKING → PAUSED` fires within next 300ms.
+- Rate-limit to one event per 10s.
+
+The conjunction in (a) AND (b) is what makes this defensible vs S9: it's not "loud = trail-off." It's "rapid volume drop *that ends in silence*." Mid-sentence dips stay SPEAKING and never fire.
+
+### Method (when v2 begins)
+1. Record 5-10 short clips per user, mixed:
+   - Half deliberate trail-offs (sentences ending with the user's voice fading out).
+   - Half normal sentence ends (stopping cleanly without volume drop).
+   - At least 2 voice samples (architect + one other) to validate cross-user generalization.
+2. Build `TrailOffSpike/` harness mirroring `ShoutingSpike/`. Reuse `RMSExtractor` from `ShoutingSpike/` if still in repo.
+3. Run the algorithm with default thresholds. Compute precision and recall.
+
+### Pass criteria
+- Recall ≥80% on deliberate trail-offs.
+- Precision ≥95% on normal sentence ends (false positives on normal speech are FM1 violations).
+- Same threshold (6 dB) works for both voice samples without per-user tuning. If different users need different thresholds, the feature has the same FM3 problem as S9 → re-evaluate or ship without trail-off in v2 too.
+
+### Fail mode → action
+- Threshold doesn't generalize across users: try widening the comparison window (200ms / 1.5s → 300ms / 2.0s) before declaring failure. The trade-off is responsiveness vs stability.
+- False positives on emphatic-but-not-trail-off sentence ends: tighten the 300ms post-event check to 200ms (forces silence to come *immediately* after the volume drop).
+- Validation requires more than 2 voice samples to be confident: scope the spike up before running.
+
+### Out of scope
+- Adding RMS calculation to v2 `AudioPipeline`. That's a v2 architecture decision dependent on this spike outcome.
+- v2 widget treatment of the trail-off cue (the 500ms edge flash is the proposed UX; visual design is a v2 product decision).
 
 ---
 

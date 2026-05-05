@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Talking Coach — visual reference (Bars · Trimmed)</title>
+<style>
+  :root {
+    --tint:      rgba(108, 207, 160, 0.42);
+    --tint-hi:   rgba(108, 207, 160, 0.62);
+    --text-deep: #1f5a40;
+    --bar:       rgba(46, 138, 96, 0.78);
+    --glow:      rgba(108, 207, 160, 0.85);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+    background: #f4f1ec;
+    color: #1a1a1a;
+    padding: 44px 28px 56px;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  header { max-width: 880px; margin: 0 auto 18px; }
+  header h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.02em; }
+  header p { font-size: 13px; color: rgba(0,0,0,0.55); margin: 0; }
+
+  .controls {
+    max-width: 880px;
+    margin: 0 auto 18px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    font-size: 13px;
+    color: rgba(0,0,0,0.6);
+  }
+  .slider-wrap {
+    flex: 1 1 380px;
+    max-width: 520px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .slider-wrap input[type="range"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%; height: 6px; border-radius: 99px;
+    background: linear-gradient(90deg, #5687C5 0%, #6CCFA0 37.5%, #D8625A 100%);
+    outline: none; cursor: pointer;
+  }
+  .slider-wrap input[type="range"]::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: white; border: 1.5px solid rgba(0,0,0,0.2);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.18); cursor: pointer;
+  }
+  .slider-labels {
+    display: flex; justify-content: space-between;
+    font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 600;
+    color: rgba(0,0,0,0.45);
+  }
+  .wpm-readout {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 19px; font-weight: 600;
+    min-width: 88px; text-align: right; color: #1a1a1a;
+  }
+  .wpm-readout .unit { font-size: 11px; opacity: 0.45; font-weight: 500; margin-left: 2px; }
+
+  .stage {
+    position: relative;
+    max-width: 880px;
+    margin: 0 auto;
+    border-radius: 22px;
+    overflow: hidden;
+    padding: 64px 40px 64px;
+    min-height: 280px;
+    background:
+      radial-gradient(900px 540px at 25% 18%, #c5dbe9, transparent 62%),
+      radial-gradient(820px 580px at 82% 78%, #ecc8b0, transparent 65%),
+      linear-gradient(135deg, #d6dee6 0%, #e7d5c2 55%, #d4bd9f 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .stage::before {
+    content: ""; position: absolute; inset: 0;
+    background-image: linear-gradient(135deg, rgba(255,255,255,0.22) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.22) 50%, rgba(255,255,255,0.22) 75%, transparent 75%);
+    background-size: 88px 88px; opacity: 0.28; pointer-events: none;
+  }
+  .stage-caption {
+    position: absolute;
+    top: 18px; left: 24px;
+    color: rgba(255,255,255,0.65);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    text-transform: uppercase;
+    z-index: 1;
+  }
+
+  /* Widget — Bars · Trimmed */
+  .widget {
+    width: 144px; height: 144px;
+    border-radius: 32px;
+    position: relative;
+    color: var(--text-deep);
+    backdrop-filter: blur(22px) saturate(190%);
+    -webkit-backdrop-filter: blur(22px) saturate(190%);
+    background-color: var(--tint);
+    border: 0.5px solid rgba(255,255,255,0.55);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.6),
+      inset 0 -1px 0 rgba(0,0,0,0.06),
+      0 8px 28px rgba(0,0,0,0.18),
+      0 1px 2px rgba(0,0,0,0.10);
+    transition:
+      background-color 0.45s ease,
+      color 0.45s ease,
+      transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+      box-shadow 0.28s ease,
+      border-color 0.28s ease;
+    font-feature-settings: "tnum" 1;
+    padding: 11px 13px;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    align-items: center;
+    row-gap: 6px;
+    z-index: 2;
+  }
+  .widget:hover {
+    transform: translateY(-3px) scale(1.025);
+    background-color: var(--tint-hi);
+    border-color: rgba(255,255,255,0.78);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.78),
+      inset 0 -1px 0 rgba(0,0,0,0.08),
+      0 16px 42px rgba(0,0,0,0.26),
+      0 2px 6px rgba(0,0,0,0.14);
+  }
+
+  /* Top */
+  .top-block { text-align: center; }
+  .wpm {
+    font-family: "SF Pro Display", system-ui, sans-serif;
+    font-weight: 300;
+    font-size: 34px;
+    letter-spacing: -0.055em;
+    line-height: 1;
+    color: var(--text-deep);
+    transition: color 0.45s ease;
+  }
+  .state-row {
+    display: flex; justify-content: center; align-items: baseline;
+    gap: 4px; margin-top: 4px;
+    font-size: 8.5px; color: var(--text-deep);
+    transition: color 0.45s ease;
+  }
+  .state {
+    font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; opacity: 0.85;
+  }
+  .sep { opacity: 0.32; font-weight: 400; }
+  .avg {
+    opacity: 0.5; letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Spectrum + caret */
+  .spectrum {
+    position: relative; width: 100%; height: 16px;
+  }
+  .spectrum-bar {
+    position: absolute; top: 5px; left: 0; right: 0;
+    height: 2px; border-radius: 99px;
+    background: linear-gradient(90deg,
+      rgba(86, 135, 197, 0.78) 0%,
+      rgba(108, 207, 160, 0.78) 37.5%,
+      rgba(216, 98, 90, 0.78) 100%);
+  }
+  .marker {
+    position: absolute; top: 9px;
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 5px solid var(--text-deep);
+    transform: translateX(-50%);
+    transition: left 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), border-bottom-color 0.45s ease;
+  }
+
+  /* Bottom — Bars · Trimmed */
+  .bottom-block {
+    width: 100%;
+    align-self: stretch;
+    display: grid;
+    gap: 5px;
+    align-content: center;
+  }
+  .filler-row {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    align-items: center;
+    gap: 5px;
+    font-size: 8.5px;
+    color: var(--text-deep);
+    transition: color 0.45s ease;
+  }
+  .filler-row .word { font-weight: 500; opacity: 0.88; }
+  .pillars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 9px;
+    justify-content: flex-start;
+  }
+  .pillar {
+    width: 2.5px;
+    height: 100%;
+    background: var(--text-deep);
+    border-radius: 1px;
+    opacity: 0.95;
+    transition: background 0.45s ease;
+  }
+
+  .annotations {
+    max-width: 880px;
+    margin: 28px auto 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 22px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: rgba(0,0,0,0.6);
+  }
+  .annotations h3 {
+    margin: 0 0 4px;
+    font-size: 13px; font-weight: 600; color: #1a1a1a;
+    letter-spacing: -0.01em;
+  }
+
+  .footnote {
+    max-width: 880px;
+    margin: 28px auto 0;
+    font-size: 12px;
+    color: rgba(0,0,0,0.5);
+    text-align: center;
+    line-height: 1.55;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Talking Coach — visual reference</h1>
+  <p>Bars · Trimmed (winning design) · 144×144 pt actual size · drag the slider to demo all pace states</p>
+</header>
+
+<div class="controls">
+  <div class="slider-wrap">
+    <input type="range" id="wpm-slider" min="80" max="240" value="168" />
+    <div class="slider-labels">
+      <span>80</span>
+      <span>too slow</span>
+      <span>ideal · 140</span>
+      <span>too fast</span>
+      <span>240</span>
+    </div>
+  </div>
+  <div class="wpm-readout"><span id="wpm-out">168</span><span class="unit">wpm</span></div>
+</div>
+
+<section class="stage" id="stage">
+  <div class="stage-caption">Coffee shop · 14:32 · practicing pitch</div>
+
+  <div class="widget" id="widget">
+    <div class="top-block">
+      <div class="wpm" data-wpm>168</div>
+      <div class="state-row">
+        <span class="state" data-state>IDEAL</span>
+        <span class="sep">·</span>
+        <span class="avg">avg <span data-avg>142</span></span>
+      </div>
+    </div>
+    <div class="spectrum">
+      <div class="spectrum-bar"></div>
+      <div class="marker" data-marker style="left:55%"></div>
+    </div>
+    <div class="bottom-block">
+      <div class="filler-row">
+        <span class="word">uh</span>
+        <div class="pillars">
+          <span class="pillar"></span><span class="pillar"></span><span class="pillar"></span><span class="pillar"></span><span class="pillar"></span><span class="pillar"></span><span class="pillar"></span>
+        </div>
+      </div>
+      <div class="filler-row">
+        <span class="word">right</span>
+        <div class="pillars">
+          <span class="pillar"></span><span class="pillar"></span><span class="pillar"></span><span class="pillar"></span>
+        </div>
+      </div>
+      <div class="filler-row">
+        <span class="word">basically</span>
+        <div class="pillars">
+          <span class="pillar"></span><span class="pillar"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="annotations">
+  <div>
+    <h3>Color is the primary signal</h3>
+    Glass tint, text, caret, and pillars all derive from one continuous interpolation: blue (slow) → green (ideal, 140 wpm) → red (fast). Eased with t<sup>1.6</sup> so small deviations stay close to green.
+  </div>
+  <div>
+    <h3>Caret, not slider thumb</h3>
+    A 4×5pt triangle below the spectrum line, pointing up. Reads as a meter readout. It moves smoothly with WPM; it is not interactive.
+  </div>
+  <div>
+    <h3>Bars trim, never pad</h3>
+    Each row's pillars are exactly the count, left-aligned. No empty trailing slots. Width naturally cascades by frequency.
+  </div>
+</section>
+
+<p class="footnote">Top WPM and state-row text are unchanged · spectrum line acts as middle separator · caret pointer triangles up at current pace · TOO SLOW / IDEAL / TOO FAST flips at 115 / 175 wpm boundaries · gradual color fade tied to deviation from ideal pace · widget hidden when mic is off.</p>
+
+<script>
+  const slider = document.getElementById('wpm-slider');
+  const wpmOut = document.getElementById('wpm-out');
+
+  const C_BLUE = [86,135,197], C_GREEN = [108,207,160], C_RED = [216,98,90];
+  const D_BLUE = [29,68,118],  D_GREEN = [31,90,64],    D_RED = [110,50,32];
+  const B_BLUE = [56,110,175], B_GREEN = [46,138,96],   B_RED = [180,70,60];
+
+  const IDEAL = 140, SMIN = 80, SMAX = 240;
+  const SLOW_T = 115, FAST_T = 175;
+
+  const lerp  = (a, b, t) => a + (b - a) * t;
+  const lerpC = (c1, c2, t) => [
+    Math.round(lerp(c1[0], c2[0], t)),
+    Math.round(lerp(c1[1], c2[1], t)),
+    Math.round(lerp(c1[2], c2[2], t))
+  ];
+  const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  const rgb  = (c)    => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const ease = t => Math.pow(t, 1.6);
+
+  function colorsFor(wpm) {
+    if (wpm <= IDEAL) {
+      let t = ease(Math.max(0, Math.min(1, (IDEAL - wpm) / (IDEAL - SMIN))));
+      return {
+        tint: lerpC(C_GREEN, C_BLUE, t),
+        deep: lerpC(D_GREEN, D_BLUE, t),
+        bar:  lerpC(B_GREEN, B_BLUE, t)
+      };
+    }
+    let t = ease(Math.max(0, Math.min(1, (wpm - IDEAL) / (SMAX - IDEAL))));
+    return {
+      tint: lerpC(C_GREEN, C_RED, t),
+      deep: lerpC(D_GREEN, D_RED, t),
+      bar:  lerpC(B_GREEN, B_RED, t)
+    };
+  }
+
+  function stateFor(wpm) {
+    if (wpm < SLOW_T) return 'TOO SLOW';
+    if (wpm > FAST_T) return 'TOO FAST';
+    return 'IDEAL';
+  }
+
+  const pctOf = wpm => (wpm - SMIN) / (SMAX - SMIN);
+
+  function update(wpm) {
+    wpmOut.textContent = wpm;
+    const c = colorsFor(wpm);
+    const widget = document.getElementById('widget');
+    widget.style.setProperty('--tint',      rgba(c.tint, 0.42));
+    widget.style.setProperty('--tint-hi',   rgba(c.tint, 0.62));
+    widget.style.setProperty('--text-deep', rgb(c.deep));
+    widget.style.setProperty('--bar',       rgba(c.bar, 0.78));
+    widget.style.setProperty('--glow',      rgba(c.tint, 0.85));
+
+    document.querySelectorAll('[data-wpm]').forEach(el => el.textContent = wpm);
+    const s = stateFor(wpm);
+    document.querySelectorAll('[data-state]').forEach(el => el.textContent = s);
+
+    const pct = pctOf(wpm) * 100;
+    document.querySelectorAll('[data-marker]').forEach(el => {
+      el.style.left = pct + '%';
+    });
+  }
+
+  slider.addEventListener('input', () => update(parseInt(slider.value, 10)));
+  update(parseInt(slider.value, 10));
+</script>
+
+</body>
+</html>

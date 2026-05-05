@@ -1,0 +1,6 @@
+clip_name,duration_s,n_events,first_event_t_s,floor_min_dbfs,floor_max_dbfs,floor_mean_dbfs,peak_dbfs
+quiet_normal,19.88,3,6.80,-63.65,-36.33,-51.71,-23.77
+quiet_shout,17.58,1,12.10,-58.81,-31.19,-48.80,-13.59
+noisy_normal,20.22,0,,-39.45,-30.64,-35.86,-15.70
+noisy_shout,20.14,0,,-38.92,-30.27,-36.21,-9.68
+transition,25.09,1,7.30,-59.45,-32.49,-40.81,-15.92

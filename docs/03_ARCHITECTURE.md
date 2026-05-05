@@ -28,7 +28,7 @@
 │  └─────────────┘     │  └─────────────────────────────┘  │   │
 │                      │  ┌─────────────────────────────┐  │   │
 │                      │  │ AudioPipeline               │  │   │
-│                      │  │  (AVAudioEngine, VAD, RMS)  │  │   │
+│                      │  │  (AVAudioEngine)            │  │   │
 │                      │  └─────────────────────────────┘  │   │
 │                      │  ┌─────────────────────────────┐  │   │
 │                      │  │ Analyzer                    │  │   │
@@ -90,29 +90,23 @@
 ---
 
 ### 3. `AudioPipeline`
-**Job:** Capture mic audio and provide raw buffers (for `TranscriptionEngine`) plus RMS samples (for `ShoutingDetector`).
+**Job:** Capture mic audio and provide raw buffers to `TranscriptionEngine`.
 
 **Implementation:**
 - `AVAudioEngine` with `inputNode` tap
 - **Voice Processing IO disabled** (`isVoiceProcessingEnabled = false`) — set before `prepare()`/`start()`. Validated stable across all 10 Spike #4 scenarios; macOS never overrode it.
 - **Tap installed with `format: nil`** — lets the system provide whatever format the device negotiates. Required because Safari Meet changes input channel count from 1→3 mid-session (Spike #4); a hardcoded format would crash on that transition.
 - **Subscribe to `AVAudioEngineConfigurationChange` notifications.** When fired (browser-based Meet joining mid-session is the known trigger), the engine has stopped — re-fetch the input format, reinstall the tap with `format: nil`, and call `engine.start()` again. Native conferencing apps (Zoom, FaceTime) do not trigger this; only browser-based audio stacks do, and they only trigger it in the harness-first ordering. Recovery is a routine Apple pattern, not an exception case.
-- Tap callback delivers buffers to a fan-out:
-  - → `TranscriptionEngine` (forwarded to whichever backend serves the active locale)
-  - → RMS calculation (~10×/sec, fed to `ShoutingDetector` for adaptive noise-floor tracking)
+- Tap callback delivers buffers to `TranscriptionEngine` (forwarded to whichever backend serves the active locale).
 
 **Swift 6 concurrency requirement (Spike #4 finding):**
 The audio tap callback runs on Core Audio's `RealtimeMessenger.mServiceQueue`. If the closure is defined in a `@MainActor`-isolated context (e.g., inside `@main struct` body or `main.swift` top level), Swift 6's runtime checks crash with `_dispatch_assert_queue_fail` because the closure inherits main-actor isolation. Define tap closures in a separate non-main-actor source file. `AVAudioEngine`/`AVAudioInputNode` are non-Sendable; when captured in such closures, annotate with `nonisolated(unsafe)`. The compiler does NOT warn — this only surfaces at runtime.
 
-**Outputs:**
-- Audio buffers (for `TranscriptionEngine`)
-- `currentRMS: Float` samples (~10×/sec, for `ShoutingDetector`)
+**Outputs:** Audio buffers (for `TranscriptionEngine`).
 
-**Design note (locked Session 004):**
-The previous design included a standalone VAD module (energy-based or `SoundAnalysis`-based) feeding `isSpeaking` events to the WPM calculator. This was replaced by deriving speaking activity from `SpeechAnalyzer` token arrival timestamps directly (see `SpeakingActivityTracker` in the `Analyzer` module). Reasons:
-1. `SpeechAnalyzer` already does ML-based speech/non-speech classification internally — energy VAD would be redundant and weaker
-2. Energy VAD requires noise-floor calibration, which fails when mic AGC adjusts during silence and breaks across environments/mics (FM3 violation)
-3. Removing one entire module reduces CPU, removes a setup step, and removes a class of bugs
+**Design notes:**
+- *No standalone VAD module* (locked Session 004): the previous design fed `isSpeaking` events from energy-based VAD into the WPM calculator. Replaced by deriving speaking activity from `SpeechAnalyzer` token arrival timestamps directly (see `SpeakingActivityTracker` in the `Analyzer` module). Reasons: `SpeechAnalyzer` already does ML-based speech/non-speech classification internally; energy VAD requires noise-floor calibration that fails when mic AGC adjusts during silence (FM3 violation); removing one module reduces CPU and bug surface.
+- *No RMS / loudness path* (locked Session 013): the previous design exposed an RMS sample stream (~10×/sec) for a `ShoutingDetector` module. Spike #9 invalidated the underlying RMS-based shouting detection algorithm — see `05_SPIKES.md` Spike #9 for the full diagnosis. Shouting detection is deferred to v2 with a different signal model. `AudioPipeline` no longer emits RMS samples; the production module is purely a buffer transport.
 
 ---
 
@@ -239,7 +233,7 @@ else                             → Strategy 2 (word-count threshold)
 ---
 
 ### 6. `Analyzer`
-**Job:** Take token stream + VAD + RMS → produce metrics for widget and session record.
+**Job:** Take token stream → produce metrics for widget and session record.
 
 **Sub-components:**
 
@@ -270,17 +264,31 @@ else                             → Strategy 2 (word-count threshold)
 - Detects repetition of 2–4 word phrases within ~5 seconds
 - Increments counts per session
 
-#### `ShoutingDetector`
-- Subscribes to `AudioPipeline.currentRMS` samples
-- **Adaptive noise-floor tracking:** maintains a rolling 5-second buffer of recent RMS samples; current noise floor = 10th percentile of buffer
-- Shouting threshold: `noiseFloor + threshold_dB` (default `threshold_dB = 25.0`, sustained for 0.5s+)
-- This replaces fixed-dBFS thresholding; works in any environment without calibration
-- Emits a "shouting event" with timestamp
-
 #### `EffectiveSpeakingDuration`
 - Accumulates `SpeakingActivityTracker.speakingDuration` over the entire session for the `effectiveSpeakingDuration` field in `Session`
 
-**Outputs:** Updates to widget view model (rate-limited to every 3s for the WPM display, immediate for filler/shouting events) and final `Session` aggregate at session end.
+#### `MonologueDetector`
+- **Job:** Detect when the user has been holding the floor too long without yielding. Emit warning levels (none / soft / warning / urgent) for the widget and persist `MonologueEvent` records to the session.
+- **VAD source (locked Session 013, pending Spike #11 confirmation):** `SpeakingActivityTracker`'s `isCurrentlySpeaking(asOf:)` query. We use the existing token-arrival-derived signal rather than introducing a separate frame-level VAD (Silero etc.). Spike #11 validates this is sufficient — if it lags by ≥5s on real conversation recordings vs a reference VAD, we add a parallel `Silero` Core ML path running on the same `AudioPipeline` buffers. Either way the upstream interface to `MonologueDetector` is the same boolean stream; only the source changes.
+- **State machine:** `IDLE`, `SPEAKING`, `PAUSED`. Single `monologueClock` timer.
+  - `IDLE → SPEAKING` when smoothed speaking signal flips true. Start clock.
+  - `SPEAKING → PAUSED` when smoothed signal flips false. Note silence start; do NOT reset clock.
+  - `PAUSED → SPEAKING` when speech resumes within `graceWindow` (default 2.5s). Clock keeps counting through the gap.
+  - `PAUSED → IDLE` when silence exceeds `graceWindow`. Reset clock to 0. If clock reached ≥60s before reset, emit a `MonologueEvent` with the peak warning level.
+- **Smoothing:** if VAD source is `SpeakingActivityTracker` (default), no additional smoothing — the 1.5s `tokenSilenceTimeout` already smooths sub-token jitter. If VAD source is Silero (post-S11 alternative), require 5-of-7 frame agreement to flip state.
+- **Bluetooth-aware grace window:** when the active input device is a Bluetooth device, increase `graceWindow` to 4.0s (defends against BT frame drops creating false silence gaps). Detected via the Core Audio device transport type — folds into M2.1 `MicMonitor`'s existing device awareness.
+- **Warning levels (Gong-published thresholds, anchored Session 013):**
+  - 0–59s: `none`
+  - 60–89s: `soft`
+  - 90–149s: `warning`
+  - 150s+: `urgent`
+- **Emission rate:** the current monologue duration + warning level are published once per second to `WidgetViewModel`. The `MonologueEvent` is appended to the session aggregate only on `PAUSED → IDLE` transition with clock ≥60s (so a 30s "monologue" that never reached the threshold is not persisted).
+- **Solo-presentation handling:** a settings toggle `presentationMode` (default off) suppresses widget-side warning emission while still recording `MonologueEvent`s to the session. Auto-detection ("sustained mic activity ≥5 min with no other audio playback") is parked for v1.x — v1 ships with the manual toggle only.
+- **Privacy story:** no transcription involved. The detector knows only "user is making mouth noises now" and "they have been for X seconds." Audio never becomes text.
+
+**Outputs:** Updates to widget view model (rate-limited to every 3s for the WPM display, immediate for filler events, once-per-second for monologue duration + warning level) and final `Session` aggregate at session end (including `monologueEvents`).
+
+*ShoutingDetector removed Session 013 — Spike #9 invalidated the RMS-based algorithm. Shouting detection deferred to v2.*
 
 ---
 
@@ -311,7 +319,14 @@ else                             → Strategy 2 (word-count threshold)
 - Saves position per-display in UserDefaults: `[NSScreen.localizedName: CGPoint]`
 - Snap-to-screen logic if a saved display is disconnected
 
-**View model:** `WidgetViewModel` (ObservableObject) with `currentWPM`, `averageWPM`, `wpmState (slow/onPace/fast)`, `fillerCounts`, `isShouting`.
+**View model:** `WidgetViewModel` (ObservableObject) with `currentWPM`, `averageWPM`, `wpmState (slow/onPace/fast)`, `fillerCounts`, `monologueDurationSeconds`, `monologueWarningLevel (none/soft/warning/urgent)`, `presentationState (listening/active/dismissed)`.
+
+**Panel state machine (locked Session 013):**
+- `listening` — mic active, no speech detected yet OR speech paused below SpeakingActivityTracker's threshold. Show "Listening…" placeholder. Metrics show no values, not zeros.
+- `active` — speech detected, metrics flowing. Default state during a normal session.
+- `dismissed` — user clicked the on-widget close affordance. Confirmation dialog ("Are you sure you are not going to speak during this session?" Yes/No) gated the transition. Panel hidden until next mic-on event. Dismissal does NOT persist across sessions.
+
+The panel is visible during `listening` and `active`, hidden during `dismissed`. There is no auto-hide on silence — `listening` is a persistent visible state for the full mic-active duration. This is intentional per the no-speech-behavior decision: a widget that disappears on silence creates anxiety; webinars and listen-only meetings are handled by the per-app blocklist (M2.4) instead.
 
 **Visual rules (failure-mode-driven):**
 - Color transitions interpolate over 600ms
@@ -395,20 +410,17 @@ SessionCoordinator: blocklist check → not blocked → start session
      │         │         │
      │         │         ▼
      │         │    SpeakingActivityTracker: derives speaking duration
-     │         │
-     │         └──► RMS samples (~10×/sec) → ShoutingDetector
-     │                                      (adaptive noise-floor from 5s rolling buffer)
      │
      ▼
-Analyzer: consumes tokens + speaking duration + RMS
+Analyzer: consumes tokens + speaking duration
      │
      ├──► WPMCalculator → wpmShort, wpmAvg
      ├──► FillerDetector → fillerCounts
      ├──► RepeatedPhraseDetector → repeatedPhrases
-     ├──► ShoutingDetector → shoutingEvents
+     ├──► MonologueDetector → monologueDuration, warningLevel
      │
      ▼
-WidgetViewModel updates (every 3s for WPM, immediate for fillers/shouting)
+WidgetViewModel updates (every 3s for WPM, immediate for fillers, 1s for monologue)
      │
      ▼
 FloatingPanel renders
@@ -491,7 +503,8 @@ SessionStore: persist Session via SwiftData
 | WPM accuracy vs ground truth? | Spike #6 (English ✅ passed Session 005; Russian ✅ passed Session 007) |
 | Architecture Y power envelope (Apple + Parakeet)? | Spike #7 ✅ conditional pass Session 012 (Apple baseline: mean 4.18% CPU under 18× overload, ~2% estimated production; Parakeet characterized in S10 Phase E) |
 | Token-arrival robustness across mics/environments? | Spike #8 ✅ passed Session 011 |
-| Adaptive RMS noise-floor for shouting? | Spike #9 |
+| Adaptive RMS noise-floor for shouting? | Spike #9 ❌ invalidated Session 013 (algorithm cannot distinguish shouting from speech-after-pause or Lombard speech in noise; feature deferred to v2 with a different signal model) |
+| Is `SpeakingActivityTracker` sufficient as VAD source for `MonologueDetector`, or do we need Silero? | Spike #11 (added Session 013) |
 | Parakeet feasibility on macOS for Russian? | Spike #10 ✅ passed Session 006–007 |
 
-Spike #10 closed Architecture Y as feasible. Spike #4 closed mic coexistence. Spike #2 closed language auto-detect with a script-aware hybrid mechanism. Spike #7 closed Apple SpeechAnalyzer power baseline (conditional pass — mean CPU under 5%, production load estimated ~2%). Spike #8 closed token-arrival robustness. Remaining open spikes: #9, #1. Neither gates architecture; both refine implementation details.
+Spike #10 closed Architecture Y as feasible. Spike #4 closed mic coexistence. Spike #2 closed language auto-detect with a script-aware hybrid mechanism. Spike #7 closed Apple SpeechAnalyzer power baseline (conditional pass — mean CPU under 5%, production load estimated ~2%). Spike #8 closed token-arrival robustness. Spike #9 closed ❌ invalidated (Session 013) — shouting detection removed from v1, deferred to v2. Open spikes: S1 (P2 — does not gate architecture), S11 (P1 — gates `MonologueDetector` VAD-source decision; added Session 013). S12 (trail-off detector validation) is parked for v2.

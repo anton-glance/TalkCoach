@@ -170,6 +170,7 @@ This module is done when:
 6. **Mark scope boundaries explicitly.** "Out of Scope: do not touch the AudioPipeline module in this prompt."
 7. **Provide debugging hints.** Apple-platform gotchas the agent might not know to check.
 8. **Reference Apple sample code or WWDC sessions** when relevant — gives the agent a known-good pattern.
+9. **Deliver every agent-facing artifact as a complete, self-contained prompt.** The content IS the prompt — paste-ready, no reference to prior messages required, the agent can act on it with no prior context. Format by length: short single-instruction prompts (≤ ~15 lines, e.g., "plan approved, proceed with Phase 2") go **inline in chat as a fenced code block**; long structured prompts (multi-section specs, full module/spike prompts) go as **standalone .md files via `present_files`**. Choose by minimizing user copy-paste friction — a fenced block is less work for short content; a file is less work for long content. When a plan needs revision, deliver a revised complete prompt in the appropriate format, never a notes-file or patch. Pairs with the two-strike rule: non-trivial plan revisions go into a fresh agent session, not a patched original.
 
 ### Never do
 1. **Combine planning and implementation in one prompt.** Always two phases minimum.
@@ -178,6 +179,7 @@ This module is done when:
 4. **Leave verification to the user.** If the user has to test it manually, the prompt failed.
 5. **Skip the self-review phase** to save time. The reviewer pass catches issues the implementer misses.
 6. **Allow scope expansion.** If the agent suggests "while we're at it, let's also…" → flag and decline.
+7. **Send the agent edit-notes, patches, or "apply these changes to your last plan" instructions.** This pollutes context — the agent treats notes as supplementary rather than authoritative, and when corrections are ignored we burn through both strikes of the two-strike rule on workflow churn instead of real plan iteration. When revisions are needed, the deliverable is a revised complete prompt for a fresh agent session.
 
 ### When to use sub-agents (writer-reviewer pattern)
 For high-risk modules (`SpeechEngine`, `AudioPipeline`, `Analyzer`, `MicMonitor`), append to the prompt:

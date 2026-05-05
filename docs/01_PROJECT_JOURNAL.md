@@ -4,6 +4,94 @@
 
 ---
 
+## Session 013 — 2026-05-04 — Spike #9 closed ❌ INVALIDATED, shouting detection deferred to v2
+
+**Format:** Claude Code agent execution (Spike #9 Phases A–C), architect-led diagnostic round, product decision.
+
+### What happened
+
+Ran Spike #9 (Adaptive RMS noise-floor for shouting detection) end-to-end with the agent. Built `ShoutingSpike/` harness — pure-function `AdaptiveNoiseFloor` over a dBFS series, `RMSExtractor` over `AVAudioFile`, CLI with the four production-default constants from architecture, deterministic byte-identical re-runs. 12/12 unit tests passed. Sub-agent independent review (7 criteria) passed clean.
+
+User recorded 5 clips per spec: `quiet_normal`, `quiet_shout`, `noisy_normal`, `noisy_shout`, `transition`. Agent processed them and reported "4/5 gates pass with tuned constants p25 + t20" as a pass-with-tuning closure.
+
+**Architect-led diagnostic round revealed two structural problems with that closure.** First, the agent never ran the architecture-locked defaults to establish a baseline — the "tuning" was tested against an unknown reference. Second, even at tuned constants `noisy_shout` still failed, and the agent's "burst shouting 0.3s < 0.5s sustain" diagnosis didn't match the time-series data, which showed a fully sustained 1.5s shout that the algorithm couldn't capture because the threshold was tracking too closely to the floor.
+
+Pulled the time-series CSVs and ran defaults manually. Defaults score 2/5 — false positives on `quiet_normal` (3 events on a clean recording with normal speech) and `transition` (false positive at t=7.30 *during the quiet half before noise even started*). The diagnostic windows showed exactly why: at t=7.2 in `quiet_normal`, floor sat at -62.13 dBFS (= the silences between sentences), threshold was -37.13, and normal speech at -32 was 30 dB above floor — fired an event.
+
+**The 10th percentile of a 5-second buffer doesn't measure room ambience; it measures the silences between words.** Any speech-after-pause looks like a shout. Inverse problem in noisy rooms: the noise fills the silences, floor calibrates to ambient noise, the user's Lombard-raised voice can't clear the +25 dB threshold.
+
+User identified the deeper issue: "in a noisy place I non-intentionally raise my voice to sound clearly — that doesn't mean I shout." This is the Lombard effect, a documented automatic vocal adjustment. RMS dBFS conflates it with shouting because it conflates loudness with aggressiveness. Pitch, spectral tilt, and onset rate-of-change are what actually distinguish them — and none of those are in the architecture's signal model.
+
+**Product decision (user):** remove shouting detection from v1 entirely. Defer to v2 with explicit "intelligent voice analysis" framing.
+
+### Key findings
+
+- **The algorithm is wrong, not the implementation.** Implementation is correct: tests pass, sub-agent review clean, math is right. The signal (RMS dBFS) cannot carry the discrimination needed.
+- **Adaptive noise-floor + threshold = loudness detector, not shouting detector.** They're different things. Loudness alone cannot distinguish shouting from speech-after-pause, Lombard compensation, emphasis, or transient artifacts (plosives, laughs).
+- **Both failure modes are architecturally fundamental.** The quiet-room failure (silences dominate the percentile) and the noisy-room failure (Lombard fills the headroom) pull tuning in opposite directions. No constant choice resolves both.
+- **The spike's primary value is the negative result.** S9 saved us from building a shouting feature that violates FM1 (destructive UI) at first contact with real recordings. That's exactly what spikes are for.
+
+### Spike protocol findings (process improvements logged)
+
+- Two-strike rule needed earlier intervention. Notes-files for plan revisions burned both strikes on workflow churn instead of plan iteration; updated `00_COLLABORATION_INSTRUCTIONS.md` rule 9 / rule 7 mid-session to require complete prompts (inline for short, file for long), never patch-style edits.
+- Agent self-review and sub-agent review both reported "pass with tuning" without flagging that defaults were never tested. The validation checklist passed all 7 criteria but those criteria didn't include "compare against the locked architecture defaults." Architect intervention caught it via direct CSV inspection. Lesson for future closure-validation prompts: include a mandatory "show defaults result alongside any tuning" gate in the spike acceptance criteria.
+
+### What changed in the docs
+
+- `02_PRODUCT_SPEC.md` — removed widget shouting icon, "Volume/shouting events" from speaking metrics, `shoutingEvents` field from Session schema; added shouting to non-goals with full diagnosis pointer
+- `03_ARCHITECTURE.md` — ASCII diagram updated (`AudioPipeline` no longer says "VAD, RMS"); module 3 (`AudioPipeline`) cut RMS path entirely; module 6 (`Analyzer`) `ShoutingDetector` sub-component removed; data-flow diagram fan-out simplified; module 8 (`FloatingPanel`) `isShouting` removed from view model; open questions table closes S9 ❌; closing summary updated
+- `04_BACKLOG.md` — Phase 0 S9 row marked ❌ invalidated (3h actual); M3.3 (RMS calc), M4.5 (ShoutingDetector), M5.6 (Shouting icon) all marked ❌ removed; phase totals adjusted; v1 estimate dropped from 193–203h to 189–199h
+- `05_SPIKES.md` — Spike #9 section fully rewritten as a closure record (verdict, root cause, tuning attempts, decision, what v2 needs to revisit)
+- `00_COLLABORATION_INSTRUCTIONS.md` — earlier this session, rules 9 and 7 added/refined to enforce complete-prompt delivery and prohibit notes-file patches
+- `01_PROJECT_JOURNAL.md` — this entry
+
+### Ups
+
+- The user caught the algorithmic flaw correctly ("it doesn't seem like the right approach to compare to floor; in noisy environments I raise my voice to be clearly heard, that's not shouting"). Stopped what would have been a multi-day rabbit hole of clip-recording iteration.
+- Architect intervention via direct CSV diagnostic caught the agent's false-pass closure before docs were polluted. The closure commit `245891e` exists in the repo but the authoritative verdict is the journal/spikes entry, not REPORT.md.
+- Cleaner v1 scope. WPM and filler-word coaching are the strong signals; shouting was always the weakest of the three. Cutting it lets v1 ship faster and on more confident ground.
+- The `ShoutingSpike/` harness, the 5 recordings, and the time-series CSVs are preserved for v2. A future spike won't start from zero.
+- Mid-session protocol fixes (complete-prompt rule, no-notes-files rule) are now codified.
+
+### Downs
+
+- Two strikes burned on workflow churn (notes-files for plan iteration) before the protocol fix landed. Cost ~30 min of round-trips that didn't move the spike forward.
+- Sub-agent review missed that defaults were never tested. The criteria list checked algorithmic correctness (percentile interpolation, sustain rule, etc.) but not "is the tuning actually justified relative to the architecture-locked baseline." Future spike acceptance criteria need an explicit "show defaults result" gate.
+- Agent's REPORT.md as committed (commit `245891e`) overstates the result. Not amending it — the journal/spikes entry is now authoritative and the harness is throwaway anyway. Future architect should know: when in doubt, the spike file under `05_SPIKES.md` is the closure record, not the agent's REPORT.md.
+- Spent budget: 3h actual vs 2h estimate, plus architect time on diagnostic round and doc rewrite. Worth it given the saved v1 effort + saved v1 user-experience risk.
+
+### Next session
+
+- Phase 1 (Foundation) is fully unblocked. Last remaining open spike is S1 (P2, ~3h, identifying activating app for blocklist) — does not gate Phase 1 or Phase 2.1. Could either run S1 next or begin Phase 1 directly with M1.1 (Xcode project setup).
+- v2 backlog item (not tracked formally in v1 docs): "Intelligent voice analysis spike" — pitch/F0 + spectral tilt + onset-rate model. Use the `ShoutingSpike/` recordings and any new ones as the corpus. Owner: future-you, post-v1.
+
+### Addendum (same session) — Monologue and trail-off decisions
+
+After S9 closed, an external coaching-features document was reviewed proposing two replacement features: a **monologue detector** (warns when user holds the floor too long) and a **trail-off detector** (warns when voice fades at end of phrase). Worked through both:
+
+**Monologue detector → v1.** User decision. Algorithm: VAD-based state machine (IDLE/SPEAKING/PAUSED) with a 2.5s grace window so natural pauses don't reset the monologue clock; Gong-anchored thresholds (60s soft, 90s warning, 150s urgent). No transcription needed, so privacy story is clean.
+
+**Open architectural risk** — the algorithm needs a frame-level VAD signal. Options: reuse `SpeakingActivityTracker` (free, but token-arrival-based at 1.5s resolution) or add Silero (Core ML, ~1MB, frame-level). Cheaper option goes first, but it might lag too much. Made this Spike #11 (P1, 3h estimate).
+
+**Trail-off detector → v2.** Algorithm captured in `05_SPIKES.md` Spike #12 (parked) so v2 doesn't re-derive. v1 deferral reasons: (1) shares S9's risk shape — per-user-tunable dB threshold could violate FM3; (2) v1 no longer captures RMS (we removed it as part of the S9 close); (3) the conjunction "drop AND silence" is more defensible than S9's "loud = aggressive" mapping, but still needs validation across multiple voices before commit.
+
+**Persistent-widget + close-affordance behavior** (separately, locked earlier in this session): widget stays visible for the full mic-active session even when no speech detected; "Listening…" placeholder; user can dismiss via on-widget close affordance with confirmation prompt; dismissal scoped to current session only, re-appears on next mic activation.
+
+**Doc updates this addendum:**
+- `02_PRODUCT_SPEC.md` — monologue indicator added to widget display, monologue events to speaking metrics, `monologueEvents` to Session schema, persistent + close-affordance behavior locked. Trail-off non-goal entry includes full algorithm reference.
+- `03_ARCHITECTURE.md` — `MonologueDetector` sub-component spec (state machine, grace window, BT awareness, warning levels, presentation-mode toggle); `WidgetViewModel` extended with monologue + presentation-state fields; `FloatingPanel` panel state machine documented; data-flow diagram updated; S11 added to open architecture questions.
+- `04_BACKLOG.md` — S11 added to Phase 0; M2.5 expanded for panel state machine + close affordance (+1h); M4.5 revived as `MonologueDetector` (4h); M4.5a added as Silero contingent (0–4h); M5.6 revived as monologue indicator (3h); M7.4 expanded for presentation-mode toggle (+1h). v1 estimate moves from 189–199h to 201–215h. Net Session 013 effect on v1 effort: roughly +8 to +12h after the S9 −4h savings.
+- `05_SPIKES.md` — Spike #11 added (P1, active, full method spec); Spike #12 added (parked v2, full algorithm spec).
+- `01_PROJECT_JOURNAL.md` — this addendum.
+
+### Next session (revised by addendum)
+
+- **Phase 1 (Foundation) is unblocked and can begin in parallel with S11.** S11 is P1 but doesn't gate Phase 1 modules — it gates M4.5 inside Phase 4. Recommend starting M1.1 (Xcode project setup) and running S11 in parallel as bandwidth allows.
+- S1 (P2) and S11 (P1) are the two open spikes. S12 is parked for v2.
+- When M4.5 starts (post-Phase-3), S11 must be closed.
+
+---
+
 ## Session 012 — 2026-05-04 — Spike #7 closed CONDITIONAL PASS, Apple SpeechAnalyzer Power Baseline Validated
 
 **Format:** Claude Code agent execution (Spike #7 Phases A–C), sub-agent reviewed.
