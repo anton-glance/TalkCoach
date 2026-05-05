@@ -1,7 +1,7 @@
 import OSLog
 
 extension Logger {
-    private static let subsystem = "placeholder"
+    private static let subsystem = "com.talkcoach.app"
 
     static let app = Logger(subsystem: subsystem, category: "app")
     static let audio = Logger(subsystem: subsystem, category: "audio")

@@ -14,38 +14,38 @@
 			remoteGlobalIDString = A9D242502FA534C10039FC37;
 			remoteInfo = TalkCoach;
 		};
-		A9D2426B2FA534C20039FC37 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = A9D242492FA534C10039FC37 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = A9D242502FA534C10039FC37;
-			remoteInfo = TalkCoach;
-		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A9D242512FA534C10039FC37 /* TalkCoach.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TalkCoach.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9D242602FA534C20039FC37 /* TalkCoachTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TalkCoachTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A9D2426A2FA534C20039FC37 /* TalkCoachUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TalkCoachUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A9D242532FA534C10039FC37 /* TalkCoach */ = {
+		A9D242532FA534C10039FC37 /* Sources */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = TalkCoach;
+			exceptions = (
+				F159044C93C847A795F4155C /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
+			path = Sources;
 			sourceTree = "<group>";
 		};
-		A9D242632FA534C20039FC37 /* TalkCoachTests */ = {
+		A9D242632FA534C20039FC37 /* Tests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = TalkCoachTests;
-			sourceTree = "<group>";
-		};
-		A9D2426D2FA534C20039FC37 /* TalkCoachUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = TalkCoachUITests;
+			path = Tests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		F159044C93C847A795F4155C /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				App/Info.plist,
+			);
+			target = A9D242502FA534C10039FC37 /* TalkCoach */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A9D2424E2FA534C10039FC37 /* Frameworks */ = {
@@ -62,22 +62,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A9D242672FA534C20039FC37 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		A9D242482FA534C10039FC37 = {
 			isa = PBXGroup;
 			children = (
-				A9D242532FA534C10039FC37 /* TalkCoach */,
-				A9D242632FA534C20039FC37 /* TalkCoachTests */,
-				A9D2426D2FA534C20039FC37 /* TalkCoachUITests */,
+				A9D242532FA534C10039FC37 /* Sources */,
+				A9D242632FA534C20039FC37 /* Tests */,
 				A9D242522FA534C10039FC37 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -87,7 +79,6 @@
 			children = (
 				A9D242512FA534C10039FC37 /* TalkCoach.app */,
 				A9D242602FA534C20039FC37 /* TalkCoachTests.xctest */,
-				A9D2426A2FA534C20039FC37 /* TalkCoachUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -108,7 +99,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				A9D242532FA534C10039FC37 /* TalkCoach */,
+				A9D242532FA534C10039FC37 /* Sources */,
 			);
 			name = TalkCoach;
 			packageProductDependencies = (
@@ -131,7 +122,7 @@
 				A9D242622FA534C20039FC37 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				A9D242632FA534C20039FC37 /* TalkCoachTests */,
+				A9D242632FA534C20039FC37 /* Tests */,
 			);
 			name = TalkCoachTests;
 			packageProductDependencies = (
@@ -139,29 +130,6 @@
 			productName = TalkCoachTests;
 			productReference = A9D242602FA534C20039FC37 /* TalkCoachTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
-		};
-		A9D242692FA534C20039FC37 /* TalkCoachUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = A9D2427A2FA534C20039FC37 /* Build configuration list for PBXNativeTarget "TalkCoachUITests" */;
-			buildPhases = (
-				A9D242662FA534C20039FC37 /* Sources */,
-				A9D242672FA534C20039FC37 /* Frameworks */,
-				A9D242682FA534C20039FC37 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				A9D2426C2FA534C20039FC37 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				A9D2426D2FA534C20039FC37 /* TalkCoachUITests */,
-			);
-			name = TalkCoachUITests;
-			packageProductDependencies = (
-			);
-			productName = TalkCoachUITests;
-			productReference = A9D2426A2FA534C20039FC37 /* TalkCoachUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
 
@@ -177,10 +145,6 @@
 						CreatedOnToolsVersion = 26.4.1;
 					};
 					A9D2425F2FA534C20039FC37 = {
-						CreatedOnToolsVersion = 26.4.1;
-						TestTargetID = A9D242502FA534C10039FC37;
-					};
-					A9D242692FA534C20039FC37 = {
 						CreatedOnToolsVersion = 26.4.1;
 						TestTargetID = A9D242502FA534C10039FC37;
 					};
@@ -202,7 +166,6 @@
 			targets = (
 				A9D242502FA534C10039FC37 /* TalkCoach */,
 				A9D2425F2FA534C20039FC37 /* TalkCoachTests */,
-				A9D242692FA534C20039FC37 /* TalkCoachUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -216,13 +179,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A9D2425E2FA534C20039FC37 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		A9D242682FA534C20039FC37 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -246,13 +202,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A9D242662FA534C20039FC37 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -260,11 +209,6 @@
 			isa = PBXTargetDependency;
 			target = A9D242502FA534C10039FC37 /* TalkCoach */;
 			targetProxy = A9D242612FA534C20039FC37 /* PBXContainerItemProxy */;
-		};
-		A9D2426C2FA534C20039FC37 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = A9D242502FA534C10039FC37 /* TalkCoach */;
-			targetProxy = A9D2426B2FA534C20039FC37 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -323,7 +267,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -381,7 +325,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -392,9 +336,10 @@
 		A9D242752FA534C20039FC37 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = TalkCoach/TalkCoach.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/App/TalkCoach.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -403,11 +348,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Talk Coach uses on-device speech recognition to count words and detect filler words. No audio leaves your Mac.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Talk Coach analyzes your speaking pace and filler words during meetings, fully on-device.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -420,6 +362,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 			};
@@ -428,9 +371,10 @@
 		A9D242762FA534C20039FC37 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = TalkCoach/TalkCoach.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/App/TalkCoach.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -439,11 +383,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Talk Coach uses on-device speech recognition to count words and detect filler words. No audio leaves your Mac.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Talk Coach analyzes your speaking pace and filler words during meetings, fully on-device.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -456,6 +397,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 			};
@@ -469,15 +411,16 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ABHZSV6FGT;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.antonglance.TalkCoachTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TalkCoach.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TalkCoach";
 			};
 			name = Debug;
@@ -490,54 +433,17 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ABHZSV6FGT;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.antonglance.TalkCoachTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TalkCoach.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TalkCoach";
-			};
-			name = Release;
-		};
-		A9D2427B2FA534C20039FC37 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ABHZSV6FGT;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.antonglance.TalkCoachUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = TalkCoach;
-			};
-			name = Debug;
-		};
-		A9D2427C2FA534C20039FC37 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = ABHZSV6FGT;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.antonglance.TalkCoachUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = TalkCoach;
 			};
 			name = Release;
 		};
@@ -567,15 +473,6 @@
 			buildConfigurations = (
 				A9D242782FA534C20039FC37 /* Debug */,
 				A9D242792FA534C20039FC37 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		A9D2427A2FA534C20039FC37 /* Build configuration list for PBXNativeTarget "TalkCoachUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				A9D2427B2FA534C20039FC37 /* Debug */,
-				A9D2427C2FA534C20039FC37 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
