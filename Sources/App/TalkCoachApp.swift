@@ -95,10 +95,11 @@ struct MenuBarContent: View {
         Button("Check Permissions") {
             Logger.app.info("Check Permissions menu item tapped")
             Task {
-                guard let manager = AppDelegate.current?.permissionManager else {
-                    Logger.app.error("AppDelegate.current or permissionManager is nil — aborting permission request")
+                guard let appDelegate = AppDelegate.current else {
+                    Logger.app.error("AppDelegate.current is nil — NSApp.delegate is \(String(describing: NSApp.delegate))")
                     return
                 }
+                let manager = appDelegate.permissionManager
                 let outcome = await manager.requestAll()
                 Logger.app.info("requestAll returning outcome: \(String(describing: outcome))")
                 if outcome != .allAuthorized {
