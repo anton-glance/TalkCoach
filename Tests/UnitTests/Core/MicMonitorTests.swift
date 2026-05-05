@@ -35,6 +35,7 @@ private final class FakeCoreAudioDeviceProvider: CoreAudioDeviceProvider, @unche
         return Token()
     }
 
+    // Handler intentionally NOT cleared — lets testStopStopsEmittingAfterSubsequentChanges exercise MicMonitor's late-callback guard.
     nonisolated func removeIsRunningListener(device: AudioObjectID, token: AnyObject) {
         removeIsRunningListenerCallCount += 1
     }
@@ -47,6 +48,7 @@ private final class FakeCoreAudioDeviceProvider: CoreAudioDeviceProvider, @unche
         return Token()
     }
 
+    // Symmetric with removeIsRunningListener — handler intentionally retained.
     nonisolated func removeDefaultDeviceListener(token: AnyObject) {
         removeDefaultDeviceListenerCallCount += 1
     }
@@ -275,5 +277,19 @@ final class MicMonitorTests: XCTestCase {
         fake.simulateIsRunningChange()
         await Task.yield()
         XCTAssertEqual(spy.deactivatedCount, 1)
+    }
+
+    func testDeinitRemovesListenersIfStillRunning() {
+        let deinitFake = FakeCoreAudioDeviceProvider()
+        deinitFake.stubbedDefaultDeviceID = 42
+        deinitFake.stubbedIsRunning = false
+        autoreleasepool {
+            let monitor = MicMonitor(provider: deinitFake)
+            monitor.start()
+            XCTAssertEqual(deinitFake.addIsRunningListenerCallCount, 1)
+            XCTAssertEqual(deinitFake.addDefaultDeviceListenerCallCount, 1)
+        }
+        XCTAssertEqual(deinitFake.removeIsRunningListenerCallCount, 1)
+        XCTAssertEqual(deinitFake.removeDefaultDeviceListenerCallCount, 1)
     }
 }
