@@ -9,8 +9,28 @@ protocol PermissionStatusProvider: Sendable {
 }
 
 struct SystemPermissionStatusProvider: PermissionStatusProvider {
-    func micAuthorizationStatus() -> AVAuthorizationStatus { .notDetermined }
-    func speechAuthorizationStatus() -> SFSpeechRecognizerAuthorizationStatus { .notDetermined }
-    func requestMicAccess() async -> Bool { false }
-    func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus { .notDetermined }
+
+    func micAuthorizationStatus() -> AVAuthorizationStatus {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
+    func speechAuthorizationStatus() -> SFSpeechRecognizerAuthorizationStatus {
+        SFSpeechRecognizer.authorizationStatus()
+    }
+
+    func requestMicAccess() async -> Bool {
+        await withCheckedContinuation { continuation in
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+
+    func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
 }

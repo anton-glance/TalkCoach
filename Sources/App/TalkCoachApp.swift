@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var current: AppDelegate? { NSApp.delegate as? AppDelegate }
 
     let settingsStore = SettingsStore()
+    let permissionManager = PermissionManager()
     private(set) var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -88,6 +89,19 @@ struct MenuBarContent: View {
         Button("Settings\u{2026}") {
             AppDelegate.current?.openSettings()
         }
+
+        #if DEBUG
+        // M1.6 scaffolding — removed in M2.3 when SessionCoordinator becomes the production caller.
+        Button("Check Permissions") {
+            Task {
+                guard let manager = AppDelegate.current?.permissionManager else { return }
+                let outcome = await manager.requestAll()
+                if outcome != .allAuthorized {
+                    manager.showDeniedAlert(for: outcome)
+                }
+            }
+        }
+        #endif
 
         Divider()
 
