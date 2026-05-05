@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import OSLog
 
 nonisolated func pauseResumeMenuTitle(coachingEnabled: Bool) -> String {
@@ -11,12 +12,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let settingsStore = SettingsStore()
     let permissionManager = PermissionManager()
-    let micMonitor = MicMonitor()
+    private(set) var sessionCoordinator: SessionCoordinator!
     private(set) var settingsWindow: NSWindow?
+
+    // MARK: M2.3 debug scaffolding — remove or migrate when widget (M2.5) lands
+    #if DEBUG
+    private var debugSessionCancellable: AnyCancellable?
+    #endif
 
     override init() {
         super.init()
         AppDelegate.current = self
+
+        let micMonitor = MicMonitor()
+        sessionCoordinator = SessionCoordinator(
+            micMonitor: micMonitor,
+            settingsStore: settingsStore
+        )
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -38,6 +50,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.openSettings()
             }
         }
+
+        sessionCoordinator.start()
+
+        // MARK: M2.3 debug scaffolding — remove or migrate when widget (M2.5) lands
+        #if DEBUG
+        debugSessionCancellable = sessionCoordinator.$state
+            .dropFirst()
+            .sink { newState in
+                switch newState {
+                case .idle:
+                    Logger.session.info("[DEBUG] Session state → idle")
+                case .active(let ctx):
+                    Logger.session.info("[DEBUG] Session state → active(\(ctx.id))")
+                }
+            }
+        #endif
     }
 
     func openSettings() {
@@ -65,18 +93,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 }
-
-#if DEBUG
-extension AppDelegate: MicMonitorDelegate {
-    func micActivated() {
-        Logger.mic.info("[DEBUG] Mic activated")
-    }
-
-    func micDeactivated() {
-        Logger.mic.info("[DEBUG] Mic deactivated")
-    }
-}
-#endif
 
 @main
 struct TalkCoachApp: App {
@@ -109,7 +125,7 @@ struct MenuBarContent: View {
         }
 
         #if DEBUG
-        // M1.6 scaffolding — removed in M2.3 when SessionCoordinator becomes the production caller.
+        // MARK: M1.6 debug scaffolding — remove when permission flow is triggered automatically
         Button("Check Permissions") {
             Task {
                 guard let manager = AppDelegate.current?.permissionManager else { return }
@@ -118,15 +134,6 @@ struct MenuBarContent: View {
                     manager.showDeniedAlert(for: outcome)
                 }
             }
-        }
-        // M2.1 scaffolding — removed in M2.3 when SessionCoordinator becomes the production caller.
-        Button("Start Mic Monitor") {
-            guard let appDelegate = AppDelegate.current else { return }
-            appDelegate.micMonitor.delegate = appDelegate
-            appDelegate.micMonitor.start()
-        }
-        Button("Stop Mic Monitor") {
-            AppDelegate.current?.micMonitor.stop()
         }
         #endif
 
