@@ -80,6 +80,11 @@ final class PermissionManagerTests: XCTestCase {
         XCTAssertEqual(manager.currentStatus(), .micDenied)
     }
 
+    func testCurrentStatusSpeechRestricted() {
+        let (manager, _) = makeSUT(micStatus: .authorized, speechStatus: .restricted)
+        XCTAssertEqual(manager.currentStatus(), .speechDenied)
+    }
+
     // MARK: - requestAll tests
 
     func testRequestAllStopsAtMicDenied() async {
@@ -114,6 +119,14 @@ final class PermissionManagerTests: XCTestCase {
         XCTAssertEqual(
             url.absoluteString,
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        )
+    }
+
+    func testSystemSettingsURLForSpeechRecognition() {
+        let url = systemSettingsURL(for: .speechRecognition)
+        XCTAssertEqual(
+            url.absoluteString,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition"
         )
     }
 }
