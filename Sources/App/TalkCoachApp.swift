@@ -93,9 +93,14 @@ struct MenuBarContent: View {
         #if DEBUG
         // M1.6 scaffolding — removed in M2.3 when SessionCoordinator becomes the production caller.
         Button("Check Permissions") {
+            Logger.app.info("Check Permissions menu item tapped")
             Task {
-                guard let manager = AppDelegate.current?.permissionManager else { return }
+                guard let manager = AppDelegate.current?.permissionManager else {
+                    Logger.app.error("AppDelegate.current or permissionManager is nil — aborting permission request")
+                    return
+                }
                 let outcome = await manager.requestAll()
+                Logger.app.info("requestAll returning outcome: \(String(describing: outcome))")
                 if outcome != .allAuthorized {
                     manager.showDeniedAlert(for: outcome)
                 }
