@@ -7,11 +7,16 @@ nonisolated func pauseResumeMenuTitle(coachingEnabled: Bool) -> String {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static var current: AppDelegate? { NSApp.delegate as? AppDelegate }
+    static private(set) weak var current: AppDelegate?
 
     let settingsStore = SettingsStore()
     let permissionManager = PermissionManager()
     private(set) var settingsWindow: NSWindow?
+
+    override init() {
+        super.init()
+        AppDelegate.current = self
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let defaults = UserDefaults.standard
@@ -93,15 +98,9 @@ struct MenuBarContent: View {
         #if DEBUG
         // M1.6 scaffolding — removed in M2.3 when SessionCoordinator becomes the production caller.
         Button("Check Permissions") {
-            Logger.app.info("Check Permissions menu item tapped")
             Task {
-                guard let appDelegate = AppDelegate.current else {
-                    Logger.app.error("AppDelegate.current is nil — NSApp.delegate is \(String(describing: NSApp.delegate))")
-                    return
-                }
-                let manager = appDelegate.permissionManager
+                guard let manager = AppDelegate.current?.permissionManager else { return }
                 let outcome = await manager.requestAll()
-                Logger.app.info("requestAll returning outcome: \(String(describing: outcome))")
                 if outcome != .allAuthorized {
                     manager.showDeniedAlert(for: outcome)
                 }

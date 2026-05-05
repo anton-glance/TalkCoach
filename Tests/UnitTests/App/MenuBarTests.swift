@@ -54,6 +54,15 @@ final class MenuBarTests: XCTestCase {
         )
     }
 
+    // MARK: - AppDelegate.current contract
+
+    func testAppDelegateCurrentIsSetAfterInit() {
+        let delegate = AppDelegate()
+        XCTAssertNotNil(AppDelegate.current)
+        XCTAssertIdentical(AppDelegate.current, delegate)
+        _ = delegate
+    }
+
     // MARK: - Settings window contract
 
     func testSettingsWindowOpenedViaAppDelegateOpenSettings() {
