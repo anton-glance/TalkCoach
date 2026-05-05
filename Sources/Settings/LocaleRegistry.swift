@@ -69,6 +69,6 @@ enum LocaleRegistry: Sendable {
         Entry(identifier: "th_TH", displayName: "Thai (Thailand)", backend: .apple),
         Entry(identifier: "tr_TR", displayName: "Turkish (Türkiye)", backend: .apple),
         Entry(identifier: "uk_UA", displayName: "Ukrainian", backend: .parakeet),
-        Entry(identifier: "cy_GB", displayName: "Welsh", backend: .parakeet),
+        Entry(identifier: "cy_GB", displayName: "Welsh", backend: .parakeet)
     ]
 }

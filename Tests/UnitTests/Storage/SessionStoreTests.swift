@@ -2,46 +2,48 @@ import XCTest
 import SwiftData
 @testable import TalkCoach
 
+private func makeTestStore() throws -> SessionStore {
+    let schema = Schema(versionedSchema: SchemaV1.self)
+    let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+    let container = try ModelContainer(
+        for: schema,
+        migrationPlan: SessionMigrationPlan.self,
+        configurations: config
+    )
+    return SessionStore(modelContainer: container)
+}
+
+private func makeSampleRecord(
+    startedAt: Date = Date(timeIntervalSince1970: 1_000_000),
+    endedAt: Date = Date(timeIntervalSince1970: 1_000_300),
+    language: String = "en_US",
+    userLabel: String? = nil,
+    totalWords: Int = 200,
+    averageWPM: Double = 145.5,
+    peakWPM: Double = 190.0,
+    wpmStandardDeviation: Double = 12.3,
+    effectiveSpeakingDuration: TimeInterval = 240.0,
+    wpmSamples: [WPMSampleRecord] = [],
+    fillerCounts: [FillerCountRecord] = [],
+    repeatedPhrases: [RepeatedPhraseRecord] = []
+) -> SessionRecord {
+    SessionRecord(
+        startedAt: startedAt,
+        endedAt: endedAt,
+        language: language,
+        userLabel: userLabel,
+        totalWords: totalWords,
+        averageWPM: averageWPM,
+        peakWPM: peakWPM,
+        wpmStandardDeviation: wpmStandardDeviation,
+        effectiveSpeakingDuration: effectiveSpeakingDuration,
+        wpmSamples: wpmSamples,
+        fillerCounts: fillerCounts,
+        repeatedPhrases: repeatedPhrases
+    )
+}
+
 final class SessionStoreTests: XCTestCase {
-
-    private func makeTestStore() throws -> SessionStore {
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try ModelContainer(
-            for: SchemaV1.self,
-            configurations: config
-        )
-        return SessionStore(modelContainer: container)
-    }
-
-    private func makeSampleSession(
-        startedAt: Date = Date(timeIntervalSince1970: 1_000_000),
-        endedAt: Date = Date(timeIntervalSince1970: 1_000_300),
-        language: String = "en_US",
-        userLabel: String? = nil,
-        totalWords: Int = 200,
-        averageWPM: Double = 145.5,
-        peakWPM: Double = 190.0,
-        wpmStandardDeviation: Double = 12.3,
-        effectiveSpeakingDuration: TimeInterval = 240.0,
-        wpmSamples: [WPMSample] = [],
-        fillerCounts: [FillerCount] = [],
-        repeatedPhrases: [RepeatedPhrase] = []
-    ) -> Session {
-        Session(
-            startedAt: startedAt,
-            endedAt: endedAt,
-            language: language,
-            userLabel: userLabel,
-            totalWords: totalWords,
-            averageWPM: averageWPM,
-            peakWPM: peakWPM,
-            wpmStandardDeviation: wpmStandardDeviation,
-            effectiveSpeakingDuration: effectiveSpeakingDuration,
-            wpmSamples: wpmSamples,
-            fillerCounts: fillerCounts,
-            repeatedPhrases: repeatedPhrases
-        )
-    }
 
     // MARK: - Empty store
 
@@ -55,7 +57,7 @@ final class SessionStoreTests: XCTestCase {
 
     func testSaveSessionPersistsAllScalarFields() async throws {
         let store = try makeTestStore()
-        let session = makeSampleSession(
+        let record = makeSampleRecord(
             startedAt: Date(timeIntervalSince1970: 1_700_000_000),
             endedAt: Date(timeIntervalSince1970: 1_700_000_300),
             language: "en_US",
@@ -67,7 +69,7 @@ final class SessionStoreTests: XCTestCase {
             effectiveSpeakingDuration: 240.0
         )
 
-        try await store.save(session)
+        try await store.save(record)
         let fetched = try await store.fetchAll()
 
         XCTAssertEqual(fetched.count, 1)
@@ -87,15 +89,15 @@ final class SessionStoreTests: XCTestCase {
 
     func testSaveSessionPersistsWPMSamples() async throws {
         let store = try makeTestStore()
-        let samples = (0..<5).map { i in
-            WPMSample(
-                timestamp: Date(timeIntervalSince1970: Double(1_700_000_000 + i * 3)),
-                wpm: 130.0 + Double(i) * 5.0
+        let samples = (0..<5).map { index in
+            WPMSampleRecord(
+                timestamp: Date(timeIntervalSince1970: Double(1_700_000_000 + index * 3)),
+                wpm: 130.0 + Double(index) * 5.0
             )
         }
-        let session = makeSampleSession(wpmSamples: samples)
+        let record = makeSampleRecord(wpmSamples: samples)
 
-        try await store.save(session)
+        try await store.save(record)
         let fetched = try await store.fetchAll()
         let result = try XCTUnwrap(fetched.first)
 
@@ -113,12 +115,12 @@ final class SessionStoreTests: XCTestCase {
     func testSaveSessionPersistsFillerCounts() async throws {
         let store = try makeTestStore()
         let fillers = [
-            FillerCount(word: "um", count: 3, language: "en_US"),
-            FillerCount(word: "ну", count: 2, language: "ru_RU")
+            FillerCountRecord(word: "um", count: 3, language: "en_US"),
+            FillerCountRecord(word: "ну", count: 2, language: "ru_RU")
         ]
-        let session = makeSampleSession(fillerCounts: fillers)
+        let record = makeSampleRecord(fillerCounts: fillers)
 
-        try await store.save(session)
+        try await store.save(record)
         let fetched = try await store.fetchAll()
         let result = try XCTUnwrap(fetched.first)
 
@@ -135,12 +137,12 @@ final class SessionStoreTests: XCTestCase {
     func testSaveSessionPersistsRepeatedPhrases() async throws {
         let store = try makeTestStore()
         let phrases = [
-            RepeatedPhrase(phrase: "I think", count: 4),
-            RepeatedPhrase(phrase: "you know", count: 2)
+            RepeatedPhraseRecord(phrase: "I think", count: 4),
+            RepeatedPhraseRecord(phrase: "you know", count: 2)
         ]
-        let session = makeSampleSession(repeatedPhrases: phrases)
+        let record = makeSampleRecord(repeatedPhrases: phrases)
 
-        try await store.save(session)
+        try await store.save(record)
         let fetched = try await store.fetchAll()
         let result = try XCTUnwrap(fetched.first)
 
@@ -157,22 +159,22 @@ final class SessionStoreTests: XCTestCase {
     func testSaveSessionRoundTripsWithAllRelationships() async throws {
         let store = try makeTestStore()
         let samples = [
-            WPMSample(timestamp: Date(timeIntervalSince1970: 1_700_000_000), wpm: 130.0),
-            WPMSample(timestamp: Date(timeIntervalSince1970: 1_700_000_003), wpm: 145.0),
-            WPMSample(timestamp: Date(timeIntervalSince1970: 1_700_000_006), wpm: 160.0),
-            WPMSample(timestamp: Date(timeIntervalSince1970: 1_700_000_009), wpm: 155.0),
-            WPMSample(timestamp: Date(timeIntervalSince1970: 1_700_000_012), wpm: 140.0)
+            WPMSampleRecord(timestamp: Date(timeIntervalSince1970: 1_700_000_000), wpm: 130.0),
+            WPMSampleRecord(timestamp: Date(timeIntervalSince1970: 1_700_000_003), wpm: 145.0),
+            WPMSampleRecord(timestamp: Date(timeIntervalSince1970: 1_700_000_006), wpm: 160.0),
+            WPMSampleRecord(timestamp: Date(timeIntervalSince1970: 1_700_000_009), wpm: 155.0),
+            WPMSampleRecord(timestamp: Date(timeIntervalSince1970: 1_700_000_012), wpm: 140.0)
         ]
         let fillers = [
-            FillerCount(word: "um", count: 5, language: "en_US"),
-            FillerCount(word: "like", count: 3, language: "en_US"),
-            FillerCount(word: "ну", count: 2, language: "ru_RU")
+            FillerCountRecord(word: "um", count: 5, language: "en_US"),
+            FillerCountRecord(word: "like", count: 3, language: "en_US"),
+            FillerCountRecord(word: "ну", count: 2, language: "ru_RU")
         ]
         let phrases = [
-            RepeatedPhrase(phrase: "I think", count: 3),
-            RepeatedPhrase(phrase: "sort of", count: 2)
+            RepeatedPhraseRecord(phrase: "I think", count: 3),
+            RepeatedPhraseRecord(phrase: "sort of", count: 2)
         ]
-        let session = makeSampleSession(
+        let record = makeSampleRecord(
             language: "en_US",
             userLabel: "Full round-trip",
             totalWords: 500,
@@ -185,7 +187,7 @@ final class SessionStoreTests: XCTestCase {
             repeatedPhrases: phrases
         )
 
-        try await store.save(session)
+        try await store.save(record)
         let fetched = try await store.fetchAll()
         let result = try XCTUnwrap(fetched.first)
 
@@ -204,9 +206,9 @@ final class SessionStoreTests: XCTestCase {
         let today = Date(timeIntervalSince1970: 1_700_086_400)
         let tomorrow = Date(timeIntervalSince1970: 1_700_172_800)
 
-        try await store.save(makeSampleSession(startedAt: yesterday))
-        try await store.save(makeSampleSession(startedAt: today))
-        try await store.save(makeSampleSession(startedAt: tomorrow))
+        try await store.save(makeSampleRecord(startedAt: yesterday))
+        try await store.save(makeSampleRecord(startedAt: today))
+        try await store.save(makeSampleRecord(startedAt: tomorrow))
 
         let fetched = try await store.fetchAll()
         XCTAssertEqual(fetched.count, 3)
@@ -223,14 +225,14 @@ final class SessionStoreTests: XCTestCase {
         let afternoon = Date(timeIntervalSince1970: 1_700_050_400) // ~2pm
         let evening = Date(timeIntervalSince1970: 1_700_064_800)   // ~6pm
 
-        try await store.save(makeSampleSession(startedAt: morning))
-        try await store.save(makeSampleSession(startedAt: afternoon))
-        try await store.save(makeSampleSession(startedAt: evening))
+        try await store.save(makeSampleRecord(startedAt: morning))
+        try await store.save(makeSampleRecord(startedAt: afternoon))
+        try await store.save(makeSampleRecord(startedAt: evening))
 
-        let from = Date(timeIntervalSince1970: 1_700_043_200) // ~12pm
-        let to = Date(timeIntervalSince1970: 1_700_061_200)   // ~5pm
+        let rangeStart = Date(timeIntervalSince1970: 1_700_043_200) // ~12pm
+        let rangeEnd = Date(timeIntervalSince1970: 1_700_061_200)   // ~5pm
 
-        let fetched = try await store.fetchByDateRange(from: from, to: to)
+        let fetched = try await store.fetchByDateRange(from: rangeStart, to: rangeEnd)
         XCTAssertEqual(fetched.count, 1)
         XCTAssertEqual(fetched[0].startedAt, afternoon)
     }
@@ -238,7 +240,7 @@ final class SessionStoreTests: XCTestCase {
     func testFetchByDateRangeIsInclusiveOfFromBoundary() async throws {
         let store = try makeTestStore()
         let exact = Date(timeIntervalSince1970: 1_700_050_400)
-        try await store.save(makeSampleSession(startedAt: exact))
+        try await store.save(makeSampleRecord(startedAt: exact))
 
         // [from, to) — from is inclusive
         let fetched = try await store.fetchByDateRange(
@@ -259,13 +261,13 @@ final class SessionStoreTests: XCTestCase {
 
     func testDeleteRemovesSession() async throws {
         let store = try makeTestStore()
-        let session = makeSampleSession()
-        try await store.save(session)
+        try await store.save(makeSampleRecord())
 
         let before = try await store.fetchAll()
         XCTAssertEqual(before.count, 1)
 
-        try await store.delete(before[0])
+        let idToDelete = try XCTUnwrap(before[0].persistentModelID)
+        try await store.delete(id: idToDelete)
 
         let after = try await store.fetchAll()
         XCTAssertEqual(after.count, 0)
@@ -275,8 +277,7 @@ final class SessionStoreTests: XCTestCase {
 
     func testUserLabelOptionalCanBeNil() async throws {
         let store = try makeTestStore()
-        let session = makeSampleSession(userLabel: nil)
-        try await store.save(session)
+        try await store.save(makeSampleRecord(userLabel: nil))
 
         let fetched = try await store.fetchAll()
         let result = try XCTUnwrap(fetched.first)
@@ -295,7 +296,16 @@ final class SessionStoreTests: XCTestCase {
     // MARK: - No transcript fields
 
     func testNoTranscriptFieldOnSession() {
-        let session = makeSampleSession()
+        let session = Session(
+            startedAt: .now,
+            endedAt: .now,
+            language: "en_US",
+            totalWords: 0,
+            averageWPM: 0,
+            peakWPM: 0,
+            wpmStandardDeviation: 0,
+            effectiveSpeakingDuration: 0
+        )
         let mirror = Mirror(reflecting: session)
         let forbiddenNames: Set<String> = [
             "text", "transcript", "transcription", "utterance", "content"

@@ -21,11 +21,21 @@
 		A9D242602FA534C20039FC37 /* TalkCoachTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TalkCoachTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		F159044C93C847A795F4155C /* Exceptions for "Sources" folder in "TalkCoach" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				App/Info.plist,
+			);
+			target = A9D242502FA534C10039FC37 /* TalkCoach */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A9D242532FA534C10039FC37 /* Sources */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				F159044C93C847A795F4155C /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+				F159044C93C847A795F4155C /* Exceptions for "Sources" folder in "TalkCoach" target */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -36,16 +46,6 @@
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
-
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		F159044C93C847A795F4155C /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				App/Info.plist,
-			);
-			target = A9D242502FA534C10039FC37 /* TalkCoach */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A9D2424E2FA534C10039FC37 /* Frameworks */ = {
