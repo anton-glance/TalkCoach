@@ -3,6 +3,10 @@ import Combine
 import OSLog
 import SwiftUI
 
+private extension NSRect {
+    var area: CGFloat { width * height }
+}
+
 enum PanelVisibilityState: Equatable {
     case hidden
     case visible
@@ -133,11 +137,14 @@ final class FloatingPanelController {
 
     // MARK: - Panel Management
 
+    private static let panelSize: CGFloat = 144
+    private static let defaultInset: CGFloat = 16
+
     private func showPanel() {
         let thePanel = panel ?? createPanel()
         panel = thePanel
 
-        let frame = Self.defaultPanelFrame()
+        let frame = frameForShow()
         thePanel.setFrame(frame, display: false)
         thePanel.orderFrontRegardless()
     }
@@ -151,27 +158,92 @@ final class FloatingPanelController {
     }
 
     private func createPanel() -> CoachingPanel {
-        let frame = Self.defaultPanelFrame()
+        let frame = frameForShow()
         let coachingPanel = CoachingPanel(contentRect: frame)
         let hostingView = NSHostingView(
             rootView: PlaceholderWidgetView(viewModel: viewModel) { [weak self] in
                 self?.requestDismiss()
             }
         )
-        hostingView.frame = NSRect(x: 0, y: 0, width: 144, height: 144)
+        hostingView.frame = NSRect(x: 0, y: 0, width: Self.panelSize, height: Self.panelSize)
+        coachingPanel.onDragEnd = { [weak self] in
+            guard let self, let panel = self.panel else { return }
+            self.handlePanelDragEnd(panelFrame: panel.frame)
+        }
         coachingPanel.contentView = hostingView
         return coachingPanel
     }
 
-    static func defaultPanelFrame() -> NSRect {
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let xOrigin = visibleFrame.maxX - 144 - 16
-        let yOrigin = visibleFrame.maxY - 144 - 16
-        return NSRect(x: xOrigin, y: yOrigin, width: 144, height: 144)
+    // MARK: - Position Logic
+
+    private func frameForShow() -> NSRect {
+        let targetScreen = screenProvider.mainScreen()
+            ?? screenProvider.allScreens().first
+        guard let targetScreen else {
+            return Self.fallbackFrame()
+        }
+        let screenName = targetScreen.localizedName
+
+        if let saved = settingsStore.position(for: screenName) {
+            let absolute = CGPoint(
+                x: targetScreen.frame.origin.x + saved.x,
+                y: targetScreen.frame.origin.y + saved.y
+            )
+            let clamped = Self.clamp(absolute, within: targetScreen.visibleFrame)
+            if clamped != absolute {
+                Logger.floatingPanel.info("Clamped saved position for \(screenName)")
+            } else {
+                Logger.floatingPanel.info("Restored saved position for \(screenName)")
+            }
+            return NSRect(origin: clamped, size: CGSize(width: Self.panelSize, height: Self.panelSize))
+        }
+
+        Logger.floatingPanel.info("Using default position for \(screenName)")
+        return Self.defaultFrame(for: targetScreen)
     }
 
     func handlePanelDragEnd(panelFrame: NSRect) {
+        let allScreens = screenProvider.allScreens()
+        guard let destScreen = Self.screenWithMostOverlap(for: panelFrame, in: allScreens)
+                ?? screenProvider.mainScreen() else { return }
+
+        let relative = CGPoint(
+            x: panelFrame.origin.x - destScreen.frame.origin.x,
+            y: panelFrame.origin.y - destScreen.frame.origin.y
+        )
+        settingsStore.setPosition(relative, for: destScreen.localizedName)
+        Logger.floatingPanel.info(
+            "Saved position (\(relative.x), \(relative.y)) for \(destScreen.localizedName)"
+        )
+    }
+
+    private static func defaultFrame(for screen: ScreenDescription) -> NSRect {
+        let x = screen.visibleFrame.maxX - panelSize - defaultInset
+        let y = screen.visibleFrame.maxY - panelSize - defaultInset
+        return NSRect(x: x, y: y, width: panelSize, height: panelSize)
+    }
+
+    private static func fallbackFrame() -> NSRect {
+        let fallback = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let x = fallback.maxX - panelSize - defaultInset
+        let y = fallback.maxY - panelSize - defaultInset
+        return NSRect(x: x, y: y, width: panelSize, height: panelSize)
+    }
+
+    private static func clamp(_ origin: CGPoint, within visibleFrame: NSRect) -> CGPoint {
+        let x = max(visibleFrame.minX, min(origin.x, visibleFrame.maxX - panelSize))
+        let y = max(visibleFrame.minY, min(origin.y, visibleFrame.maxY - panelSize))
+        return CGPoint(x: x, y: y)
+    }
+
+    private static func screenWithMostOverlap(
+        for panelFrame: NSRect, in screens: [ScreenDescription]
+    ) -> ScreenDescription? {
+        screens.max { lhs, rhs in
+            let lhsArea = panelFrame.intersection(lhs.frame).area
+            let rhsArea = panelFrame.intersection(rhs.frame).area
+            return lhsArea < rhsArea
+        }
     }
 
     // MARK: - Hide Timer
