@@ -10,4 +10,5 @@ extension Logger {
     static let widget = Logger(subsystem: subsystem, category: "widget")
     static let session = Logger(subsystem: subsystem, category: "session")
     static let mic = Logger(subsystem: subsystem, category: "mic")
+    static let floatingPanel = Logger(subsystem: subsystem, category: "floatingPanel")
 }

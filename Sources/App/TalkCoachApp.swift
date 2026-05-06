@@ -1,7 +1,6 @@
-import SwiftUI
 import AppKit
-import Combine
 import OSLog
+import SwiftUI
 
 nonisolated func pauseResumeMenuTitle(coachingEnabled: Bool) -> String {
     coachingEnabled ? "Pause Coaching" : "Resume Coaching"
@@ -13,12 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settingsStore = SettingsStore()
     let permissionManager = PermissionManager()
     private(set) var sessionCoordinator: SessionCoordinator!
+    private(set) var floatingPanelController: FloatingPanelController!
     private(set) var settingsWindow: NSWindow?
-
-    // MARK: M2.3 debug scaffolding — remove or migrate when widget (M2.5) lands
-    #if DEBUG
-    private var debugSessionCancellable: AnyCancellable?
-    #endif
 
     override init() {
         super.init()
@@ -28,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionCoordinator = SessionCoordinator(
             micMonitor: micMonitor,
             settingsStore: settingsStore
+        )
+        floatingPanelController = FloatingPanelController(
+            sessionCoordinator: sessionCoordinator
         )
     }
 
@@ -52,23 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         sessionCoordinator.start()
-
-        // MARK: M2.3 debug scaffolding — remove or migrate when widget (M2.5) lands
-        #if DEBUG
-        debugSessionCancellable = sessionCoordinator.$state
-            .dropFirst()
-            .sink { newState in
-                switch newState {
-                case .idle:
-                    Logger.session.info("[DEBUG] Session state → idle")
-                case .active(let ctx):
-                    Logger.session.info("[DEBUG] Session state → active(\(ctx.id))")
-                }
-            }
-        #endif
+        floatingPanelController.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        floatingPanelController.stop()
         sessionCoordinator.stop()
     }
 
