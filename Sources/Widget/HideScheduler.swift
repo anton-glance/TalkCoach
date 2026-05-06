@@ -22,7 +22,8 @@ struct DispatchHideScheduler: HideScheduler {
     ) -> HideSchedulerToken {
         let token = HideSchedulerToken()
         let item = DispatchWorkItem { [weak token] in
-            guard token != nil else { return }
+            guard let token else { return }
+            TokenStorage.shared.remove(for: token)
             action()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
@@ -35,12 +36,17 @@ struct DispatchHideScheduler: HideScheduler {
     }
 }
 
-private final class TokenStorage: @unchecked Sendable {
+@MainActor
+private final class TokenStorage {
     static let shared = TokenStorage()
     private var items: [ObjectIdentifier: DispatchWorkItem] = [:]
 
     func store(_ item: DispatchWorkItem, for token: HideSchedulerToken) {
         items[ObjectIdentifier(token)] = item
+    }
+
+    func remove(for token: HideSchedulerToken) {
+        items[ObjectIdentifier(token)] = nil
     }
 
     func cancel(for token: HideSchedulerToken) {

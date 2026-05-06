@@ -156,14 +156,12 @@ final class FloatingPanelController {
         return coachingPanel
     }
 
-    nonisolated static func defaultPanelFrame() -> NSRect {
-        MainActor.assumeIsolated {
-            let screen = NSScreen.main ?? NSScreen.screens.first
-            let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            let xOrigin = visibleFrame.maxX - 144 - 16
-            let yOrigin = visibleFrame.maxY - 144 - 16
-            return NSRect(x: xOrigin, y: yOrigin, width: 144, height: 144)
-        }
+    static func defaultPanelFrame() -> NSRect {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let xOrigin = visibleFrame.maxX - 144 - 16
+        let yOrigin = visibleFrame.maxY - 144 - 16
+        return NSRect(x: xOrigin, y: yOrigin, width: 144, height: 144)
     }
 
     // MARK: - Hide Timer
