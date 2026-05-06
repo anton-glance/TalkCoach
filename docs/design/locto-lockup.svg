@@ -1,0 +1,5 @@
+<svg width="380" height="80" viewBox="0 0 380 80" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Locto logo lockup">
+  <circle cx="40" cy="40" r="28" fill="none" stroke="#0F6E56" stroke-width="4"/>
+  <circle cx="40" cy="40" r="7" fill="#0F6E56"/>
+  <text x="92" y="60" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Space Grotesk', system-ui, sans-serif" font-size="60" font-weight="500" letter-spacing="-2.2" fill="#0F6E56">locto</text>
+</svg>

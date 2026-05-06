@@ -19,7 +19,7 @@ These are not negotiable. Every change is evaluated against them.
 
 - **FM1 — No destructive UI.** No flashing, no jitter, no animated reordering. Smooth color transitions only. Glanceable in <500ms peripheral vision.
 - **FM2 — No unreliable data.** WPM must reflect speed-up/slow-down within ~3s. Pauses for breath must NOT crash the WPM number.
-- **FM3 — Minimal setup.** First launch ≤2 user actions: language picker (1 question, 1–2 languages from ~50 supported, system locale pre-checked) and mic permission grant at first session start. No tutorials, no further configuration. See `@docs/02_PRODUCT_SPEC.md`.
+- **FM3 — Minimal setup.** Settings window auto-opens on first launch with language picker (1–2 languages from ~50 supported, system locale pre-checked). Mic permission grant at first session start. Model downloads require user confirmation in Settings. No tutorials, no further configuration. See `@docs/02_PRODUCT_SPEC.md`.
 - **FM4 — No performance impact.** <5% sustained CPU during 1hr active session on Apple Silicon. <150MB RSS. No mic dropouts in Zoom.
 
 ---
@@ -47,8 +47,31 @@ These are not negotiable. Every change is evaluated against them.
 - **Assume Apple supports a locale based on `supportedLocale(equivalentTo:)`.** That helper returns misleadingly successful results for locales like `ru_RU` that are NOT actually in `SpeechTranscriber.supportedLocales`. Always check the explicit enumeration. (Session 006 lesson.)
 - **Write transcripts to disk.** v1 schema stores metrics only — `Session` schema in `@docs/02_PRODUCT_SPEC.md`.
 - **Use the network during a session.** App entitlements have `com.apple.security.network.client = true` ONLY for one-time model downloads at first use of a declared language: Apple `AssetInventory` locale models, Parakeet model from CDN (Architecture Y, Session 006), and Whisper-tiny LID model for Latin↔CJK pairs (Session 010). NEVER call the network during a session — no telemetry, no transcripts uploaded, no remote config, no analytics. Audio never leaves the device.
-- **Add UI for things parked to v1.x** (acoustic non-words, smart fillers, pitch, pauses as user-visible metric).
+- **Add UI for things parked to v1.x** (acoustic non-words, smart fillers, pitch, pauses as user-visible metric, monologue detector, UI localization).
+- **Add UI for things parked to v2** (per-app blocklist, StatsWindow/session history, hotkey, session-end summary, shouting detector, trail-off detector).
 - **Use `localStorage`, `sessionStorage`, or any web-storage APIs** in any embedded WebViews.
+
+---
+
+## Project conventions (Phase 1)
+
+These seven patterns were established and tested across Phase 1's six modules. They are project-wide rules — every new module applies them. See `@docs/01_PROJECT_JOURNAL.md` Session 015 for the full rationale.
+
+1. **Info.plist mechanism.** The physical file at `Sources/App/Info.plist` is the single source of truth. `GENERATE_INFOPLIST_FILE = YES` + `INFOPLIST_FILE = Sources/App/Info.plist` + zero `INFOPLIST_KEY_*` build settings. New plist keys (usage descriptions, URL schemes) edit the physical file directly. (M1.1)
+
+2. **Swift 6 strict concurrency.** `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` is set project-wide. Top-level declarations are implicitly `@MainActor`. For tests calling into MainActor-isolated code, annotate the test class itself: `@MainActor final class FooTests: XCTestCase`. For pure functions or constants needing both-context callability, mark them explicitly `nonisolated`. For `@ModelActor` types, tests stay non-MainActor and use `await` with `async throws` test methods. (M1.2)
+
+3. **AppKit `NSWindow` via `NSHostingController` for any window beyond MenuBarExtra.** SwiftUI `Window(id:)` + `openWindow` is unreliable in `LSUIElement` apps. The standard pattern: `NSHostingController(rootView: SomeView())` wrapped in an `NSWindow` owned by `AppDelegate`, opened via `AppDelegate.current?.openSomeWindow()`. Use `NSAlert.runModal()` for app-level alerts (no host window required). (M1.3)
+
+4. **`AppDelegate.current` static-reference accessor.** Reach the AppDelegate from anywhere via `AppDelegate.current`, declared as `static private(set) weak var current: AppDelegate?` and set to `self` in `override init()`. Do NOT use `NSApp.delegate as? AppDelegate` — `@NSApplicationDelegateAdaptor` registers SwiftUI's proxy class as `NSApp.delegate`, so the cast always returns nil. Locked by `testAppDelegateCurrentIsSetAfterInit`. (M1.6 fix)
+
+5. **`UserDefaults.didChangeNotification` live-sync.** Stores wrapping `UserDefaults` (like `SettingsStore`) need to react to external writers (e.g., `@AppStorage` toggles in `MenuBarContent` while a downstream consumer reads through the store). Pattern: `NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: defaults, queue: .main) { ... }` registered in `init`, observer token stored as `nonisolated(unsafe) private var observer: (any NSObjectProtocol)?`, removed in `deinit`. An `isSyncing` guard inside the closure prevents feedback loops. (M1.4)
+
+6. **`nonisolated Sendable` record types as the `@ModelActor` boundary.** SwiftData `@Model` types are non-Sendable. `SessionStore`'s public API exposes `nonisolated struct Sendable` record types (`SessionRecord`, `WPMSampleRecord`, `FillerCountRecord`, `RepeatedPhraseRecord`) that cross the actor boundary safely. `@Model` instances are constructed inside the actor from records on `save()` and converted back to records before crossing out on `fetch...()`. Production callers work with records, never `@Model` directly. (M1.5)
+
+7. **Protocol injection for system-API testing.** System APIs that show real OS dialogs or query OS state (e.g., `AVCaptureDevice.requestAccess`, `SFSpeechRecognizer.requestAuthorization`, future `MicMonitor` / `AVAudioEngine` calls) cannot be unit-tested directly. Pattern: define a `XStatusProvider: Sendable` protocol; production implementation is a struct (stateless, trivially Sendable) wrapping the real APIs via `withCheckedContinuation` for callback-to-async; test implementation is a class (`@unchecked Sendable`) recording calls and returning configurable values. (M1.6, generalizes to Phase 2's `MicMonitor` and Phase 3's audio path.)
+
+**Manual smoke gate for OS integrations.** Modules wrapping OS-level integrations (window management, permissions, audio, speech, system events) require a manual smoke gate before `git tag -a mX.Y-complete`. Mocked unit tests verify *logic*; manual smoke verifies *wiring*. The M1.6 `AppDelegate.current` bug existed for three modules before manual smoke caught it.
 
 ---
 
@@ -64,16 +87,19 @@ TalkCoach/
 │   ├── 03_ARCHITECTURE.md
 │   ├── 04_BACKLOG.md
 │   └── 05_SPIKES.md
+├── design/                            ← visual source of truth for widget ONLY (see note below)
+│   ├── README.md                      ← full visual spec
+│   ├── widget-reference.html          ← interactive visual reference
+│   └── Sources/                       ← reference SwiftUI: DesignTokens, Views, Window
 ├── TalkCoach.xcodeproj/
 ├── Sources/
-│   ├── App/                           ← TalkCoachApp, MenuBarUI, OnboardingLanguagePicker
+│   ├── App/                           ← TalkCoachApp, MenuBarUI
 │   ├── Core/                          ← SessionCoordinator, MicMonitor
-│   ├── Audio/                         ← AudioPipeline, RMS
+│   ├── Audio/                         ← AudioPipeline (buffer transport only, no RMS)
 │   ├── Speech/                        ← TranscriptionEngine, AppleTranscriberBackend, ParakeetTranscriberBackend, LanguageDetector
-│   ├── Analyzer/                      ← SpeakingActivityTracker, WPM, fillers, phrases, shouting
+│   ├── Analyzer/                      ← SpeakingActivityTracker, WPM, fillers, phrases
 │   ├── Storage/                       ← SwiftData models, SessionStore
 │   ├── Widget/                        ← FloatingPanel, WidgetViewModel
-│   ├── Stats/                         ← StatsWindow + charts
 │   └── Settings/                      ← Settings store, settings views
 ├── Tests/
 │   ├── UnitTests/                     ← XCTest, one folder per Source module
@@ -83,6 +109,8 @@ TalkCoach/
 │   └── Localizations/
 └── [throwaway spike directories at repo root: WPMSpike/, ParakeetSpike/, MicCoexistSpike/, LangDetectSpike/]
 ```
+
+**`design/` package note:** The design directory is the visual source of truth for the widget (layout, typography, colors, animations, accessibility). Its architecture section (§8), speech analysis logic (§9), WPM calculation (§9.2), filler detection set (§9.3), and scope assumptions (§16) are **superseded** by `@docs/02_PRODUCT_SPEC.md` and `@docs/03_ARCHITECTURE.md`. When design and docs disagree on anything other than visual treatment, docs win.
 
 ---
 
@@ -94,7 +122,6 @@ TalkCoach/
 - **Audio:** `AVFoundation` (`AVAudioEngine`)
 - **Speech:** `Speech` framework — `SpeechAnalyzer`, `SpeechTranscriber` (Apple path); FluidAudio + Parakeet Core ML (non-Apple locales like Russian); WhisperKit + Whisper-tiny (LID for Latin↔CJK pairs)
 - **Persistence:** SwiftData
-- **Charts:** Swift Charts
 - **Logging:** `os.Logger`
 - **Testing:** XCTest (Swift Testing acceptable for new code)
 

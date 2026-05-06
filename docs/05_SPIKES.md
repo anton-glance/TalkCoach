@@ -312,7 +312,7 @@ For the option chosen for production:
 
 ## Spike #1 — Identifying activating app for blocklist
 
-**Status:** 📋 planned · **Priority:** P2 (run before M2.2) · **Estimate:** 3h
+**Status:** ⏸ deferred to v2 (Session 014 — blocklist feature deferred) · **Original priority:** P2 · **Estimate:** 3h
 
 ### Question
 Can we reliably identify which app activated the mic, so the blocklist can decide whether to suppress the widget?
@@ -566,7 +566,7 @@ This spike was originally Spike #3 ("Russian quality on `SpeechAnalyzer`"). Spik
 
 ## Spike #11 — `MonologueDetector` VAD source validation
 
-**Status:** 📋 P1 (gates M4.5 `MonologueDetector`) · **Estimate:** 3h · **Added:** Session 013
+**Status:** ⏸ deferred to v1.x (Session 014 — MonologueDetector feature deferred) · **Original priority:** P1 · **Estimate:** 3h · **Added:** Session 013
 
 ### Question
 Is `SpeakingActivityTracker`'s token-arrival-derived speaking signal a sufficient VAD source for `MonologueDetector`, or do we need to add a parallel frame-level VAD (Silero) running on `AudioPipeline` buffers?
@@ -676,12 +676,8 @@ Only matters if you go App Store. Run a TestFlight submission as the validation 
 
 ---
 
-## When all spikes are done
+## Spike status summary (Session 014)
 
-Update `01_PROJECT_JOURNAL.md` with:
-- Final answers per spike
-- Any architecture changes (revise `03_ARCHITECTURE.md` if needed, log the change)
-- Any product changes (revise `02_PRODUCT_SPEC.md` if needed, log the change)
-- Updated estimates in `04_BACKLOG.md` based on what was learned
+All architecture-blocking spikes are resolved. Seven spikes completed (S2, S4, S6, S7, S8, S9, S10), one superseded (S3). Two spikes deferred with their features: S1 (blocklist → v2), S11 (MonologueDetector → v1.x). S12 remains parked for v2 (trail-off detector).
 
-Then begin Phase 1 module work.
+Phase 1 module work is fully unblocked.

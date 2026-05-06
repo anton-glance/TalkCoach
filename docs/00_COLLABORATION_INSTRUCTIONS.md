@@ -1,8 +1,8 @@
 # Collaboration Instructions
 
-> **Purpose:** Defines how Claude (planning/architect, this conversation) and the user collaborate on the **Speech Coach** macOS app. Claude (this conversation) writes specs and prompts; **Claude Code agent in Xcode writes the Swift**. This file goes into every new conversation as project context.
+> **Purpose:** Defines how Claude (planning/architect, this conversation) and the user collaborate on the **Locto** macOS app (working name `TalkCoach` in repo and Xcode project — see `02_PRODUCT_SPEC.md` naming policy). Claude (this conversation) writes specs and prompts; **Claude Code agent in Xcode writes the Swift**. This file goes into every new conversation as project context.
 >
-> **Last revised:** Session 002 — based on current Claude Code best practices.
+> **Last revised:** Session 018 — added `docs/design/` to the file ownership table (Locto brand and visual reference adopted).
 
 ---
 
@@ -153,6 +153,9 @@ This module is done when:
 | `03_ARCHITECTURE.md` | Locked technical architecture | Only via journaled decision | Claude + Claude Code |
 | `04_BACKLOG.md` | Module list, statuses, estimates | Claude after every session | Claude + user |
 | `05_SPIKES.md` | De-risking tasks | Claude after each spike resolves | Claude + user |
+| `06_PHASE1_PROMPTS.md` | Archived draft Phase 1 prompts (reference only; canonical prompts are individually delivered as `.md` files via `present_files`) | Frozen | Reference only |
+| `07_RELEASE_PLAN.md` | What's testable when, two feedback checkpoints, calendar | Claude at phase boundaries and at scope-change decisions | Claude at every session start, user when planning calendar |
+| `docs/design/` | Locto brand + visual + behavioral reference (`01-design-spec.md`, `02-brand-guidelines.html`, brand SVG assets) | Claude at brand/design-related decisions | Claude during widget-related modules (M2.5, M5.x) and any user-facing surface work; Claude Code agent for visual specs |
 | `CLAUDE.md` (in repo root) | Per-project rules for Claude Code | Claude (this conversation) | Claude Code agent every session |
 
 `CLAUDE.md` is the *project's* prompt context — it gets loaded into every Claude Code session automatically. We keep it lean (per best practice) and let it reference the richer docs above by `@path/to/doc.md` syntax.
@@ -251,15 +254,16 @@ Pushback is direct. "I disagree because X." Soft questions invite agreement; dir
 
 Paste:
 
-> *"Continuing work on Speech Coach macOS app. Read these files in order:*
+> *"Continuing work on Locto macOS app. Read these files in order:*
 > - *`00_COLLABORATION_INSTRUCTIONS.md`*
 > - *`01_PROJECT_JOURNAL.md` (most recent entry first)*
 > - *`02_PRODUCT_SPEC.md`*
 > - *`03_ARCHITECTURE.md`*
 > - *`04_BACKLOG.md`*
 > - *`05_SPIKES.md`*
+> - *`07_RELEASE_PLAN.md`*
 >
-> *Recap state in 3–5 lines. Today I want to work on [specific module ID / spike ID / question]."*
+> *Recap state in 3–5 lines, including which phase we're in per `07_RELEASE_PLAN.md`. Today I want to work on [specific module ID / spike ID / question]."*
 
 Claude will recap, ask any clarifying question, and either:
 - Generate a Claude Code prompt using the template above (if a known module)
