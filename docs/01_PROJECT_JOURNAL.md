@@ -1,6 +1,539 @@
-# Project Journal — Speech Coach
+# Project Journal — Locto
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
+
+---
+
+## Session 019 — 2026-05-06 — M2.5 FloatingPanel skeleton shipped: 4-state visibility machine, dismissal flow, sub-agent catches TokenStorage leak
+
+**Format:** Architect-driven module sequencing with the Claude Code agent. M2.5 from green-field to tagged complete in one architect session. 17 new tests added (120 total in repo). Three commits in the M2.5 series: `7ccb8f3` failing tests, `a4c76df` implementation, `add8d78` sub-agent review fixes.
+
+### What happened
+
+`FloatingPanel` is the user-visible chrome of the v1 app — the translucent always-on-top widget that activates with the mic and disappears 5s after mic-off. M2.5 ships the skeleton: NSPanel infrastructure with the locked architecture §8 config, SwiftUI host (`NSHostingView`, not `NSHostingController` — the panel-as-container choice), persistent-visibility state machine bound to `SessionCoordinator.$state` via `.sink`, dismissal flow with confirmation alert, dynamic placeholder content (mm:ss timer + "Listening…" caption), default top-right 16pt-inset position. Real WPM display, color interpolation, hover saturation, drag-to-move, per-display position memory, and accessibility polish all defer to later modules.
+
+The session opened with three doc-state cleanups carried over from Session 018 — stale `M2.5` description in `04_BACKLOG.md` ("show on speech / hide on mic-off"), stale "show on first token" text in `03_ARCHITECTURE.md`'s data-flow ASCII, and a Phase 2 Checkpoint #1 narrative in `07_RELEASE_PLAN.md` that assumed an audio-energy "speaking detected" toggle. All three originated in the Session 014 widget design (which was reverted by Session 013's persistent-visibility lock and reaffirmed Session 018) and survived audits in Session 015–018. Architect resolved Checkpoint #1 by dropping the audio-energy toggle from M2.5 — only one `AVAudioEngine` exists in v1 (owned by `AudioPipeline` in Phase 3), and the persistent-visibility model already exposes whether the mic-on/mic-off lifecycle is correctly wired without an ad-hoc engine. Pure scope tightening with no functional loss.
+
+The plan came back substantive on the first pass with one sharp catch: the prompt wrote `Sources/UI/` while CLAUDE.md and the established project layout have `Sources/Widget/`. The agent corrected silently in the plan. Architect approved with two implementation notes — `Sources/Widget/` confirmed, and `NSScreen.main ?? NSScreen.screens.first` as the LSUIElement nil-safe fallback for default-position calculation.
+
+Implementation came back with three commits, 120/120 tests passing, lint clean across all three. Sub-agent independent review found five issues — three real correctness bugs (TokenStorage memory leak when timer fires naturally, unnecessary `MainActor.assumeIsolated` on a `@MainActor` class method, wrong `@unchecked Sendable` on TokenStorage when all access is main-actor) and two by-design placeholder markers (always-visible close button to be REMOVE-IN-M5.7'd, `.regularMaterial` background to be replaced by Liquid Glass in M5.7). All three correctness issues addressed in commit `add8d78`. The `TokenStorage.items` leak — entries keyed by `ObjectIdentifier(token)` accumulating when the hide timer fired naturally (only the cancel path removed entries) — is a real long-running-app concern that would have shipped to production without the sub-agent catch.
+
+Architect's first review of the final report missed several Phase 3 self-review checklist items the prompt required item-by-item (test-immutability via `git log --follow`, threading verification, print/commented-out-code/doc-comments audits, per-commit lint state, files-match-planned-paths). Same pattern Session 017 flagged for M2.3. Caught and corrected with a follow-up prompt; the agent's complete second report had everything plus the 12 verbatim ACs and the seven smoke-gate scenarios listed for the user. Two sessions in a row of this same first-review miss — the architect's reflex on first read of any final status must walk both lists (verbatim ACs plus Phase 3 checklist items) line by line before accepting.
+
+Manual smoke gate passed end-to-end on the user side: panel appears on mic-on, ticks the timer, stays during session, fades 5s after mic-off, dismisses with confirmation, dismissal scope clears at session end, rapid toggle handles cancellation cleanly, pause-mid-session uses the same fade path, Cmd+Q is clean.
+
+### Architectural decisions locked
+
+1. **4-state visibility machine.** `PanelVisibilityState: { hidden, visible, fadingOut, dismissed }`. Transitions: `hidden → visible` on `.idle → .active` (gated by `!= .dismissed`); `visible → fadingOut` on `.active → .idle` (5s timer scheduled); `fadingOut → hidden` on timer fire; `fadingOut → visible` on `.idle → .active` returning before timer fire (timer canceled); `visible → dismissed` on user confirm in dismiss alert; `dismissed → hidden` on `.active → .idle` (dismissal scope cleared at session end). All other transitions are no-ops.
+
+2. **Pause-mid-session uses the same fade path as mic-off.** `SessionCoordinator` produces `.idle` regardless of cause; the panel treats both transitions identically. The 5s fade reads "session ended" whether triggered by mic-off or user-pause; an instant vanish on pause would look like a crash. Decision made by the agent in plan; architect's default position confirmed.
+
+3. **`NSPanel` config additive: `isOpaque = false`.** Not in the architecture §8 list as written, but logically required alongside `backgroundColor = .clear` and `hasShadow = false` for the SwiftUI material to render its own translucency without AppKit drawing an opaque base. Folded into §8 in this session's doc revision.
+
+4. **`NSHostingView` (not `NSHostingController`) for panel content.** The panel-as-container pattern: `CoachingPanel` (NSPanel subclass) owns the content view directly. `NSHostingController` is reserved for cases where the controller IS the window's content controller (the Settings window's pattern from M1.3); here, the custom NSPanel subclass already plays that role.
+
+5. **`DispatchWorkItem` scheduler over `Task.sleep`.** Synchronous, guaranteed cancellation is the load-bearing property — `Task.sleep` is cooperative and can fire its action even after `cancel()` if the task hasn't reached its suspension point yet. `DispatchQueue.main.asyncAfter(deadline:execute:)` plus `DispatchWorkItem.cancel()` gives deterministic cancel-before-run semantics, which the state machine depends on for the `fadingOut → visible` cancellation path.
+
+6. **`@MainActor` `TokenStorage` with explicit cleanup on natural fire.** The `HideScheduler` production impl uses a single shared `TokenStorage` for token-to-DispatchWorkItem mapping. Sub-agent caught two issues — storage was originally `@unchecked Sendable` (all access is main-actor; `@MainActor` is the stronger compiler-enforced guarantee) and entries leaked when the timer fired naturally (only the cancel path removed entries). Both addressed: storage is `@MainActor`, the DispatchWorkItem callback removes the entry from storage before invoking the action.
+
+7. **Default position screen-selection: `NSScreen.main ?? NSScreen.screens.first`.** The fallback covers the LSUIElement case where no key window exists at panel-show time. Position computed as `(visibleFrame.maxX - 144 - 16, visibleFrame.maxY - 144 - 16)`. M2.6 will add per-display memory; M2.5 just computes the default each show.
+
+8. **`Sources/Widget/` directory (not `Sources/UI/`).** CLAUDE.md and the established Phase 1 layout. The M2.5 prompt's `Sources/UI/` reference was an architect-side writeup error. Caught by the agent in plan review.
+
+### Open questions for next architect session
+
+1. **Doc comments on public APIs.** The agent's Phase 3 self-review item 5 surfaced a real gap: the prompt template's checklist asks "Public APIs have doc comments," but no prior Phase 1 / Phase 2 module (`MicMonitor`, `SessionCoordinator`, `PermissionManager`, `SettingsStore`, `SessionStore`, now `FloatingPanelController`) uses doc comments on its public API. The project relies on self-documenting names plus `CLAUDE.md` for architecture context. M2.5 followed the established convention; the checklist item is therefore an aspiration the project hasn't adopted. Two paths forward: (a) accept that the item is a no-op for this project and remove it from the prompt template; (b) commit to the convention starting with M2.6+ and retroactively annotate the existing modules. Decide once before more modules ship.
+
+### Procedural lessons
+
+1. **Architect first-review miss on the prompt's Phase 3 checklist items.** Same pattern as Session 017's M2.3 first-review miss. The agent's first final-report restructured the 12 ACs into their own AC1–AC14 list and skipped 7 of the 11 Phase 3 self-review checklist items. The substance was in the implementation; the report was the gap. Caught and corrected; complete second report had everything. Two sessions in a row — promote to a procedural reflex for M2.6+: walk both lists (verbatim ACs plus Phase 3 checklist items) line by line on first read of any final status before accepting.
+
+2. **Sub-agent value continues to compound.** Three real correctness issues caught (TokenStorage leak, MainActor footgun, wrong Sendable conformance) that would have all shipped silently. The cost of writing "spawn a sub-agent" into the prompt is one line; the value is two-to-three production-quality issues per high-risk module. Continuing as policy: every `Sources/Core/`, `Sources/Storage/`, and `Sources/Widget/` module gets a sub-agent review.
+
+3. **Verbatim-with-disposition format works.** Five sub-agent notes, three ADDRESSED with commit references, two PASS with rationale. Each is traceable to a concrete decision. Continuing as the standard format.
+
+### Ups
+
+- Plan came back high-quality on first pass. Eight Phase 1+2 conventions plus three Phase 2 procedural locks meant zero rederivation churn. The agent applied Convention 6 (provider injection) for both the alert presenter and the hide scheduler without prompting beyond the prompt's reference.
+- Sub-agent caught the `TokenStorage` memory leak before it shipped. Long-running-app concern that would have manifested as gradual `.items` dictionary growth over multi-day uptime sessions and not surfaced until much later.
+- 17 tests + 120/120 + lint clean across all three commits including the failing-tests commit. Procedural tightening from Session 017 holds.
+- Manual smoke gate passed end-to-end on user side. All seven scenarios from the Definition of Done section 6 confirmed.
+- Three carry-over doc-state cleanups from Sessions 014/018 caught and fixed in the same session that produced the M2.5 prompt. The audit reflex worked: read the M2.5 backlog row, read §8, read Checkpoint #1 — all three flagged as inconsistent with the locked persistent-visibility model before the prompt went to the agent.
+
+### Downs
+
+- Architect's first review of the final report skipped the Phase 3 checklist march. Same pattern as Session 017. The follow-up was needed to get a complete report. Two-strike-rule cost burned on workflow churn rather than real-substance correction; this needs to stop being a pattern by M2.6.
+- The "Sources/UI/" mistake in the M2.5 prompt was avoidable. CLAUDE.md is in the prompt's reading order and explicitly says `Sources/Widget/`. Ten-second check that wasn't done.
+- Doc-comments inconsistency surfaced as a real question (item 1 above) but the architect didn't decide it in-session. Now flagged in journal for the next architect session before more modules ship.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry
+- `04_BACKLOG.md` — M2.5 marked `✅ done` with `m2.5-complete` tag reference
+- `03_ARCHITECTURE.md` — `FloatingPanel` §8 implementation block rewritten with the locked design (4-state visibility machine, NSPanel additive `isOpaque = false`, NSHostingView vs NSHostingController choice, DispatchWorkItem scheduler rationale, @MainActor TokenStorage with cleanup-on-natural-fire, NSScreen.main fallback, file paths). `WidgetViewModel` description updated to note the M2.5 skeleton surface (`sessionStartedAt`, `isSessionActive`) vs the M5.1 full surface.
+- (From this session's earlier doc-state pass:) `04_BACKLOG.md` M2.5 description, `03_ARCHITECTURE.md` data-flow ASCII + SessionCoordinator full-lifecycle list, `07_RELEASE_PLAN.md` Phase 2 narrative + Checkpoint #1 description + checkpoint summary table — all three aligned with the persistent-visibility lock.
+
+### Next session
+
+- M2.6 (Per-display widget position memory) OR M2.7 (Session persistence at session end). Both are small (2h and 1h estimates) and close out Phase 2 between them. M2.6 directly extends M2.5's panel positioning logic; M2.7 wires `SessionCoordinator.onSessionEnded` (the one-shot consumer surface from M2.3) to `SessionStore.save(_:)` from M1.5. After both ship, the Phase 2 exit gate is testable end-to-end (open Zoom → widget appears with timer + "Listening…" → close Zoom → fade-out → SwiftData store contains a session record).
+- Doc-comments-as-convention question (Open Questions item 1) needs a one-question architect decision before more modules ship. If "yes, adopt the convention," retroactive annotation cost is small (six modules' public APIs). If "no, drop the checklist item," update the prompt template once.
+
+---
+
+## Session 018 — 2026-05-05 — Brand: Locto adopted as user-facing name + visual reference; Scope: filler tracking deferred to v2.0; design package replaces prior `design/` directory
+
+**Format:** Architect-only session, no Claude Code agent involvement. Working session between Phase 2 modules (after M2.3 close, before M2.5). Project-wide doc revision driven by two product-owner decisions: (1) brand adoption from external Locto design package, (2) market-discovery-driven scope reduction deferring filler tracking to v2.0.
+
+### What happened
+
+The user uploaded an external design package — five product/scope/build-phase markdown docs plus a self-contained brand-guidelines HTML — produced by a separate Claude Design effort assuming a from-scratch build of an ambient speech-coaching app branded "Locto". The package included visual identity (brand teal `#0F6E56`, Inter type stack, slate-blue / sage-green / warm-coral state inks, ring-and-dot mark, "Speak in your sweet spot" tagline), component specs (320pt widget with solid pastel gradients, vertical-stroke filler counts, hero number treatment, coach notes, dashboard tab bar), and voice/tone rules (direct, present, calm; specific verbs not coaching jargon).
+
+The architect walked through reconciliation with the user across four turns. The five Locto markdown docs (product, design-spec, data-model, build-phases, open-questions) were confirmed as **reference only** — they assumed from-scratch architecture (Apple Speech vs whisper.cpp, GRDB vs Core Data, App Store sandboxing trade-offs) that contradicts our locked Architecture Y, locked SwiftData persistence, locked Phase 1 conventions. Only the brand-guidelines HTML and the design-spec doc map to anything we'd save in the project; the other three are reference material the user keeps locally.
+
+Then four reconciliation decisions in sequence:
+
+1. **Naming.** User-facing name is **Locto** (committed). The repository, Xcode scheme, bundle identifier (`com.talkcoach.app`), and source code retain `TalkCoach` for v1 — renaming the codebase is non-trivial and deferred until after v1 launch. Every user-visible string (About panel, Info.plist usage descriptions, menu items, Settings titles, App Store metadata) uses Locto. Internal artifacts (build settings, source identifiers, signing) use TalkCoach.
+
+2. **Visual adoption mode — option (b), selective.** The architect surfaced three reads (a) wholesale replacement, (b) selective adoption, (c) side-by-side. User chose (b): adopt brand color, type, voice, motion principles, and state ink colors from Locto. Keep our locked widget shell decisions: 144 × 144 pt size (Session 014), Liquid Glass material with hover saturation shift (Session 014), persistent visibility + "Listening…" placeholder + dismissal flow (Session 013). Locto's solid-pastel-gradient 320pt approach is rejected; the existing Liquid Glass + state-ink-tint approach stays.
+
+3. **Filler tracking — deferred to v2.0.** Market discovery surfaced monologue detection as the higher-priority feedback signal. User-facing summary: "the filling-words became less priority than monologue talking. Push it as feature for v2.0 when we will develop complete dashboards with rich analysis and recommendations." All filler work removed from v1: `FillerDetector` (M4.2), filler dictionary editor in Settings (M4.3), filler bars on widget (M5.5), filler editor UI in M6.2 polish, the `fillerCounts` SwiftData field, the `fillerDict` UserDefaults key (registered in M1.4 but no longer read or written), the seeded EN/RU/ES dictionaries, the FM2 "filler counts must be obvious-case correct" criterion, the "filler word list below" widget content. Total Phase 4 + 5 + 6 reduction: 14h.
+
+4. **Repeated-phrase detection — also deferred to v2.0.** Architect proposed grouping with fillers (sibling verbal-pattern critique, same in-meeting risk shape, same v2.0-dashboard fit). User confirmed. M4.4 `RepeatedPhraseDetector` removed; `repeatedPhrases` SwiftData field removed. The algorithm sketch (sliding 4-word window over finalized tokens detecting 2–4 word phrase repetition within ~5s) is preserved in `03_ARCHITECTURE.md` §6 alongside the FillerDetector sketch for v2.0 to inherit.
+
+5. **Monologue detection stays as v1.x feature.** Algorithm designed Session 013, blocked on Spike #11 (parked) for VAD source validation. Now elevated to second-pillar v1 feature alongside WPM — when monologue lands, the v1 product proposition becomes "WPM + monologue" rather than "WPM + fillers". The success criteria in `02_PRODUCT_SPEC.md` were updated accordingly: question 1 was "I forgot the app was running, but my filler use went down" → became "I forgot the app was running, but I noticed when I drifted into a monologue."
+
+### Doc revisions in this session
+
+The architect performed comprehensive doc edits across six project files:
+
+- **`02_PRODUCT_SPEC.md`** — title rebranded to Locto with naming-policy note; tagline changed to "Speak in your sweet spot"; FM1 "no flashing" lines reframed away from filler-specific contexts to general state-change/monologue-level visuals; FM2 filler-correctness criterion replaced with monologue-correctness criterion; widget display section rewritten (state labels in sentence case, pace bar with caret, no filler list, design-doc references); speaking metrics section narrowed to WPM + monologue; "Filler-word dictionary" section replaced with deferral note; session storage schema fields `fillerCounts` and `repeatedPhrases` removed; expanded stats window section updated (filler frequency chart out, monologue timeline in); non-goals section expanded with v2.0 filler/repeated-phrase entries; UX defaults table dropped filler dictionary row; success metrics question 1 rewritten around monologue.
+
+- **`03_ARCHITECTURE.md`** — ASCII module diagram updated (`Analyzer (WPM + monologue)`); Analyzer section rewritten (FillerDetector and RepeatedPhraseDetector replaced with deferral block, MonologueDetector promoted as v1.x sub-component with Spike #11 dependency); SessionStore record types updated (FillerCountRecord and RepeatedPhraseRecord removed from boundary surface; v1 surface is SessionRecord, WPMSampleRecord, MonologueEventRecord at v1.x); FloatingPanel section comprehensively rewritten (view model fields trimmed, persistent-visibility lock from Session 013 reaffirmed, hover saturation lock from Session 014 reaffirmed, design references redirected from `design/` to `docs/design/`); data flow ASCII diagram updated; Settings keys reduced from seven to six (fillerDict removed); Settings window sections updated (Filler Words pane removed); Info.plist usage descriptions rebranded to Locto and trimmed of filler references; Design Reference section rewritten with precedence rules and a clear "what's superseded" callout for the prior `design/` directory.
+
+- **`04_BACKLOG.md`** — Phase 4 trimmed to M4.1, M4.6, M4.7 only (was 17h, now 7h); Phase 5 dropped M5.5 filler bars (was 23h, now 20h); Phase 6 dropped filler editor mention from M6.2 (was 19h, now 18h); Summary table updated with new totals (124–130h → 110–116h); Session 018 scope reduction documented; deferred features section rewritten with v2.0 filler/phrase entries; M1.4 historical row annotated with "fillerDict registered but unused after Session 018".
+
+- **`07_RELEASE_PLAN.md`** — title rebranded to Locto; TL;DR updated (two checkpoints not three, cumulative ~92–98h not ~105–111h); Phase 4 narrative rewritten (drops fillers, drops Checkpoint #3 with rationale); Phase 5 narrative rewritten (Locto-derived visuals, success questions updated to four-question form including monologue); Phase 6 narrative trimmed (drops filler editor, drops "three checkpoints removed" line); cumulative effort table updated; "three feedback checkpoints" section retitled to "two" with Phase 4 checkpoint dropped and rationale captured.
+
+- **`00_COLLABORATION_INSTRUCTIONS.md`** — revision note updated to Session 018; file ownership table extended with `docs/design/` row indicating Claude (this conversation) is the editor for brand/design-related decisions and Claude + Claude Code agent are readers during widget-related modules.
+
+- **New `docs/design/` folder** — three files produced:
+  - `01-design-spec.md` — implementation-facing behavioral companion to the brand HTML. Includes a Provenance section explicitly enumerating the project-specific overrides (144pt size, Liquid Glass material, persistent visibility, monologue indicator extension, filler-component removal). Includes a Phase 5 testing checklist for self-validation against FM1.
+  - `02-brand-guidelines.html` — adapted from the uploaded Locto brand HTML. Adds a "Scope & precedence" section at the top explaining what this doc wins on and what it doesn't. Annotates the three-state widget caption with the project-specific size/material/state-label overrides. Marks Filler-word strokes, Coach note, and Tab bar component sections with "deferred to v2.0" banners. Updates Assets section to point at `docs/design/` for SVG files.
+  - `README.md` — folder orientation, naming policy, precedence rules, what's superseded, adoption history.
+
+### Architectural decisions locked
+
+1. **User-facing brand name: Locto.** Repo / scheme / bundle ID stays TalkCoach for v1. Codebase rename deferred until after v1 launch when there's no in-flight feature pressure.
+
+2. **Visual reference: `docs/design/` package adapted from Locto.** Authoritative for visual identity (palette, type, voice, motion) and brand-component visual specs. NOT authoritative for content scope (`02_PRODUCT_SPEC.md` wins) or technical architecture (`03_ARCHITECTURE.md` wins).
+
+3. **Filler tracking deferred to v2.0.** Removed from widget, data layer, dashboard, dictionary, multilingual seed lists, Settings UI, and the M4.x test plan. Algorithm sketches preserved in arch doc §6 for v2.0 to inherit. `MigrationPlanV2` becomes the SwiftData migration entry-point that adds back `fillerCounts` and `repeatedPhrases` schema fields.
+
+4. **Repeated-phrase detection deferred to v2.0.** Sibling of fillers, same rationale, same v2.0 reactivation path.
+
+5. **Monologue detection elevated to second-pillar v1 feature.** v1 product proposition becomes "WPM + monologue", not "WPM + fillers". Spike #11 (VAD source validation) is the gate — parked, must pass before M4.5 implementation. v1.x feature alongside dark mode and acoustic non-word detection.
+
+6. **Widget shell from Session 014 + 013 preserved.** 144pt size, Liquid Glass material, hover saturation shift, persistent visibility with "Listening…" placeholder, dismissal flow. The Locto reference's 320pt + solid pastel gradient + show-on-first-token approach is rejected.
+
+7. **Phase 4 checkpoint (post-session UNUserNotificationCenter notification) dropped.** Earlier plan had a metric-summary notification ("32 min · 152 WPM · 4 'um'") as Checkpoint #3 in Phase 4. With fillers gone, the only Phase 4 metric is WPM, which is straightforward to spot-check by querying SwiftData directly. The notification surface added complexity without proportional risk-reduction value at the new scope.
+
+### Procedural notes
+
+1. **Architect-conversation-per-Phase split is paying off.** Phase 2's lessons (M2.1 + M2.3 + this brand revision) are accumulating in this conversation's context without pollution. Future architectural questions in M2.5 / M2.6 / M2.7 inherit all this. Locked as the working cadence.
+
+2. **External design-package reconciliation cost ~5 turns.** The Locto package was generous in scope (full product spec, data model, build phases, open questions) but assumed from-scratch architecture. The architect spent four reconciliation turns surfacing the four binary decisions (naming, visual adoption mode, filler scope, repeated-phrase scope) before producing files. This cost is fundamental to integrating any external design effort into a locked architecture; the process worked as designed (one question per turn, decisions confirmed, then files produced).
+
+3. **Doc edits at this scope took two architect turns.** First turn covered `02_PRODUCT_SPEC.md`, `03_ARCHITECTURE.md`, `04_BACKLOG.md` plus partial `07_RELEASE_PLAN.md` (TL;DR + Phase 4) before tool-call budget ran out. Second turn finished release plan, produced the four new files (`docs/design/01`, `docs/design/02`, `docs/design/README.md`, updated `00_COLLABORATION_INSTRUCTIONS.md`), and journaled. Future scope-change-style sessions should plan two turns from the start rather than attempting one-shot.
+
+### Ups
+
+- Reconciliation walked cleanly through four binary decisions without doubling back. Each one was sharper than the last because the prior decisions narrowed the surface.
+- The Locto package's voice/tone rules ("direct, present, calm; specific verbs not coaching jargon; do/don't examples") immediately upgraded our user-facing copy. Pure win — no overrides needed.
+- Monologue detection's elevation to second-pillar feature gives v1 a clearer product proposition. "WPM + filler counts" was a 'metrics-on-screen' framing; "WPM + monologue" is a 'feedback during the moment that matters' framing — much closer to FM3's "minimal setup, ambient feedback" promise.
+- The `docs/design/` folder cleanly separates "visual reference" from "locked architecture", which the prior `design/` directory at project root had been muddling. Architecture refs pointed at it for visuals AND included scope/architecture bleed-through that needed superseding paragraphs in `03_ARCHITECTURE.md`. The new structure has zero such bleed-through.
+
+### Downs
+
+- Architect's first read of the uploaded Locto package missed the magnitude of the visual delta versus our locked widget shell. Initial framing assumed "trim to brand-and-tone reference" before noticing 320pt vs 144pt, solid gradients vs Liquid Glass, show-on-first-token vs persistent-visibility, filler strokes vs monologue. Caught on the third turn when the architect asked the visual-adoption-mode question explicitly. Sharper first read would have asked that question on turn one.
+- The Phase 4 checkpoint dropping is a real loss of risk-reduction signal even at the reduced scope. WPM-only Phase 4 is still worth a sanity check before Phase 5 sinks ~20h into widget work; the checkpoint mechanism just doesn't earn its keep at one metric. A lighter-weight alternative (e.g., a debug menu item that prints session metrics) might be worth proposing before M4.7 lands.
+- File ownership table in `00_COLLABORATION_INSTRUCTIONS.md` was simply outgrown — it had room for `docs/design/` but the existing rows still say "three checkpoints" in the release plan row. Updated; flag to keep audit-grepping these tables on every scope-change.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry
+- `02_PRODUCT_SPEC.md` — Locto rebrand + filler/repeated-phrase deferral + state-label sentence-case + monologue elevation + tagline + design-doc references
+- `03_ARCHITECTURE.md` — Analyzer rewritten + FloatingPanel rewritten + Settings keys trimmed + Info.plist rebranded + Design reference rewritten with precedence rules
+- `04_BACKLOG.md` — Phase 4 trimmed to 7h + Phase 5 trimmed to 20h + Phase 6 trimmed to 18h + Summary updated + deferred-features section restructured
+- `07_RELEASE_PLAN.md` — Locto rebrand + Phase 4 narrative rewritten + Phase 5 narrative rewritten + checkpoints summary down to two + cumulative effort table updated
+- `00_COLLABORATION_INSTRUCTIONS.md` — file ownership table extended with `docs/design/` row + revision note
+- **New:** `docs/design/01-design-spec.md`, `docs/design/02-brand-guidelines.html`, `docs/design/README.md` (Locto package adapted with project overrides surfaced inline)
+
+### Next session
+
+- M2.5 (`FloatingPanel`): SwiftUI widget bound to `SessionCoordinator.$state`. Per Phase 2 dynamic-placeholder checkpoint in `07_RELEASE_PLAN.md`. Now visually grounded by `docs/design/01-design-spec.md` and `docs/design/02-brand-guidelines.html`. The placeholder widget at Phase 2 end uses Liquid Glass shell with brand state inks at low alpha; final WPM display lands in Phase 5.
+- **M2.5 prompt tightenings carry forward from M2.3:**
+  - Smoke-gate procedure defaults to Xcode's debug area, not Console.app
+  - Sub-agent verbatim-with-disposition reporting format is the standard
+  - First-review architect discipline: march the Phase 3 self-review checklist item-by-item
+  - **New:** prompt references `docs/design/01-design-spec.md` and `docs/design/02-brand-guidelines.html` for visual specifics; agent reads these alongside the architecture doc during Phase 1 plan exploration
+  - **New:** the M2.5 placeholder widget is the first surface where the Locto brand and design-doc overrides become testable in production code; explicit verification that the widget uses brand teal `#0F6E56` only where appropriate (NOT as a state signal — state signal is slate-blue / sage-green / warm-coral inks; brand teal is reserved for the menu bar mark and any "About" / chrome surface)
+
+---
+
+
+## Session 017 — 2026-05-05 — M2.3 SessionCoordinator skeleton shipped: hybrid consumer interface, immediate-termination pause, sub-agent catches termination cleanup
+
+**Format:** Architect-driven module sequencing with the Claude Code agent. M2.3 from green-field to tagged complete in one architect session. 15 new tests added (103 total in repo). Three commits in the M2.3 series: `f074a4b` failing tests (lint clean), `1f16431` implementation, `180c0b2` sub-agent review fixes.
+
+### What happened
+
+`SessionCoordinator` is the orchestration brain of v1 — it receives `MicMonitor` events (M2.1), gates session creation on `coachingEnabled` (M1.4 `SettingsStore`), holds in-memory session state, and exposes that state to two future consumers: M2.5 `FloatingPanel` (SwiftUI widget) and M2.7 `SessionStore` (SwiftData persistence). M2.3 is the skeleton — lifecycle and state management. It does NOT yet integrate `AudioPipeline`, `TranscriptionEngine`, `Analyzer`, `LanguageDetector`, or the widget itself.
+
+Plan came back high-quality on the first pass. The agent picked the hybrid consumer interface (`@Published var state: SessionState` for SwiftUI binding plus `onSessionEnded` callback registration for one-shot consumers) with clear justification for both consumer needs. The agent recommended pause-mid-session option (a) — immediate termination — with reasoning tied to FM3 ("controls do what they say") and the menu copy ("Pause Coaching", not "Pause After This Session"). Architect approved with two implementation tightenings: annotate the `onSessionEnded` closure type as `@MainActor` to surface the contract in the type system, and rename `testResumeWhileMicStillActiveStartsNewSession` to `…DoesNotStartNewSession` since the test body asserts no new session starts (correct behavior — `MicMonitor` won't re-fire `micActivated()` until a real deactivation). Both tightenings landed.
+
+Phase 2 had a recovery moment that taught a lesson on the architect side. After the failing-tests run, the Xcode chat panel showed `(lldb)` and "Responding…" while the test runner status said `Testing TalkCoachTests`. The architect read this as a deadlock and proposed a debugger-recovery sequence. It was nothing of the kind — the test process had hit a clean `Fatal error: Index out of range` at `endedSessions[0]` on an empty array (because the empty stub never delivered the `onSessionEnded` callback), and lldb was simply waiting at the breakpoint while the chat panel rendered the test results stream. The agent caught the misdiagnosis cleanly: traced the call chain (each `simulateIsRunningChange()` → one `Task { @MainActor in }` hop → one `await Task.yield()` drain), confirmed the test infrastructure was correct, and noted that the failures were the expected stub-method shape. Architect's pattern-match to "deadlock" was wrong; the correct first question on "stuck for hours" is "what does the test runner status say and what's at the breakpoint" before reaching for fork-the-debugger remedies. Lesson captured.
+
+Implementation reported back with three commits, 103/103 tests passing, lint clean on every commit including the failing-tests commit (Session 016 procedural tightening confirmed working). Sub-agent returned a 13-note breakdown: 8 PASS, 2 ADDRESSED in commit `180c0b2` (missing `testDuplicateMicActivatedWhileActiveIsNoOp` defensive test, missing `applicationWillTerminate` calling `sessionCoordinator.stop()`), 3 ACCEPTED with rationale (unbounded handler array but O(1) in practice with M2.7 as sole consumer; Combine `.sink` despite project async/await preference because `SettingsStore.$coachingEnabled` is already `@Published`; `FakeCoreAudioDeviceProvider` duplicated between `MicMonitorTests` and `SessionCoordinatorTests` — extraction deferred until a third consumer appears). The verbatim-with-disposition format from Session 016's tightening is working as designed: each note traceable to a concrete decision rather than buried in a one-line summary.
+
+Architect's first review of the final report missed several Definition-of-Done items the prompt required (Phase 3 self-review checklist item-by-item, AC quotation, swiftlint status per commit, sub-agent verbatim notes). Caught and corrected with a follow-up prompt; the agent's complete second report had everything. Sharper architect read on first pass would have flagged it; pattern noted for M2.5.
+
+Manual smoke gate had a Console.app misadventure on the user side. The pasted filter `subsystem:com.talkcoach.app category:session` parsed only the subsystem chip; the `category:session` part dropped. Worse, macOS Console suppresses `.debug` and `.info` log levels by default — needs Action menu → Include Debug Messages and Include Info Messages to be toggled on, otherwise the panel shows "0 messages" even with the right filter. Architect redirected to Xcode's debug area, which shows `os.Logger` output unfiltered without setup. User had used Xcode's debug area for M2.1 successfully; should have been the default smoke-gate path from the start. M2.5 prompt and forward will default to Xcode's debug area, mention Console.app only as the secondary path with the Action-menu toggle warning.
+
+### Architectural decisions locked
+
+1. **Hybrid consumer interface for `SessionCoordinator`.** `@Published var state: SessionState` for SwiftUI binding (M2.5 widget consumes via `@ObservedObject` / `@EnvironmentObject` natively, no adapter layer). Plus `func onSessionEnded(_ handler: @escaping @MainActor (EndedSession) -> Void)` callback registration for one-shot consumers (M2.7 persistence registers a single handler at app startup). Each consumer gets the shape that fits its need; neither contorts to accommodate the other. The `@MainActor` annotation on the closure type surfaces the threading contract explicitly under Swift 6.
+
+2. **State types.** `SessionState: Equatable { idle, active(SessionContext) }`. `SessionContext: Equatable { id: UUID, startedAt: Date }` — minimal by design; Phase 3+ modules add fields when wired (`language: Locale` from `LanguageDetector`, etc). `EndedSession: Equatable { id, startedAt, endedAt }` — the value delivered to `onSessionEnded` handlers, captures `endedAt` which the active-session type does not. Session UUIDs are generated fresh at each `micActivated()`; M2.7 will use them as SwiftData primary keys.
+
+3. **Pause-mid-session: option (a), immediate termination.** When `coachingEnabled` transitions `true → false` while state is `.active`, the active session ends immediately — state transitions to `.idle`, `EndedSession` delivered to handlers synchronously in the same MainActor turn, log line `Coaching disabled mid-session — ending active session`. Resume (`false → true`) does NOT auto-start a session even if mic is still active; only the next `micActivated()` from `MicMonitor` starts one. Smoke-gate verified end-to-end with session `6D4EE4EA` ending at duration 7.3s on pause-click while Voice Memos was still recording, with the HAL deactivation event arriving later as a no-op (already idle).
+
+4. **Combine subscription to `SettingsStore.$coachingEnabled`** (`.dropFirst().sink { [weak self] in ... }`). Justified deviation from the project's general "prefer async/await over Combine" preference: `SettingsStore` is already an `ObservableObject` with `@Published` properties; `.sink` is the idiomatic one-liner for observing them; wrapping in `AsyncStream` adds complexity for no benefit. `.dropFirst()` skips the initial-value emission to avoid spurious actions at app launch. `[weak self]` closes the retain-cycle question.
+
+5. **Same-MainActor-turn delivery contract.** `endCurrentSession()` builds the `EndedSession`, transitions state, and delivers all handlers synchronously — no extra `Task { @MainActor in }` hop. This is the contract tests rely on; rapid-toggle and pause-mid-session scenarios depend on it for deterministic event ordering. Architect's option-(c) recommendation from the deadlock-misdiagnosis recovery prompt landed as designed.
+
+6. **Lifecycle ownership.** `AppDelegate` owns `SessionCoordinator` (Convention 7 — accessed via `AppDelegate.current?.sessionCoordinator`). `SessionCoordinator` owns `MicMonitor` strongly; `MicMonitor` holds `weak` ref back via `MicMonitorDelegate`. `applicationDidFinishLaunching` calls `start()`; `applicationWillTerminate` calls `stop()` (sub-agent catch in `180c0b2`, smoke-gate verified at Cmd+Q with `SessionCoordinator stopping` → `MicMonitor stopping`). Idempotency mirrors M2.1.
+
+7. **Defensive duplicate-activation guard at the coordinator level.** `micActivated()` while already `.active` is a no-op (in addition to `MicMonitor`'s own deduplication). Sub-agent caught the missing test; added in `180c0b2`.
+
+### Procedural lessons
+
+1. **"Stuck for hours" diagnosis order.** When an agent appears stuck, the first question is "what does the test runner status say and what's at the breakpoint" — not "is this a deadlock." The (lldb) prompt + spinning chat panel pattern looked like a deadlock to the architect; was actually a clean `Fatal error` trap waiting at a debugger breakpoint with the chat panel still rendering test result streams. Pattern-matching to the wrong remedy cost cycles. Captured for future reference.
+
+2. **Console.app is not the right default for `os.Logger` smoke gates.** Two failure modes: (a) macOS suppresses `.debug` and `.info` log levels by default — needs Action menu toggles to surface them; (b) the structured filter syntax `subsystem:X category:Y` parses inconsistently when pasted, often only the first key:value becomes a chip. Xcode's debug area shows `os.Logger` output unfiltered with zero setup, and the user had already used it successfully for M2.1. M2.5 prompt and forward default to Xcode's debug area; mention Console.app as the secondary path with the Action-menu toggle warning if needed.
+
+3. **First-review architect discipline.** Architect's first review of the final status report missed several Definition-of-Done items the prompt required. The agent's structural code-presence section masquerading as the self-review checklist was not a strict 14-item march, and the architect didn't catch it on first read. Caught on the follow-up prompt that asked for the missing items explicitly. Sharper first read needed; the prompt's checklist is the spec, march it item-by-item.
+
+4. **Verbatim sub-agent reporting format works.** The 13-note breakdown (8 PASS, 2 ADDRESSED with commit refs, 3 ACCEPTED with rationale paragraphs) is exactly the shape Session 016's tightening was after. Each note is traceable; nothing buried in a one-line summary. Lock as the standard format for all future high-risk modules.
+
+5. **Architect-conversation-per-Phase, agent-session-per-module split (locked).** This conversation continues through M2.5 / M2.6 / M2.7. Agent gets a fresh implementation slate per module; architect keeps the Phase 1 conventions and the M2.x lessons hot in context across the whole phase. Captured as the working cadence.
+
+### Module summary
+
+| Module | Goal | Outcome | Tag |
+|---|---|---|---|
+| **M2.3** | `SessionCoordinator` skeleton: hybrid consumer interface, gate on `coachingEnabled`, immediate-termination pause-mid-session, in-memory session state, lifecycle ownership of `MicMonitor` | 15 new tests (103 total in repo), sub-agent review pass with 13 notes (8 PASS / 2 ADDRESSED / 3 ACCEPTED), 14-step smoke gate plus Cmd+Q termination verified end-to-end | `m2.3-complete` (local on `180c0b2`) |
+
+### Effort accounting
+
+Backlog estimate for M2.3 was 3h. Agent work matched roughly. Architect time was higher than M2.1 — the false-deadlock diagnosis and the Console.app smoke-gate detour cost cycles. Cumulative Phase 2 progress: M2.1 + M2.3 done (~7h estimated), M2.5 / M2.6 / M2.7 remaining (~7h estimated).
+
+### Ups
+
+- Hybrid consumer interface choice was clean on first plan pass. M2.5 and M2.7 needs both accommodated without contortion.
+- Pause-mid-session option (a) confirmed end-to-end via smoke gate, with AC4 (idle-deactivation no-op) confirmed as a side effect.
+- Sub-agent's verbatim-with-disposition format caught two real issues (`applicationWillTerminate` cleanup, defensive duplicate-activation test) that a one-line summary would have missed.
+- 103 tests, lint clean on every commit including the failing-tests commit. Session 016's "lint-clean tests on the failing-tests commit itself" rule landed as intended.
+- Architect-conversation-per-Phase, agent-session-per-module cadence is working — Phase 2 lessons compound across modules without diluting the implementation slate.
+
+### Downs
+
+- Architect's false-deadlock diagnosis cost a round trip. The (lldb) + spinning chat looked like a deadlock; was a normal Fatal error trap at a breakpoint. Pattern-match to wrong remedy.
+- Console.app smoke-gate path was a dead end for the user (DEBUG-level suppression by default, structured filter parsing inconsistency). Xcode's debug area should have been the default from the start.
+- Architect's first read of the final status missed several Definition-of-Done items. Caught on follow-up but a sharper first pass would have closed faster.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry
+- `04_BACKLOG.md` — M2.3 marked `✅ tag m2.3-complete (Session 017)`
+- `03_ARCHITECTURE.md` — §2 `SessionCoordinator` rewritten with M2.3 locked design (hybrid consumer interface, state types, pause-mid-session option a, Combine subscription rationale, same-MainActor-turn delivery contract, lifecycle ownership) and a clear skeleton-vs-full-lifecycle distinction so M3.x / M2.5 / M2.7 modules can see what's done vs deferred
+
+### Next session
+
+- M2.5 (`FloatingPanel` widget): SwiftUI widget bound to `SessionCoordinator.$state` for visibility (active = visible, idle = hidden). Per Phase 2 dynamic placeholder checkpoint in `07_RELEASE_PLAN.md`: shows session timer (`Date.now - startedAt`) and a "speaking detected" placeholder indicator (real audio wiring deferred to M3.1). Subsumes the M2.3 debug scaffolding in `TalkCoachApp.swift` (the `#if DEBUG` Combine sink that logs state transitions — `// MARK:` removal marker already names M2.5 as the migration target). Estimate 4h. Depends on M2.3 (now done).
+- **M2.5 prompt tightenings to bake in:**
+  - Smoke-gate procedure defaults to Xcode's debug area, not Console.app
+  - Sub-agent verbatim-with-disposition reporting format is the standard (lock; do not relitigate)
+  - First-review architect discipline: march the Phase 3 self-review checklist item-by-item; do not accept structural code-presence reviews as a substitute
+
+---
+
+## Session 016 — 2026-05-05 — M2.1 MicMonitor shipped: Core Audio HAL listener, delegate output, log-and-continue HAL robustness
+
+**Format:** Architect-driven module sequencing with the Claude Code agent. M2.1 from green-field to tagged complete in one architect session, ~3 round trips between architect and agent. 19 tests added (18 initial + 1 follow-up), 88 total in repo. Zero lint violations.
+
+### What happened
+
+`MicMonitor` is the first Phase 2 module and the first behavior module of v1 — when this fires, the app stops being plumbing and starts being a product. It listens to Core Audio HAL property changes on the default input device and emits `micActivated()` / `micDeactivated()` to a delegate when `kAudioDevicePropertyDeviceIsRunningSomewhere` flips, with re-attachment when `kAudioHardwarePropertyDefaultInputDevice` changes.
+
+Plan came back clean on the first pass. The agent picked the delegate output surface (over `AsyncStream<MicState>` / `@Published`), correctly noting that M2.3's `SessionCoordinator` is a single-consumer state machine that doesn't benefit from a `Task` loop. The plan also surfaced the asymmetric `start()` semantics that the delegate shape forces: when starting with the device already running, emit `micActivated()` synchronously; when starting with the device inactive, emit nothing — there is no "current state" delegate callback in the protocol. The architect approved and tried to attach two follow-ups to the approval ("inactive-start asserts no delegate call", "removal-comment marker on the `TalkCoachApp.swift` debug scaffolding for M2.3 migration"). Plan mode in Xcode's Claude Code drops straight into implementation after approval — there is no window to inject a follow-up message between architect approval and the agent starting to code. The two architect notes were not delivered. Neither was a blocker — the asymmetric test was correct in the agent's implementation, and the migration marker can be added during the M2.3 prompt by `git grep`. Lesson committed: architectural notes belong in the prompt body, not in the approval. The "no edit-notes after approval" rule in `00_COLLABORATION_INSTRUCTIONS.md` exists precisely for this case.
+
+Implementation came back with 87/87 tests passing, lint clean, sub-agent review delivered as "PASS WITH NOTES — 5 minor non-blocking items" without the verbatim notes. Architect required the verbatim quotes plus item-by-item self-review checklist confirmation before approving the tag. Agent re-reported with notes 1, 2, 4, 5 dispositioned as "accepted as known" and note 3 ("no test for `deinit`-without-`stop()` listener cleanup") deferred to M2.3. Architect reversed the deferral: the original prompt's Test Plan listed `testMicMonitorDeinitRemovesListenersIfStillRunning` explicitly, AC8 named it as the verification path, and the `deinit` code lives in `MicMonitor.swift` regardless of who owns the instance later. Agent added the test in follow-up commit `94094fe` (autoreleasepool + drop reference + assert fake's remove-counters), bringing total to 88/88. Tag `m2.1-complete` lives on `94094fe`, local only.
+
+### Architectural decisions locked
+
+1. **Delegate output for `MicMonitor`.** `MicMonitorDelegate` protocol with `@MainActor` `micActivated()` / `micDeactivated()` over `AsyncStream<MicState>` and `@Published`. Reasons: M2.3 is a single-consumer state machine; delegate gives clearer ownership semantics than a `for await` loop; matches the existing project pattern where Phase 1 modules used direct `@MainActor` method calls rather than streams. The architecture doc's pre-Swift-6 sketch ("`micActivated()`, `micDeactivated()` delegate callbacks") thus reads as the locked design, not a placeholder.
+
+2. **Provider injection mirrors `PermissionStatusProvider` (Convention 6).** `CoreAudioDeviceProvider` protocol; `SystemCoreAudioDeviceProvider` (struct, `Sendable`, all methods `nonisolated`) wraps the HAL APIs; `FakeCoreAudioDeviceProvider` (class, `@unchecked Sendable`) stores handler closures and exposes `simulateIsRunningChange()` / `simulateDefaultDeviceChange()` for synchronous test-driven invocation. Listener handles cross the protocol as opaque `AnyObject?` tokens so the production impl can keep its block + queue pair encapsulated in a `ListenerToken` reference type.
+
+3. **`AudioObjectAddPropertyListenerBlock` over `AudioObjectAddPropertyListener`.** Block API + dedicated serial dispatch queue, then `Task { @MainActor in }` hop on the `MicMonitor` side. Avoids the C function-pointer + `Unmanaged.passUnretained` retention pattern. Convention 2 satisfied: the listener-block closures are defined inside `nonisolated` struct methods, so they cannot inherit MainActor isolation. The Spike #4 runtime-crash analog (`_dispatch_assert_queue_fail`) does not occur.
+
+4. **Asymmetric `start()` and silent `stop()`.** `start()` synchronously emits `micActivated()` if the default device is already running at start time (handles the app-launched-during-Zoom case); emits nothing if inactive. `stop()` does not emit a final `micDeactivated()` — the caller chose to stop. Same-value HAL notifications are deduplicated via `lastKnownRunningState`. Both `start()` and `stop()` are idempotent.
+
+5. **Log-and-continue on HAL listener removal failure.** When the default input device changes mid-session, the production provider's `removeIsRunningListener` call against the old device ID can fail if the device no longer exists. The production impl logs the `OSStatus` and continues. State remains consistent because the `MicMonitor` already has the new device's listener attached by the time it tries to detach the old one. Validated end-to-end during the manual smoke gate (see below).
+
+### Smoke-gate finding worth journaling: Zoom aggregate-device churn
+
+S3.2 of the manual smoke gate (Zoom join → device change → Zoom leave) surfaced this sequence:
+
+- App running, Voice Memos active on built-in device 87 → `MicMonitor` reports `micActivated`.
+- User joins Zoom → Zoom creates aggregate device 156, default input flips to 156. `MicMonitor` detaches from 87, attaches to 156, emits `micDeactivated` (156 has no client running yet).
+- User leaves Zoom → Zoom destroys device 156, default input flips back to 87. `MicMonitor` tries to detach from 156, gets `AudioObjectRemovePropertyListenerBlock: no object with given ID 156` and `Failed to remove IsRunning listener: OSStatus 560947818` (`kAudioHardwareBadObjectError`).
+- Provider's log-and-continue path absorbs the error. `MicMonitor` attaches to 87, picks up the active state correctly. Subsequent on/off cycles on 87 work normally.
+
+This is a different flavor of churn than Spike #4 documented. S4 was about `AVAudioEngineConfigurationChange` — the engine stops, you re-prepare and re-tap. At the HAL level, the device itself can vanish out from under the listener handle. The two facts compose for M3.1 (`AudioPipeline`): Zoom can both flip the default input device AND destroy the previous default device, in any order, mid-session. The recovery story for M3.1 needs to handle both signals. Recorded in `03_ARCHITECTURE.md` §1 as an inheritance note for M3.1. Not promoted to a `CLAUDE.md` project-wide convention — one observation, one module's concern; if a second Phase 3 module wants the same log-and-continue posture, we generalize.
+
+### Procedural lessons
+
+1. **Architectural notes belong in the prompt body, not in the approval.** Plan mode in Claude Code drops straight into implementation after approval — there is no window to inject a follow-up. Both notes the architect added to the M2.1 approval (asymmetric-test framing, removal-comment marker) were not delivered. Neither was a blocker, but the rule from `00_COLLABORATION_INSTRUCTIONS.md` ("never send the agent edit-notes, patches, or 'apply these changes to your last plan' instructions") covers exactly this case. Future module prompts must include all such notes in the prompt body before plan mode runs.
+
+2. **SwiftLint-clean tests are a precondition of the failing-tests commit, not a patch landed between TDD commits.** The agent committed failing tests at `e6acf7d`, then noticed a `large_tuple` violation in `makeSUT()`'s tuple return and refactored to instance properties between commits. The refactor was structural — no assertion weakened — but it is a procedural slip. The intent of "no tests modified after the initial commit" is to prevent assertion weakening, and the agent honored that intent. For Phase 2+, prompts will require `swiftlint --strict` to pass on the failing-tests commit itself, so the structural refactor either lands before the first commit or is surfaced explicitly.
+
+3. **Sub-agent verdict requires verbatim notes, not a one-line summary.** Agent's first status report said "PASS WITH NOTES — 5 minor non-blocking items, no blockers." The architect requested the verbatim notes; on reading them, one of the five (no `deinit` test) was actually a coverage gap in the prompt's Test Plan — not a non-blocker. A one-line summary would have shipped that gap. The original prompt's instruction ("quote the sub-agent's verdict") needs to be tightened to "quote each note verbatim with the agent's per-note disposition." Lands in the M2.3 prompt and forward.
+
+### Module summary
+
+| Module | Goal | Outcome | Tag |
+|---|---|---|---|
+| **M2.1** | `MicMonitor`: Core Audio HAL listener for default-input running state, delegate output, provider injection, deinit cleanup, idempotent start/stop | 19 tests (18 initial + 1 follow-up), 88 total in repo, sub-agent review pass with 5 notes (4 accepted as known, 1 reversed → test added in `94094fe`), Zoom aggregate-device HAL behavior characterized | `m2.1-complete` (local on `94094fe`) |
+
+### Effort accounting
+
+Backlog estimate for M2.1 was 4h. Agent time roughly matched — single Phase 1 plan, single Phase 2 implementation, one follow-up commit. Architect time was substantial: ~3 round trips on plan and self-review tightening, plus the workflow-lesson catch on plan-mode approval timing. The Phase 1 finding (architect-time roughly doubles agent-time elapsed effort) holds for Phase 2's first module.
+
+### Ups
+
+- Plan came back clean on the first pass. The seven Phase 1 conventions reduced derivation churn — the agent applied Convention 6 (provider injection) without prompting beyond the prompt's "mirror `PermissionStatusProvider`" reference.
+- Smoke gate caught the Zoom aggregate-device behavior before M3.1. M3.1's recovery posture now has a concrete HAL-level failure mode to design against, not an abstract worry composing only with Spike #4's engine-level signal.
+- 88/88 tests, lint clean, sub-agent review pass on first pass after the verbatim-notes follow-up.
+- The asymmetric `start()` behavior the agent picked is observably correct in smoke logs — no spurious activation between `MicMonitor starting` and the first real transition in S1's inactive-launch run.
+
+### Downs
+
+- Architect violated the "no edit-notes after approval" rule from `00_COLLABORATION_INSTRUCTIONS.md`. Plan-mode timing made delivery impossible; the rule existed precisely for this case. Neither note was a blocker, but the workflow integrity matters.
+- One sub-agent note was incorrectly deferred to M2.3 on first pass and required architect reversal. The prompt's Test Plan explicitly listed `testMicMonitorDeinitRemovesListenersIfStillRunning` and AC8 named it as the verification path — the deferral conflicted with the prompt itself. Caught and corrected, but a sharper agent reading would have flagged the conflict during the first self-review.
+- SwiftLint structural refactor of test helper between TDD commits is a procedural slip. Tightening prompt phrasing for M2.3.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry
+- `04_BACKLOG.md` — M2.1 marked `✅ done` with `m2.1-complete` tag reference
+- `03_ARCHITECTURE.md` — `MicMonitor` description (§1) updated with the locked design (delegate output, provider injection, block API, asymmetric `start()`, silent `stop()`, deduplication, idempotency, log-and-continue posture) and an M3.1 inheritance note for the Zoom aggregate-device HAL composition with Spike #4's `AVAudioEngineConfigurationChange`
+
+### Next session
+
+- M2.3 (`SessionCoordinator` skeleton): receive `MicMonitor` events, manage session state, check `coachingEnabled`. Estimate 3h. Depends on M2.1 (now done). Will own the `MicMonitor` instance going forward — the debug scaffolding currently in `TalkCoachApp.swift` migrates here. M2.3 prompt will require:
+  - Verbatim sub-agent notes in the final status, not a one-line summary, with per-note dispositions
+  - `swiftlint --strict` clean on the failing-tests commit itself
+  - A removal-comment marker pattern for any debug scaffolding so cross-module migrations are trivially identifiable
+
+---
+
+
+## Session 015 — 2026-05-05 — Phase 1 closed: foundation skeleton shipped, seven architectural conventions established
+
+**Format:** Architect-driven six-module sequencing with the Claude Code agent. Phase 1 begin → Phase 1 close in one wall-clock day of architect time, six tagged module completions, 69 unit tests, zero lint violations.
+
+### What happened
+
+Six Phase 1 modules went from green-field to tagged complete in dependency order: M1.1 → M1.2 → M1.4 → M1.3 → M1.5 → M1.6. Each module followed the standard Plan → Implement → Self-review template from `00_COLLABORATION_INSTRUCTIONS.md`, with TDD red-phase commits before implementation, sub-agent independent reviews on the high-risk modules (M1.5 Storage, M1.6 Core), `swiftlint --strict` gates, and a manual smoke gate on M1.6 specifically (because OS-level permission dialogs can't be unit-tested).
+
+The agent improved markedly across the six modules. Early modules (M1.1, M1.2) needed pushback on missing tests, vague self-reviews, and skipped sub-agent review. Mid-phase modules (M1.4) caught real correctness issues during plan review (incorrect `@Published` analysis on `UserDefaults` external writes). M1.3 had a buried architectural deviation (replaced SwiftUI Window scene with AppKit `NSWindow` via `NSHostingController`) that the architect caught in self-review; the agent's reflex on M1.5 was already to surface architectural decisions explicitly. M1.6's plan was the cleanest of the phase — pre-plan research with cited Apple docs, all conventions applied without prompting, sub-agent verdict referenced in the self-review.
+
+A latent bug introduced in M1.3 surfaced during M1.6 manual smoke: `AppDelegate.current` (the typed accessor for reaching the app delegate from anywhere) was implemented as `NSApp.delegate as? AppDelegate`, which always returned nil because `@NSApplicationDelegateAdaptor` registers SwiftUI's own `SwiftUI.AppDelegate` proxy as `NSApp.delegate`. The cast to `TalkCoach.AppDelegate` therefore failed silently. The first-launch auto-open path used `applicationDidFinishLaunching` (which IS our delegate) so it worked, masking the bug. Both M1.3's `Settings…` menu-bar button and M1.6's `Check Permissions` debug button were silently broken. Caught by manual smoke + diagnostic logs. Fixed by replacing the accessor with a static weak reference captured in `init`. One regression test locks the contract.
+
+### The seven Phase 1 architectural conventions
+
+These are the patterns established across the six modules. All are in code and observable. CLAUDE.md is updated to reference them as project-wide rules; future modules in any phase apply them without rederivation.
+
+1. **Info.plist mechanism (M1.1).** The physical file at `Sources/App/Info.plist` is the single source of truth. `GENERATE_INFOPLIST_FILE = YES` + `INFOPLIST_FILE = Sources/App/Info.plist` + zero `INFOPLIST_KEY_*` build settings. New plist keys (usage descriptions, URL schemes, document types) edit the physical file directly. `INFOPLIST_KEY_*` build settings would silently override the file and create a divergence invisible in code review.
+
+2. **Swift 6 strict concurrency convention (M1.2).** The project's build settings include `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. All top-level declarations (free functions, top-level constants, types without explicit isolation) are implicitly `@MainActor`. Patterns: (a) for tests calling into MainActor-isolated code, annotate the test class itself: `@MainActor final class FooTests: XCTestCase`; (b) for pure functions or constants needing both-context callability, mark them explicitly `nonisolated` (or `nonisolated(unsafe)` for `let`s holding non-Sendable types if the value is provably immutable); (c) for `@ModelActor` types, tests stay non-MainActor and use `await` with `async throws` test methods.
+
+3. **AppKit `NSWindow` via `NSHostingController` for LSUIElement Settings (M1.3).** SwiftUI `Window(id:)` + `openWindow` is unreliable in `LSUIElement` apps (`MenuBarExtra`-only apps don't reliably register window scenes). The escape hatch: `NSHostingController(rootView: SettingsView())` wrapped in an `NSWindow` owned by `AppDelegate`. `NSAlert.runModal()` is the correct primitive for app-level alerts (no host window required). The Settings…/About panel are presented from `AppDelegate.current?.openSettings()` and `NSApplication.shared.activate(); NSApplication.shared.orderFrontStandardAboutPanel(nil)` respectively.
+
+4. **`UserDefaults.didChangeNotification` live-sync pattern (M1.4).** Stores backed by `UserDefaults` need to react to external writers (e.g., `@AppStorage` toggles by `MenuBarContent` while a downstream consumer like `SessionCoordinator` reads through `SettingsStore`). Pattern: `NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: defaults, queue: .main) { ... }` registered in `init`, observer token stored as `nonisolated(unsafe) private var observer: (any NSObjectProtocol)?`, removed in `deinit`. An `isSyncing` guard inside the observer block prevents feedback loops between programmatic writes and notification-triggered reads.
+
+5. **`nonisolated Sendable` record types crossing `@ModelActor` boundaries (M1.5).** SwiftData `@Model` types are non-Sendable and cannot cross actor isolation boundaries. The `SessionStore` API exposes `nonisolated struct Sendable` record types (`SessionRecord`, `WPMSampleRecord`, `FillerCountRecord`, `RepeatedPhraseRecord`) as the public surface. `@Model` instances are constructed inside the `ModelActor` from records on `save()` and converted back to records before crossing out on `fetchAll()` / `fetchByDateRange()`. Production callers (M2.7 session persistence, future v2 StatsWindow) work with value-type records, never `@Model`. The transcript-leak guard test scans both the `@Model` class and the record structs for forbidden field names.
+
+6. **`PermissionStatusProvider` protocol injection (M1.6).** System permission APIs (`AVCaptureDevice.requestAccess`, `SFSpeechRecognizer.requestAuthorization`) show real OS dialogs that cannot be unit-tested. Pattern: define a `PermissionStatusProvider: Sendable` protocol; the production implementation is a struct (`SystemPermissionStatusProvider`, stateless, trivially Sendable) that wraps the real APIs via `withCheckedContinuation`; the test implementation is a class (`FakePermissionStatusProvider`, `@unchecked Sendable`) that records calls and returns configurable values. The pattern generalizes to any system-API-wrapping module — Phase 2's `MicMonitor` and Phase 3's `AudioPipeline` will follow the same shape.
+
+7. **`AppDelegate.current` static-reference pattern (M1.3 + M1.6 fix).** `NSApp.delegate as? AppDelegate` returns nil when `@NSApplicationDelegateAdaptor` is in use, because SwiftUI registers its own `SwiftUI.AppDelegate` proxy. The reliable accessor: `static private(set) weak var current: AppDelegate?` set to `self` in `override init() { super.init(); AppDelegate.current = self }`. Locked by `testAppDelegateCurrentIsSetAfterInit` in `MenuBarTests.swift`. This unblocks any code that needs to reach the AppDelegate from anywhere — settings window opening, alert presentation, future module hooks.
+
+### Module-by-module summary
+
+| Module | Goal | Outcome | Tag |
+|---|---|---|---|
+| **M1.1** | Xcode project setup, source-tree restructure, entitlements, Info.plist, build settings, Logger, build-health tests | 11 tests, source tree matches `CLAUDE.md` layout, Info.plist mechanism convention established. Sub-agent review pass. | `m1.1-complete` |
+| **M1.2** | `MenuBarExtra` with About / Pause-Resume Coaching / Settings… / Quit, `@AppStorage("coachingEnabled")` key contract with M1.4 | 5 tests, manual smoke pass, Swift 6 strict concurrency convention surfaced (`nonisolated` for test-callable top-level declarations) | `m1.2-complete` |
+| **M1.4** | `SettingsStore` `@MainActor` `ObservableObject` wrapping injectable `UserDefaults`, seven properties with documented defaults, live-sync via `UserDefaults.didChangeNotification` | 14 tests including external-write live-sync verification, `isSyncing` guard against feedback loops | `m1.4-complete` |
+| **M1.3** | Settings window with language picker (50 locales, max-2 selectable, system-locale silent commit on first launch), backend size labels, placeholder Speaking Pace and Filler Words sections | 13 tests, `LocaleRegistry` with 50 entries, AppKit `NSHostingController` window owned by `AppDelegate` (SwiftUI Window scene proved unreliable in LSUIElement context) | `m1.3-complete` |
+| **M1.5** | SwiftData `Session` schema (no transcripts, matches spec exactly), `VersionedSchema` with empty `MigrationPlanV1`, `@ModelActor` `SessionStore` with `save` / `fetchAll` / `fetchByDateRange` / `delete`, sandboxed-aware storage path | 14 tests including `testNoTranscriptFieldOnAnyRecordType` covering both `@Model` and record types, sub-agent review pass | `m1.5-complete` |
+| **M1.6** | `PermissionManager` with mic-first / speech-second flow, `NSAlert` denied path with Open System Settings deep link, `PermissionStatusProvider` injection for testability, `#if DEBUG`-guarded smoke menu item | 12 tests + manual three-run smoke verified (granted, denied/restored), sub-agent review pass, `AppDelegate.current` SwiftUI-proxy bug discovered and fixed | `m1.6-complete` |
+
+Total: **69 tests passing, 0 violations across 19+ files, 6 module-completion tags pushed.**
+
+### Per-module manual smoke gates (and what they caught)
+
+Three of the six modules required manual smoke verification because their behavior depended on OS-level interactions that unit tests with mocked dependencies cannot exercise:
+
+- **M1.2 manual smoke:** confirmed menu bar item appearance, About panel visible in `LSUIElement` context (`NSApplication.shared.activate()` is required), Pause/Resume label flips, Settings… opens an empty placeholder window. Smoke caught nothing — implementation matched plan.
+- **M1.3 manual smoke:** confirmed first-launch Settings auto-open with system-locale silent commit (`declaredLocales == ["en_US"]`), repeat launch does not re-open, `Settings…` from menu bar opens on demand, max-2 selection enforced (third row disabled). Smoke confirmed the `.environmentObject` injection path works for both menu bar and AppKit-hosted SwiftUI views.
+- **M1.6 manual smoke:** **caught the `AppDelegate.current` SwiftUI-proxy bug.** Three-run flow (fresh grant / denied / restored) executed correctly only after the static-reference fix landed. Smoke also confirmed M1.3's `Settings…` from menu bar had been silently broken since M1.3 ship — first-launch auto-open worked because it used `applicationDidFinishLaunching` directly, but menu-bar-triggered `openSettings()` always failed. M1.6's fix repaired both call sites.
+
+The lesson is durable: every phase that wraps OS-level integrations (audio, speech, permissions, window management, system events) needs a manual smoke gate before tagging. Mocked unit tests verify *logic*; manual smoke verifies *wiring*. Phase 2 (`MicMonitor`) and Phase 3 (`AudioPipeline`, `SpeechAnalyzer`, `ParakeetTranscriberBackend`) will have similar gates — the prompts will require them explicitly.
+
+### Process improvements committed across the phase
+
+- **Module-completion tags.** Starting at M1.3, each module ends with `git tag -a m1.x-complete -m "..."` push. M1.5 and M1.6 each used `git tag -fa` to update the message after follow-up tightening — that's fine when the tag hasn't been consumed by a downstream tag yet. Recovery surface stays clean.
+- **Sub-agent independent review** required for `Sources/Storage/` and `Sources/Core/` modules per `CLAUDE.md`'s high-risk list. Performed on M1.5 and M1.6. Caught one minor coverage gap in M1.6 (speech `.restricted` test missing) which the agent added before declaring done.
+- **Conventions block in module prompts.** Starting with the M1.4 prompt (delivered after M1.2 closed), each subsequent module's prompt opens with a "Project conventions established in earlier Phase 1 modules" section enumerating the five-then-six-then-seven patterns. Saves the agent from rederiving them and prevents drift. Future-phase prompts continue this — Phase 2's M2.1 prompt will open with the seven conventions referenced as project-wide rules in `CLAUDE.md`.
+- **Diagnostic loop on smoke failure.** When M1.6 smoke surfaced the `AppDelegate.current` bug, the architect/agent loop was: diagnostic log → identify nil branch → granular log → identify proxy class → write fix → verify smoke. Three round trips, no shotgun debugging. The pattern: never guess; instrument, observe, fix.
+
+### Effort accounting
+
+`04_BACKLOG.md`'s Phase 1 estimate was ~14 hours of focused effort. Actual elapsed time is hard to measure (work happened across an architect-led wall-clock day with frequent task switching and the agent doing the heavy lifting), but the agent's work is consistent with the estimate — six modules, average ~2h each in agent time. The architect's overhead (writing prompts, reviewing plans, reviewing self-reviews, catching deviations, writing close-outs) was substantial — perhaps another ~6h on top — and that overhead is not in the backlog estimate. Worth noting for calendar planning: the 14h backlog number is agent-time; architect-time roughly doubles the elapsed effort.
+
+### Ups
+
+- Phase 1 closed in one architect-led work day. Backlog estimate held.
+- Seven architectural conventions surfaced and codified. Phase 2+ inherits a working language for Swift 6 + SwiftUI + AppKit + sandboxing under macOS 26.
+- The `AppDelegate.current` bug was caught at Phase 1 close, not in production. Two latent bug surfaces (M1.3's menu-bar Settings…, M1.6's debug menu item) repaired together.
+- Agent's reflex matured visibly — by M1.5 / M1.6 the agent was surfacing architectural decisions explicitly, citing Apple docs in pre-plan research, and proposing sub-agent review without prompting. The Phase 1 retrospective they delivered at M1.6 close was substantive, not boilerplate.
+- 69 tests passing, lint clean, `phase-1-complete` ready to tag.
+
+### Downs
+
+- The architect spent meaningful time on prompt revisions when the agent's self-reviews skipped Definition-of-Done items (M1.5) or buried architectural deviations (M1.3). The pattern stopped by M1.6 but cost ~3 round trips earlier in the phase. Worth it; the conventions established also prevent the same friction in Phase 2+.
+- The `AppDelegate.current` bug was preventable. The architect's M1.3 close-out asked the agent to lock the contract surface with a test (`testSettingsWindowOpenedViaAppDelegateOpenSettings`), which the agent added. But that test calls `openSettings()` directly on a freshly-constructed `AppDelegate` instance — bypassing `AppDelegate.current` and `NSApp.delegate` entirely. The test never exercised the actual production code path (menu-bar click → `AppDelegate.current?.openSettings()`). The lesson: contract tests must exercise the actual call site, not a synthetic shortcut. Recorded as a phase 2 prompt note: every contract test for an "accessor" must call the accessor, not the underlying method directly.
+- Manual smoke is irreplaceable for OS integration but it's also slow. Phase 1's three smoke gates each cost ~10 minutes of round-trip time (rebuild, click, observe, report). Phase 3's audio/speech testing will be much heavier — real Zoom call + real recording + real backend behavior. The release plan (`07_RELEASE_PLAN.md`) already accounts for this with the Phase 3 debug HUD checkpoint.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry
+- `04_BACKLOG.md` — Phase 1 modules marked `✅ done`; total hour count finalized at ~14h matching estimate
+- `03_ARCHITECTURE.md` — `SessionStore` API description updated to reflect `SessionRecord` / `WPMSampleRecord` / `FillerCountRecord` / `RepeatedPhraseRecord` Sendable boundary types; AppDelegate ownership of Settings window noted; `AppDelegate.current` static-reference accessor pattern documented; `UserDefaults.didChangeNotification` live-sync noted on the `SettingsStore` row of the Settings table
+- `CLAUDE.md` — new "Project conventions (Phase 1)" section enumerating the seven patterns as Always-do rules; the existing audio-tap-closure note from S4 (Session 008) stays as a separate item
+
+### Next session
+
+- Architect delivers the Phase 1 close-out batch: this journal entry + updated `04_BACKLOG.md` + updated `03_ARCHITECTURE.md` + updated `CLAUDE.md` + `phase-1-complete` tag instruction.
+- User starts a fresh conversation for Phase 2. Standard reading-order paste-in (which now includes `07_RELEASE_PLAN.md`) gives the new conversation the seven conventions, the closed-out Phase 1 state, and the Phase 2 entry point.
+- Phase 2 entry point: M2.1 (`MicMonitor`) — Core Audio HAL listener for microphone running state. Depends on S4 (passed Session 008). The first true behavior module — clicking play on this is the moment the app stops being plumbing and starts being a product, in scaffolding form.
+
+---
+
+## Session 014 — 2026-05-04 — Path C: docs win on scope, design wins on widget visuals; aggressive v1 scope reduction
+
+**Format:** Architect-driven scope decision. No agent execution. No spike.
+
+### What happened
+
+Reviewed a divergence between two product artifacts in the project: a `/design` package (widget mockups + UX prototype) and the locked `/docs` (this project's source of truth, Sessions 001–013). The two had ended up with materially incompatible product specs — `/design` had a narrower scope and simpler interaction model than `/docs` had grown into through Sessions 008–013. Three reconciliation paths considered:
+
+- **Path A — design wins on everything:** rewrite docs to match `/design`'s smaller scope. Loses bilingual/multilingual support, loses validated architecture, loses Sessions 008–013 work. Rejected.
+- **Path B — docs win on everything:** treat `/design` as a sketch, ignore. Preserves all decisions but locks v1 at 201–215h, which the user judged unacceptable for a personal-use app shipped after a 2-week self-trial. Rejected.
+- **Path C — docs win on scope, design wins on widget visuals:** keep architecture and language model from docs; adopt design's tighter widget visuals as the M5.x target; aggressively defer non-essential v1 scope to v1.x or v2. **Selected.**
+
+### The seven Session 014 scope decisions
+
+1. **Settings opens automatically on first launch** (no separate onboarding screen). M1.7 (dedicated onboarding picker) dropped. The Settings sheet contains the language picker; on first launch, `hasCompletedOnboarding == false` triggers automatic Settings open. The user picks their declared language(s) there, mic permission grants on first session start. Two user actions total — FM3 still satisfied.
+2. **Widget hides on mic-off — no persistent state, no close affordance.** Reverts the Session 013 "persistent + dismissable" decision. Widget is visible during mic-active, fades out after the existing 5s hold on mic-off. No "Listening…" placeholder for silence-during-active-mic, no close-affordance, no confirmation dialog, no panel state machine. Webinars / no-speech meetings are tolerated — the widget will sit there showing no values for the duration. (Without the per-app blocklist, this is the trade-off; see decision 6.)
+3. **Menu bar dropdown: About, Pause Coaching, Settings…, Quit.** Dropped from the dropdown: Open Stats… (Phase 6 → v2), language-override submenu (M7.2 → v2). The Coaching ON/OFF toggle is reframed as "Pause Coaching" — when paused, `MicMonitor` activations don't trigger sessions until the user un-pauses. `MenuBarUI` becomes a 4-item static menu.
+4. **Multi-language stays (1–2 from ~50 locales). Settings has download-confirmation prompts before any model fetch** (Apple ~150 MB, Parakeet ~1.2 GB). Replaces the Session 013 "silent download with widget toast" design — the user opts in to the cost at the moment of language selection in Settings. M3.6 reorients around in-Settings download flow with progress UI rather than widget toasts.
+5. **Per-language filler dictionary editable in Settings** (M4.3). No scope change — already in v1 plan. Confirmed.
+6. **Deferred scope:**
+   - **`MonologueDetector` and dependents → v1.x.** M4.5 (detector), M4.5a (Silero contingent), M5.6 (widget rendering), M7.4 presentation-mode toggle, S11 (VAD-source spike). All preserved as v1.x specs in the relevant docs — no rework needed when v1.x kicks off.
+   - **Per-app blocklist → v2.** M2.2 (activating-app identification, S1 spike's target consumer) and M2.4 (blocklist UI) deferred. Without the blocklist, Voice Memos / dictation / and similar mic-using apps will trigger the widget. Acceptable for personal-use v1 (the user can manually pause via menu bar). S1 (P2) becomes v2-bound.
+   - **StatsWindow / history charts → v2.** Entire Phase 6 (M6.1–M6.5) deferred. `SessionStore` still persists session metrics in v1 (forward-compat — when v2 ships StatsWindow, historical data is already there). Stats data is collected but not displayed in v1.
+   - **Hotkey (Cmd+Shift+M) → v2.** M7.1 deferred. Pause Coaching via menu bar replaces it.
+   - **Localized UI strings → v1.x.** M7.9 deferred. App ships English-only UI. Transcription still runs in declared languages — only the chrome (Settings labels, menu items) is English-only.
+   - **Manual language override in menu bar → v2.** M7.2 deferred (implicit from the menu-bar simplification in decision 3).
+7. **v1 estimate: 201–215h → ~121–129h** (~40% reduction).
+
+### What v1 still includes
+
+- **Phase 0:** all spikes that already passed (S2, S4, S6, S7, S8, S10) — no rework. S1 and S11 deferred (see decision 6).
+- **Phase 1 (foundation, ~11h):** skeleton app, `MenuBarExtra` skeleton, empty Settings, SwiftData schema, permissions, plus first-launch Settings auto-open trigger. M1.7 onboarding picker dropped — its work folds into M1.4 (Settings + first-launch behavior).
+- **Phase 2 (mic + lifecycle, simplified, ~15h):** `MicMonitor`, `SessionCoordinator`, simplified `FloatingPanel` (visible-during-mic-active, no state machine, no close affordance), per-display position memory, session persistence.
+- **Phase 3 (audio + transcription, ~37–43h):** Architecture Y unchanged. `AudioPipeline`, `LanguageDetector` (script-aware hybrid), `TranscriptionEngine` routing layer, `AppleTranscriberBackend`, `ParakeetTranscriberBackend`, in-Settings model download flow with confirmation, mid-session swap (M3.8) retained.
+- **Phase 4 (analyzer, ~17h):** WPM, fillers, repeated phrases, EffectiveSpeakingDuration, session aggregation. **No `MonologueDetector`** — that and its session-schema field move to v1.x.
+- **Phase 5 (widget, ~21h):** WPM display, color band, arrow, filler list, drag-to-move, per-display position, fade in/out, Liquid Glass material. **No monologue indicator.** Visual target = `/design` package mockups.
+- **Phase 7 (polish, ~23h):** Settings sheet (filler editor, WPM band slider, per-language model download confirmation, Pause Coaching), accessibility audit, dark/light, perf re-pass, notarization. **No hotkey, no localization, no manual language override, no presentation-mode toggle.**
+
+### What v1 still drops if time pressure later
+
+The Phase 7 "drop first" list from `04_BACKLOG.md` is unchanged in spirit but the modules at the top (M7.9 localization, M6.5 stats date filter) are already deferred under decision 6. Remaining time-pressure drops if needed: M3.8 (mid-session language swap → "first session per language is wrong, then sticky"), M5.8 (drag-to-move → pin to top-right), M2.6 (per-display position memory). These remain in v1 by default; re-evaluate at end of Phase 5.
+
+### Why this is defensible
+
+- **Reversibility.** Every deferred feature has a documented v1.x or v2 spec already in place. `MonologueDetector` design from Session 013 is preserved; `StatsWindow` design from Session 001 is preserved; blocklist design is preserved. v1.x kickoff is a pickup, not a re-derivation.
+- **The architecture is unchanged.** Architecture Y, language detector, transcription engine, audio pipeline — all unaffected. Spike validation results (S2, S4, S6, S7, S8, S10) all still apply.
+- **The shipping bar moved deliberately.** From "ready for public release" to "ready for personal use, 2-week self-validation, then polish for public release." Sessions 001–013 had been creeping toward over-ambitious v1 scope; this rescope acknowledges that and resets the bar.
+- **Calendar fits human reality.** At 20h/week, ~6–7 weeks instead of 11–13. At 8h/week, ~4 months instead of 6–7. Both numbers are achievable for a side project.
+- **The cuts target features the user can live without for 2 weeks.** Stats data collected but not shown is fine (the user knows roughly how their meetings went). Monologue detection is a power-user feature that the user can self-monitor for two weeks. Blocklist matters mostly for non-meeting mic activations — the personal-use audience of one can manually pause.
+
+### Why "design is visual reference only"
+
+The `/design` package's widget mockups are adopted as the visual target for M5.x — Liquid Glass treatment, layout proportions, typography choices, color band rendering. The `/design` package's *interaction model*, however, is NOT adopted: it had a smaller scope (single language, no language detection, simpler menu bar) that conflicts with the validated architecture. The docs (this project) win on what the app does; `/design` wins on how the widget looks. Codified in `CLAUDE.md` as a top-level rule: "consult `/design` for widget visual specs only; for behavior, scope, and architecture, the canonical source is `/docs`."
+
+### What changed in the docs
+
+- `01_PROJECT_JOURNAL.md` — this entry
+- `02_PRODUCT_SPEC.md` — features list shrunk (no monologue, no stats, no blocklist, no hotkey); FM3 reworded for "Settings auto-opens on first launch"; widget persistence section reverted to "fades out 5s after mic-off"; download flow reworded for in-Settings confirmation; non-goals updated with v1.x / v2 labels for monologue, stats, blocklist, hotkey, localization, manual language override
+- `03_ARCHITECTURE.md` — `MonologueDetector` removed (subsection moved to a v1.x backlog appendix); `StatsWindow` module removed (kept as a v2 reference); `MenuBarUI` items reduced to About / Pause Coaching / Settings… / Quit; `FloatingPanel` panel state machine removed; `WidgetViewModel` monologue and presentation-state fields removed; data flow simplified; open questions table updated (S11 → deferred to v1.x; S1 → v2)
+- `04_BACKLOG.md` — Phase 0: S11 marked ⏸ deferred to v1.x, S1 marked ⏸ deferred to v2. Phase 1: M1.7 removed (folded into M1.4). Phase 2: M2.2, M2.4 removed; M2.5 simplified back to ~5h. Phase 4: M4.5, M4.5a, M4.6 monologue cleanup removed. Phase 5: M5.6 removed. Phase 6: entire phase removed (kept as v2 backlog). Phase 7: M7.1, M7.2, M7.9 removed; M7.4 simplified. Total: ~121–129h.
+- `05_SPIKES.md` — S11 status changed to ⏸ deferred to v1.x (spec preserved verbatim). S1 status changed to ⏸ deferred to v2 (spec preserved). S12 still parked for v2. S5 still deferred to v1.x.
+- `CLAUDE.md` — `Sources/` tree updated to drop `Stats/`; design-is-visual-only rule added; module list reflects v1 scope only
+
+### Ups
+
+- Decision is reversible — every deferred feature has a documented v1.x or v2 spec already in place. No architecture rework is required when v1.x kicks off.
+- The 40% effort reduction lets v1 actually ship in a reasonable calendar window. At 20h/week, ~6–7 weeks instead of 11–13. The previous scope had been quietly drifting toward "9 months of side-project hours," which is a graveyard for personal projects.
+- `/design`'s widget visuals are higher fidelity than the abstract criteria the docs had specified for M5.x. The widget work will benefit from concrete mockups instead of designed-in-Xcode iteration.
+- The Settings-auto-opens-on-first-launch flow is materially better UX than a dedicated onboarding screen — users associate Settings with "where to configure things," and the first-launch trigger educates them about the Settings location for free. M1.4 absorbs the first-launch trigger logic without much added complexity.
+
+### Downs
+
+- A lot of Sessions 008–013 architect work moves from "v1 deliverable" to "v1.x or v2 backlog item." S11 was specced and never run; M4.5 was carefully designed and never coded; M6.x charts were planned. None of that work is wasted (specs are preserved verbatim), but the user invested architect time on features that are no longer first-priority.
+- The v1 user experience without monologue detection or stats is materially less differentiated. The strong v1 hook is now WPM + fillers + repeated phrases. Still a real product, but tighter than the Session 013 vision suggested.
+- Settings opening on first launch creates a small UX risk: a user who dismisses Settings without picking a language would land in a no-op state. Need to ensure either (a) Settings cannot be dismissed without picking a language, or (b) the menu bar UI clearly flags "no language picked — open Settings." Resolve in M1.4 / M7.4 design.
+- Widget without the close-affordance means users in a webinar / listen-only meeting will see a no-values widget for the duration. Without the blocklist as an out, this is a real friction point for non-speaking meetings. v1 acceptable; v1.x should restore at least a "minimize to dot" affordance.
+
+### Edge-case modules retained in v1 by default
+
+The following were not explicitly named in Session 014 but stay in v1 unless a future session decides otherwise:
+
+- **M3.8 mid-session language re-detection / swap** (4h) — relies on Session 010's validated language-detector design; useful when N=2 declared and the first 5s of detection was wrong. Stays in v1.
+- **M5.8 drag-to-move with snap-to-screen-edge** (3h) — quality-of-life that aligns with the `/design` widget polish target. Stays.
+- **M2.6 per-display widget position memory** (2h) — small effort, real value for multi-monitor users (which the architect is). Stays.
+
+If time pressure surfaces later, these are the v1 → v1.x deferral candidates in the order listed.
+
+### Next session
+
+- Architect delivers the remaining 4 doc revisions + `CLAUDE.md` update as a batch.
+- After that lands, architect writes the Phase 1 prompt for **M1.1 (Xcode project setup)**, structured per the 3-phase Plan → Implement → Self-review template in `00_COLLABORATION_INSTRUCTIONS.md`. M1.1 is the Phase 1 entry point; M1.2 (App lifecycle) follows in a separate prompt.
+- Phase 0 is effectively closed for v1: S1 and S11 are both deferred. No spike work blocks Phase 1.
 
 ---
 
