@@ -13,7 +13,15 @@ opt_in_rules:
 excluded:
   - .build
   - DerivedData
-  - WPMSpike/recordings
+  - WPMSpike
+  - ParakeetSpike
+  - MicCoexistSpike
+  - LangDetectSpike
+  - PowerSpike
+  - TokenStabilitySpike
+  - ShoutingSpike
+  - design
+  - docs/design/old
 
 reporter: "xcode"
 
