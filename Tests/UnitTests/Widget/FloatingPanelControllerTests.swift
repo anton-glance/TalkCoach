@@ -74,7 +74,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut = FloatingPanelController(
             sessionCoordinator: coordinator,
             alertPresenter: fakeAlert,
-            hideScheduler: fakeScheduler
+            hideScheduler: fakeScheduler,
+            settingsStore: settingsStore
         )
     }
 

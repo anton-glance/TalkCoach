@@ -17,6 +17,8 @@ final class FloatingPanelController {
     private let sessionCoordinator: SessionCoordinator
     private let alertPresenter: AlertPresenter
     private let hideScheduler: HideScheduler
+    private let screenProvider: ScreenProvider
+    private let settingsStore: SettingsStore
     private let viewModel = WidgetViewModel()
 
     private var panel: CoachingPanel?
@@ -25,15 +27,20 @@ final class FloatingPanelController {
     private var isStarted = false
 
     var isShowingPanel: Bool { panel?.isVisible ?? false }
+    var currentPanelFrame: NSRect? { panel?.frame }
 
     init(
         sessionCoordinator: SessionCoordinator,
         alertPresenter: AlertPresenter = SystemAlertPresenter(),
-        hideScheduler: HideScheduler = DispatchHideScheduler()
+        hideScheduler: HideScheduler = DispatchHideScheduler(),
+        screenProvider: ScreenProvider = SystemScreenProvider(),
+        settingsStore: SettingsStore = SettingsStore()
     ) {
         self.sessionCoordinator = sessionCoordinator
         self.alertPresenter = alertPresenter
         self.hideScheduler = hideScheduler
+        self.screenProvider = screenProvider
+        self.settingsStore = settingsStore
     }
 
     func start() {
@@ -162,6 +169,9 @@ final class FloatingPanelController {
         let xOrigin = visibleFrame.maxX - 144 - 16
         let yOrigin = visibleFrame.maxY - 144 - 16
         return NSRect(x: xOrigin, y: yOrigin, width: 144, height: 144)
+    }
+
+    func handlePanelDragEnd(panelFrame: NSRect) {
     }
 
     // MARK: - Hide Timer

@@ -25,7 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsStore: settingsStore
         )
         floatingPanelController = FloatingPanelController(
-            sessionCoordinator: sessionCoordinator
+            sessionCoordinator: sessionCoordinator,
+            settingsStore: settingsStore
         )
     }
 

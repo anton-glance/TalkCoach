@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OSLog
 
 @MainActor
 final class SettingsStore: ObservableObject {
@@ -80,7 +81,12 @@ final class SettingsStore: ObservableObject {
         self.fillerDict = userDefaults.object(forKey: Keys.fillerDict) as? [String: [String]] ?? [:]
 
         if let data = userDefaults.data(forKey: Keys.widgetPositionByDisplay) {
-            self.widgetPositionByDisplay = Self.decodePositions(data)
+            if let decoded = Self.decodePositions(data) {
+                self.widgetPositionByDisplay = decoded
+            } else {
+                Logger.settings.warning("Corrupt widgetPositionByDisplay data — resetting to empty")
+                self.widgetPositionByDisplay = [:]
+            }
         } else {
             self.widgetPositionByDisplay = [:]
         }
@@ -101,6 +107,16 @@ final class SettingsStore: ObservableObject {
         if let observer {
             NotificationCenter.default.removeObserver(observer)
         }
+    }
+
+    // MARK: - Widget position
+
+    func position(for screenName: String) -> CGPoint? {
+        widgetPositionByDisplay[screenName]
+    }
+
+    func setPosition(_ point: CGPoint, for screenName: String) {
+        widgetPositionByDisplay[screenName] = point
     }
 
     // MARK: - Locale management
@@ -149,12 +165,20 @@ final class SettingsStore: ObservableObject {
         let newFillers = userDefaults.object(forKey: Keys.fillerDict) as? [String: [String]] ?? [:]
         if newFillers != fillerDict { fillerDict = newFillers }
 
-        if let data = userDefaults.data(forKey: Keys.widgetPositionByDisplay) {
-            let newPositions = Self.decodePositions(data)
-            if newPositions != widgetPositionByDisplay { widgetPositionByDisplay = newPositions }
-        } else if !widgetPositionByDisplay.isEmpty {
-            widgetPositionByDisplay = [:]
+        syncPositionsFromDefaults()
+    }
+
+    private func syncPositionsFromDefaults() {
+        guard let data = userDefaults.data(forKey: Keys.widgetPositionByDisplay) else {
+            if !widgetPositionByDisplay.isEmpty { widgetPositionByDisplay = [:] }
+            return
         }
+        guard let newPositions = Self.decodePositions(data) else {
+            Logger.settings.warning("Corrupt widgetPositionByDisplay data during sync — resetting to empty")
+            if !widgetPositionByDisplay.isEmpty { widgetPositionByDisplay = [:] }
+            return
+        }
+        if newPositions != widgetPositionByDisplay { widgetPositionByDisplay = newPositions }
     }
 
     private nonisolated static func encodePositions(_ positions: [String: CGPoint]) -> Data? {
@@ -162,9 +186,9 @@ final class SettingsStore: ObservableObject {
         return try? JSONEncoder().encode(raw)
     }
 
-    private nonisolated static func decodePositions(_ data: Data) -> [String: CGPoint] {
+    private nonisolated static func decodePositions(_ data: Data) -> [String: CGPoint]? {
         guard let raw = try? JSONDecoder().decode([String: [Double]].self, from: data) else {
-            return [:]
+            return nil
         }
         return raw.compactMapValues { arr in
             guard arr.count == 2 else { return nil }
