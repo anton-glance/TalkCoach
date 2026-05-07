@@ -25,19 +25,36 @@ private final class FakeAlertPresenter: AlertPresenter, @unchecked Sendable {
     @MainActor func presentDismissConfirmation() -> Bool { stubbedResult }
 }
 
+private struct FakeSchedulerEntry {
+    let delay: TimeInterval
+    let action: @MainActor @Sendable () -> Void
+    let token: HideSchedulerToken
+}
+
 private final class FakeHideScheduler: HideScheduler, @unchecked Sendable {
-    nonisolated(unsafe) private(set) var scheduledAction: (@MainActor @Sendable () -> Void)?
-    nonisolated(unsafe) private(set) var scheduledDelay: TimeInterval?
+    nonisolated(unsafe) private(set) var entries: [FakeSchedulerEntry] = []
     nonisolated(unsafe) private(set) var cancelCallCount = 0
     @MainActor func schedule(
         delay: TimeInterval, action: @escaping @MainActor @Sendable () -> Void
     ) -> HideSchedulerToken {
-        scheduledDelay = delay
-        scheduledAction = action
-        return HideSchedulerToken()
+        let token = HideSchedulerToken()
+        entries.append(FakeSchedulerEntry(delay: delay, action: action, token: token))
+        return token
     }
-    @MainActor func cancel(_ token: HideSchedulerToken) { cancelCallCount += 1; scheduledAction = nil }
-    @MainActor func fire() { scheduledAction?(); scheduledAction = nil }
+    @MainActor func cancel(_ token: HideSchedulerToken) {
+        cancelCallCount += 1
+        entries.removeAll { $0.token == token }
+    }
+    @MainActor func fireAll() {
+        let pending = entries
+        entries.removeAll()
+        for entry in pending { entry.action() }
+    }
+    @MainActor func fire(delay matching: TimeInterval) {
+        guard let idx = entries.firstIndex(where: { $0.delay == matching }) else { return }
+        let entry = entries.remove(at: idx)
+        entry.action()
+    }
 }
 
 private final class FakeScreenProvider: ScreenProvider, @unchecked Sendable {
@@ -66,6 +83,7 @@ final class FloatingPanelPositionTests: XCTestCase {
 
     private var fake: FakeCoreAudioDeviceProvider!
     private var fakeScreen: FakeScreenProvider!
+    private var fakeScheduler: FakeHideScheduler!
     private var settingsStore: SettingsStore!
     private var defaults: UserDefaults!
     private var coordinator: SessionCoordinator!
@@ -86,12 +104,13 @@ final class FloatingPanelPositionTests: XCTestCase {
         fakeScreen = FakeScreenProvider()
         fakeScreen.stubbedMainScreen = mainScreen ?? Self.builtIn
         fakeScreen.stubbedAllScreens = screens ?? [Self.builtIn]
+        fakeScheduler = FakeHideScheduler()
         let micMonitor = MicMonitor(provider: fake)
         coordinator = SessionCoordinator(micMonitor: micMonitor, settingsStore: settingsStore)
         sut = FloatingPanelController(
             sessionCoordinator: coordinator,
             alertPresenter: FakeAlertPresenter(),
-            hideScheduler: FakeHideScheduler(),
+            hideScheduler: fakeScheduler,
             screenProvider: fakeScreen,
             settingsStore: settingsStore
         )
@@ -288,4 +307,5 @@ final class FloatingPanelPositionTests: XCTestCase {
 
         XCTAssertNil(weakController, "Controller must deallocate after drag-end + stop")
     }
+
 }

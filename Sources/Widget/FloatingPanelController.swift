@@ -32,6 +32,7 @@ final class FloatingPanelController {
 
     var isShowingPanel: Bool { panel?.isVisible ?? false }
     var currentPanelFrame: NSRect? { panel?.frame }
+    var panelWindow: NSPanel? { panel }
 
     init(
         sessionCoordinator: SessionCoordinator,
