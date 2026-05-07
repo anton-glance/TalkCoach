@@ -119,6 +119,12 @@ final class SettingsStore: ObservableObject {
         widgetPositionByDisplay[screenName] = point
     }
 
+    // MARK: - Last-used display
+
+    func lastUsedDisplay() -> String? { nil }
+
+    func setLastUsedDisplay(_ name: String?) {}
+
     // MARK: - Locale management
 
     func toggleLocale(_ identifier: String) {

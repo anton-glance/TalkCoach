@@ -108,4 +108,29 @@ final class SettingsStoreTests: XCTestCase {
 
         XCTAssertFalse(store.coachingEnabled)
     }
+
+    // MARK: - Last-used display
+
+    func testLastUsedDisplayDefaultsToNil() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertNil(store.lastUsedDisplay())
+    }
+
+    func testLastUsedDisplayRoundTrips() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.setLastUsedDisplay("External Monitor")
+        XCTAssertEqual(store.lastUsedDisplay(), "External Monitor")
+    }
+
+    func testLastUsedDisplayPersistsAcrossInstances() {
+        let defaults = makeIsolatedDefaults()
+        let store1 = SettingsStore(userDefaults: defaults)
+        store1.setLastUsedDisplay("External Monitor")
+
+        let store2 = SettingsStore(userDefaults: defaults)
+        XCTAssertEqual(
+            store2.lastUsedDisplay(), "External Monitor",
+            "Value must survive across SettingsStore instances"
+        )
+    }
 }
