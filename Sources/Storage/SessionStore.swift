@@ -30,6 +30,7 @@ actor SessionStore {
                 RepeatedPhrase(phrase: $0.phrase, count: $0.count)
             }
         )
+        session.id = record.id
         modelContext.insert(session)
         try modelContext.save()
     }

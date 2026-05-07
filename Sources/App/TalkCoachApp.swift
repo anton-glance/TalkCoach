@@ -1,5 +1,6 @@
 import AppKit
 import OSLog
+import SwiftData
 import SwiftUI
 
 nonisolated func pauseResumeMenuTitle(coachingEnabled: Bool) -> String {
@@ -13,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let permissionManager = PermissionManager()
     private(set) var sessionCoordinator: SessionCoordinator!
     private(set) var floatingPanelController: FloatingPanelController!
+    private(set) var sessionStore: SessionStore?
     private(set) var settingsWindow: NSWindow?
 
     override init() {
@@ -28,6 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sessionCoordinator: sessionCoordinator,
             settingsStore: settingsStore
         )
+
+        do {
+            let container = try SessionContainerFactory.makeContainer()
+            sessionStore = SessionStore(modelContainer: container)
+        } catch {
+            Logger.session.error("Failed to create SessionStore: \(error)")
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -52,6 +61,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         sessionCoordinator.start()
         floatingPanelController.start()
+
+        if let store = sessionStore {
+            sessionCoordinator.onSessionEnded { ended in
+                let record = SessionRecord.placeholder(from: ended)
+                Task {
+                    do {
+                        try await store.save(record)
+                        Logger.session.info("Persisted session \(ended.id)")
+                    } catch {
+                        Logger.session.error("Failed to persist session \(ended.id): \(error)")
+                    }
+                }
+            }
+
+            #if DEBUG
+            // REMOVE-IN-M5.x: startup session count for smoke testing
+            Task {
+                do {
+                    let count = try await store.fetchAll().count
+                    Logger.session.info("Startup session count: \(count)")
+                } catch {
+                    Logger.session.error("Failed to fetch session count: \(error)")
+                }
+            }
+            #endif
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
