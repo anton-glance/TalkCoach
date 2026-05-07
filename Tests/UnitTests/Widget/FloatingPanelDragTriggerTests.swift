@@ -132,9 +132,6 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
             return XCTFail("Panel must exist after mic activation")
         }
         panel.setFrameOrigin(CGPoint(x: 200, y: 300))
-        NotificationCenter.default.post(
-            name: NSWindow.didMoveNotification, object: panel
-        )
 
         let debounceEntries = fakeScheduler.entries.filter { $0.delay == 0.3 }
         XCTAssertEqual(
@@ -161,17 +158,8 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         let initialCancelCount = fakeScheduler.cancelCallCount
 
         panel.setFrameOrigin(CGPoint(x: 100, y: 100))
-        NotificationCenter.default.post(
-            name: NSWindow.didMoveNotification, object: panel
-        )
         panel.setFrameOrigin(CGPoint(x: 150, y: 150))
-        NotificationCenter.default.post(
-            name: NSWindow.didMoveNotification, object: panel
-        )
         panel.setFrameOrigin(CGPoint(x: 200, y: 300))
-        NotificationCenter.default.post(
-            name: NSWindow.didMoveNotification, object: panel
-        )
 
         let debouncesCanceled = fakeScheduler.cancelCallCount - initialCancelCount
         XCTAssertEqual(
@@ -207,9 +195,6 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.stop()
 
         panel.setFrameOrigin(CGPoint(x: 200, y: 300))
-        NotificationCenter.default.post(
-            name: NSWindow.didMoveNotification, object: panel
-        )
 
         let debounceEntries = fakeScheduler.entries.filter { $0.delay == 0.3 }
         XCTAssertTrue(

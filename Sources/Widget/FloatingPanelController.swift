@@ -28,6 +28,9 @@ final class FloatingPanelController {
     private var panel: CoachingPanel?
     private var stateSubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
+    private var dragDebounceToken: HideSchedulerToken?
+    private var moveObserver: (any NSObjectProtocol)?
+    private var isProgrammaticMove = false
     private var isStarted = false
 
     var isShowingPanel: Bool { panel?.isVisible ?? false }
@@ -66,6 +69,11 @@ final class FloatingPanelController {
         Logger.floatingPanel.info("FloatingPanelController stopping")
 
         stateSubscription = nil
+        if let observer = moveObserver {
+            NotificationCenter.default.removeObserver(observer)
+            moveObserver = nil
+        }
+        cancelPendingDragDebounce()
         cancelPendingHide()
         hidePanel(reason: "lifecycle-stop")
     }
@@ -146,7 +154,9 @@ final class FloatingPanelController {
         panel = thePanel
 
         let frame = frameForShow()
+        isProgrammaticMove = true
         thePanel.setFrame(frame, display: false)
+        isProgrammaticMove = false
         thePanel.orderFrontRegardless()
     }
 
@@ -167,11 +177,17 @@ final class FloatingPanelController {
             }
         )
         hostingView.frame = NSRect(x: 0, y: 0, width: Self.panelSize, height: Self.panelSize)
-        coachingPanel.onDragEnd = { [weak self] in
-            guard let self, let panel = self.panel else { return }
-            self.handlePanelDragEnd(panelFrame: panel.frame)
-        }
         coachingPanel.contentView = hostingView
+        moveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: coachingPanel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.isProgrammaticMove else { return }
+                self.debounceDragSave()
+            }
+        }
         return coachingPanel
     }
 
@@ -244,6 +260,25 @@ final class FloatingPanelController {
             let lhsArea = panelFrame.intersection(lhs.frame).area
             let rhsArea = panelFrame.intersection(rhs.frame).area
             return lhsArea < rhsArea
+        }
+    }
+
+    // MARK: - Drag Debounce
+
+    private func debounceDragSave() {
+        if let token = dragDebounceToken {
+            hideScheduler.cancel(token)
+        }
+        dragDebounceToken = hideScheduler.schedule(delay: 0.3) { [weak self] in
+            guard let self, let panel = self.panel else { return }
+            self.handlePanelDragEnd(panelFrame: panel.frame)
+        }
+    }
+
+    private func cancelPendingDragDebounce() {
+        if let token = dragDebounceToken {
+            hideScheduler.cancel(token)
+            dragDebounceToken = nil
         }
     }
 

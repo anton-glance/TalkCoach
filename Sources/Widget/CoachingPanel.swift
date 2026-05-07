@@ -4,8 +4,6 @@ final class CoachingPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    var onDragEnd: (() -> Void)?
-
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
@@ -19,13 +17,5 @@ final class CoachingPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = false
         isOpaque = false
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let originBefore = frame.origin
-        super.mouseDown(with: event)
-        if frame.origin != originBefore {
-            onDragEnd?()
-        }
     }
 }
