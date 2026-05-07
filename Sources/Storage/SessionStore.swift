@@ -2,6 +2,10 @@ import Foundation
 import OSLog
 import SwiftData
 
+protocol SessionPersisting: Sendable {
+    func save(_ record: SessionRecord) async throws
+}
+
 @ModelActor
 actor SessionStore {
 
@@ -80,3 +84,5 @@ actor SessionStore {
         return record
     }
 }
+
+extension SessionStore: SessionPersisting {}

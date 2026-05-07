@@ -157,3 +157,20 @@ nonisolated struct RepeatedPhraseRecord: Sendable, Equatable {
     var phrase: String
     var count: Int
 }
+
+// MARK: - EndedSession → SessionRecord factory
+
+extension SessionRecord {
+    nonisolated static func placeholder(from ended: EndedSession) -> SessionRecord {
+        SessionRecord(
+            startedAt: Date.distantPast,
+            endedAt: Date.distantPast,
+            language: "",
+            totalWords: 0,
+            averageWPM: 0,
+            peakWPM: 0,
+            wpmStandardDeviation: 0,
+            effectiveSpeakingDuration: 0
+        )
+    }
+}
