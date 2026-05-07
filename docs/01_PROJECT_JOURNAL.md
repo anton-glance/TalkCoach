@@ -4,6 +4,90 @@
 
 ---
 
+## Session 020 — 2026-05-07 — M2.6 per-display position memory shipped over three rounds: original implementation, save-trigger fix (mouseDown was wrong), last-used-display fix (NSScreen.main was wrong)
+
+**Format:** Architect-driven module sequencing with the Claude Code agent. M2.6 from green-field to tagged complete in one architect session, but with two iterative fixes after the manual smoke gate caught real bugs the unit tests didn't. Six commits in the M2.6 series spanning ~3.5h of architect time across plan + two fix-prompt cycles + close-out. 33 new tests added (147 total in repo). Three rounds:
+
+1. **Original implementation** (`8c75ff8` red, `2584f40` green). Per-display position memory with screen-relative coords, `ScreenProvider` Convention 6 injection, overlaps-the-most screen identification on save, off-screen clamp-and-don't-save on restore, `mouseDown(with:)` override on `CoachingPanel` as the save trigger. 13 position tests + lint clean + 5 sub-agent notes (3 PASS, 1 ACCEPTED on zero-overlap edge case, 1 noting always-visible close-button placeholder for M5.7). Looked good on paper.
+2. **Save-trigger fix** (`5f87e78` red, `6351a25` green). Manual smoke gate revealed the widget was draggable but no save fired — every session restarted with default top-right. Diagnosis: `super.mouseDown(with:)` returns immediately under modern AppKit (drag is async-handed-off to the window server), so the frame-origin comparison saw no change. Fix: switch to `NSWindow.didMoveNotification` observer with `isProgrammaticMove` flag toggled around `setFrame` and 300ms debounce via the existing `HideScheduler`. The agent's M2.6 plan had explicitly flagged this risk as the verification target for the smoke gate; the smoke gate did its job.
+3. **Last-used-display fix** (`0727e06` red, `3fe2a48` green). Smoke gate after fix #2 revealed save was now reliable but multi-display restore was wrong — drag-to-DELL saved correctly, but next show `NSScreen.main` returned Built-in (because the user's window focus was there), so widget appeared on Built-in with Built-in's saved position. The DELL save sat unused. Diagnosis: `NSScreen.main` tracks "screen of the focused window," not "screen the widget was last on." Fix: persist `widgetLastUsedDisplay: String?` in `SettingsStore`, update it on every drag-end alongside the position write, prefer it in `frameForShow()` ahead of `NSScreen.main`. Falls back gracefully when the recorded display is disconnected; orphaned entry NOT auto-cleared so reconnect restores user intent.
+
+End-state smoke gate confirmed both scenarios work: drag to DELL → close → reopen → "Using last-used display DELL U2723QE" → widget on DELL; disconnect DELL → reopen → "Last-used display disconnected, falling back to NSScreen.main" → widget on Built-in.
+
+### What happened
+
+The original M2.6 plan was substantive on first pass with three sharp catches: screen-relative coords (preserves user intent across monitor rearrangement) caught by the agent reading my AC5 wording carefully and flagging the implication; `NSHostingView` vs `NSHostingController` choice carried over from M2.5; `Sources/Widget/` directory correction (my prompt had `Sources/UI/`). Five sub-agent notes after Phase 2, all dispositioned cleanly. By the green-phase commit `2584f40`, M2.6 looked done — code-complete, lint clean, 13 new tests, `swiftlint --strict` on every commit.
+
+Smoke gate broke that. The widget moved (AppKit's `isMovableByWindowBackground` was working) but no "Saved position" log appeared. The agent's plan had flagged this exact risk: *"I'll verify this in the manual smoke gate. If this assumption is wrong, the fallback is `NSWindow.didMoveNotification` with a debounce."* The hypothesis was wrong; the fallback was correct. Fix prompt #1 went out within minutes of the smoke result; the agent's first reply went straight to the fix without verifying the original hypothesis (procedural skip), which I caught in a clarification round and they answered honestly: "I skipped the doc-verification step. The `didMoveNotification` fix works regardless of whether `super.mouseDown` returns immediately or blocks-but-doesn't-update-frame — both hypotheses lead to the same conclusion." Acceptable, because the load-bearing question was about the fix, not the autopsy.
+
+The `didMoveNotification` fix landed clean (4 new tests, both commits lint clean) but the first Phase 3 self-review report had two procedural gaps: a sub-agent review claiming "0 issues, all 11 items passed" without verbatim notes (not credible after three sessions of substantive findings), and a procedural deviation in the test files between red and green commits. I asked for both to be re-done; the second response was honest — sub-agent re-run produced 11 findings (2 MEDIUM accepted as bounded-failure-mode, rest INFO/LOW), and the test-file delta was characterized as exclusively redundant `NotificationCenter.default.post()` removals (real `NSPanel.setFrameOrigin` already auto-fires `didMoveNotification`, so the manual posts caused double-delivery). Test assertions weren't modified; values weren't modified. Accept-and-document was the right disposition over interactive-rebase-the-history (two unpushed commits, but procedural risk of rewriting history on a non-semantic change isn't worth it).
+
+Smoke gate after fix #1 passed save reliably for drag-on-Built-in and drag-on-DELL — but reopen-on-DELL didn't restore on DELL. The architect's call: this is the second pillar of "per-display position memory" — knowing which display to show on, not just where on it — and it's the M2.6 promised feature, so the right move is fix it before tagging, not tag-with-known-limitation. Fix prompt #2 went out; agent's plan was tight (point-level `SettingsStore` accessors matching existing `position(for:)` shape, `@Published` property with M1.4 sync wiring for consistency, fallback chain in `frameForShow()`), 10 tests covering bootstrap + last-used-hit + disconnect-fallback + drag-saves + cross-screen-update + persists-across-instances. Phase 3 came back with credible sub-agent notes (sub-agent Note 2: `localizedName` as display identity is fragile; backlogged for v1.x), TDD lock intact (`git diff` empty between red and green test files), `swiftlint --strict` clean.
+
+Smoke gate confirmed end-to-end. M2.6 done.
+
+### Architectural decisions locked
+
+1. **Save trigger: `NSWindow.didMoveNotification` + 300ms debounce + `isProgrammaticMove` flag.** Synchronous main-thread delivery of `NotificationCenter.post` posted on the main thread is the load-bearing assumption that makes the flag reliable. Worst-case if Apple changed delivery semantics: a redundant write of the already-stored position. Bounded, harmless. The `mouseDown(with:)` approach was wrong because modern AppKit hands drag-tracking to the window server async; `super.mouseDown` returns immediately. Documented in §8 so the next maintainer doesn't try to "simplify" back to `mouseDown`.
+
+2. **Screen-relative coordinate storage, not absolute.** Saved positions are `(panel.origin - screen.frame.origin)`, restored as `screen.frame.origin + saved`. Preserves user intent across multi-monitor rearrangement (e.g., user moves external display from left to right in System Settings → global coords shift but the saved relative offset stays correct).
+
+3. **Off-screen clamp-and-don't-save.** When a saved position would clip outside the target screen's `visibleFrame` (smaller screen, resolution change, etc.), the displayed position is clamped to fit but the saved value is NOT overwritten. The user's 4K-corner intent survives a temporary laptop-screen-only session.
+
+4. **Screen identification on save: overlaps-the-most.** `screenWithMostOverlap(for:in:)` over `allScreens()` picks the destination screen by intersection-area between panel-frame and screen-frame. `panel.screen` was rejected (updates async after a move; reading it inside the drag handler gives the source, not destination).
+
+5. **Last-used-display preference, fallback chain.** `SettingsStore.widgetLastUsedDisplay` → if connected, use it; else `NSScreen.main`; else `NSScreen.screens.first`; else hardcoded synthetic frame. Orphaned entries on disconnect are NOT auto-cleared so reconnect restores user intent.
+
+6. **`ScreenProvider` Convention 6 injection.** `ScreenDescription: Equatable, Sendable` value type carrying `localizedName`/`visibleFrame`/`frame` (NSScreen itself isn't Sendable). Production wraps `NSScreen.main` and `NSScreen.screens`; `@unchecked Sendable` test fake provides configurable arrays for multi-monitor and disconnected-display test scenarios without hardware.
+
+7. **`SettingsStore` typed accessors over raw dict access.** Point-level `position(for:)`/`setPosition(_:for:)` and `lastUsedDisplay()`/`setLastUsedDisplay(_:)` instead of exposing `widgetPositionByDisplay` mutation directly. Self-documenting call sites in the controller; encapsulation of UserDefaults round-trip (JSON encoding for the dict, plain string for the last-used name). Matches the M1.4 `@Published` + `didSet` + `isSyncing`-guard live-sync pattern.
+
+8. **`HideScheduler` reuse for two purposes.** Same scheduler instance handles both the M2.5 5-second hide-after-mic-off and the M2.6 300ms drag-save debounce. Two coexisting tokens keyed by `ObjectIdentifier`; no cross-cancellation risk. M2.5's TokenStorage cleanup-on-natural-fire fix from Session 019 is what makes this safe long-running.
+
+### Open questions for next architect session
+
+1. **`CGDirectDisplayID`-based display keying (sub-agent Note 2 from fix #2).** `localizedName` as display identity is fragile: language changes, display renames in System Settings, duplicate monitor names. The robust alternative is `CGDirectDisplayID` (numeric per-display ID stable across reboots and language). Cost: a `DisplayProvider` change to surface the ID, a UserDefaults migration of the existing `widgetPositionByDisplay` (string keys → numeric) and `widgetLastUsedDisplay` (string → numeric or struct), and a test pass. Bounded scope; not v1 work but clean v1.x candidate. Backlog item.
+
+### Procedural lessons (the same one, three sessions running)
+
+1. **First-review checklist drift.** Session 017 (M2.3), Session 019 (M2.5), and now Session 020's first save-trigger-fix report all had the same pattern: agent's first final-status report restructures the prompt's checklist into their own list, drops or merges items, requires a follow-up prompt to get the full march. Three sessions of the same lesson. The lesson is now structural, not behavioral: my prompt template should make checklist drift mechanically harder. Ideas for next prompt: (a) put the checklist in a unique-marker block the agent must reproduce verbatim with each item dispositioned inline; (b) make the checklist itself an artifact the agent commits as a `.md` file in the repo so the diff is auditable; (c) add a structural "do not summarize" instruction near each list. Decide before M2.7's prompt.
+
+2. **First-pass sub-agent reviews need to be credible, not just present.** This session's first save-trigger fix returned "0 issues, 11 items passed" with no verbatim notes; not credible after three sessions of substantive sub-agent catches. Re-run produced 11 findings as expected. The lesson: a sub-agent run that produces zero notes against a non-trivial fix is itself a signal worth pushing on. Future prompts should require verbatim notes (with dispositions) regardless of severity; "no findings" without notes is an unverifiable claim.
+
+3. **Hypothesis-skipping vs. fix-driven thinking.** When fix prompt #1 went out, I asked the agent to verify the original `mouseDown`-blocking hypothesis before committing to the `didMoveNotification` fix. The agent skipped the verification, which I caught with a clarification round; their answer was honest and substantively right ("the fix works regardless of which hypothesis is true"). Lesson: the prompt's "verify before committing" instruction is sometimes Inappropriate framing — when the new approach orthogonalizes the old question, verification of the old question is moot. Future prompts should distinguish "verify because the fix depends on the answer" from "verify for autopsy purposes" so the agent doesn't waste a round trip on the latter.
+
+4. **Smoke gate is the only verification that catches OS-level integration bugs.** Both M2.6 fixes were caught by smoke, not by unit tests, because the bugs lived in real-AppKit territory: `super.mouseDown` async-handoff, `NSScreen.main` semantics. The unit tests with `FakeScreenProvider` and synthetic notification posts couldn't surface either. Reinforces the Definition-of-Done procedure (smoke gate before tagging) — the cost of missing a smoke step is two extra fix rounds, exactly what happened here.
+
+5. **Test-modification deviation discipline.** Fix #1's red-phase tests had redundant `NotificationCenter.default.post()` calls alongside `setFrameOrigin` (which auto-fires the notification on real `NSPanel`). Removed in green phase, which technically violated the TDD lock. Architect accepted the deviation as non-semantic (assertion logic and values unchanged). The cleaner discipline going forward: when the green phase reveals a red-phase test was wrong on a non-semantic point, prefer either an explicit "fix(tests)" commit before the green commit, or interactive-rebase-amend before pushing. The fix in this session was caught after push, so accept-and-document was the right disposition; for future modules, catch it earlier.
+
+### Ups
+
+- Three rounds of work in one architect session, all converging cleanly. The fix prompts were ~150–190 lines each and tightly scoped (no plan rewrites, no architectural changes, just specific bugs).
+- Sub-agent value continues to compound across modules. M2.6 original sub-agent caught the always-visible-close-button REMOVE-IN marker requirement; fix #2 sub-agent surfaced the `localizedName` fragility now backlogged for v1.x.
+- The agent's M2.6 original plan called the `mouseDown` risk explicitly *and* called the smoke-gate as the verification step. When smoke broke, the plan was ready. That's procedural maturity; reward by continuing to require explicit risk-flagging in plans.
+- 147/147 tests + lint clean across all six commits including each red-phase. The procedural locks from Sessions 016/017 hold.
+- Manual smoke gate end-to-end working: drag to DELL stays on DELL, drag back to Built-in stays on Built-in, disconnect DELL falls back gracefully. The multi-display promise is kept.
+
+### Downs
+
+- Two fix rounds. M2.6 was budgeted at 2h; actual was 2h + ~1.5h of fixes. The save-trigger bug was foreseen by the agent's plan and would have been caught regardless; the last-used-display bug was a real architectural oversight in my original prompt (I specified "use NSScreen.main" without thinking about what NSScreen.main actually returns). My first prompt was wrong; the fix prompt corrected my mistake. Lesson for next module: when I specify a system API, walk through what it actually returns in the multi-state cases the user will encounter.
+- Three sessions running of first-review checklist drift. Promote to structural prompt-template change before M2.7.
+- First sub-agent review of the save-trigger fix wasn't credible. Same procedural-trust signal as the checklist drift; same need for prompt-template tightening.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry
+- `04_BACKLOG.md` — M2.6 marked `✅ done` with `m2.6-complete` tag reference and updated description (per-display position + last-used-display + drag-trigger reliability)
+- `03_ARCHITECTURE.md` §8 (FloatingPanel) — extended Implementation block with Session 020 locked design: per-display position memory, screen-relative coordinate storage, drag-save trigger (with explicit note on why the `mouseDown` approach was wrong), last-used-display preference, screen-identification rule on save, `ScreenProvider` injection, updated file list
+- `03_ARCHITECTURE.md` §10 (Settings) — added `widgetLastUsedDisplay` key (seventh v1 key), documented orphaned-entry-no-auto-clear behavior, expanded `widgetPositionByDisplay` description to cover M2.6's typed accessors and corrupt-data warning
+
+### Next session
+
+- **M2.7** (Session persistence at session end). 1h estimate. Wires `SessionCoordinator.onSessionEnded(_:)` (the one-shot consumer surface from M2.3) to `SessionStore.save(_:)` from M1.5. After M2.7 ships, Phase 2 closes and the Phase 2 exit gate is testable end-to-end (open Zoom → widget appears with timer + Listening… → close Zoom → fade-out → SwiftData store contains a session record on the next app launch).
+- Before writing the M2.7 prompt: decide on the prompt-template structural change for checklist drift (item 1 above). Don't ship another prompt with the current structure if the same first-review pattern is going to repeat.
+
+---
+
 ## Session 019 — 2026-05-06 — M2.5 FloatingPanel skeleton shipped: 4-state visibility machine, dismissal flow, sub-agent catches TokenStorage leak
 
 **Format:** Architect-driven module sequencing with the Claude Code agent. M2.5 from green-field to tagged complete in one architect session. 17 new tests added (120 total in repo). Three commits in the M2.5 series: `7ccb8f3` failing tests, `a4c76df` implementation, `add8d78` sub-agent review fixes.
