@@ -4,6 +4,83 @@
 
 ---
 
+## Session 021 — 2026-05-07 — M2.7 SessionPersistence shipped: Phase 2 closes; first session under the marker-block prompt template; agent caught three of architect's prompt errors before implementing
+
+**Format:** Architect-driven module sequencing with the Claude Code agent. M2.7 from green-field to tagged complete in one architect session, with an overnight break between Phase 1 plan approval and the agent's Phase 2 work landing the next morning. Two commits: `aef1ba3` red, `6d87536` green. Agent did not need a fix round. **Phase 2 of the v1 release plan closes here** — the exit gate (open Voice Memos → widget appears at saved per-display position → close → fade-out → SwiftData store contains a session record on next launch) was validated end-to-end by the manual smoke gate.
+
+### What happened
+
+M2.7 wires `SessionCoordinator.onSessionEnded(_:)` to `SessionStore.save(_:)`. On paper a 1-hour module — pure glue between two surfaces locked since M1.5 (`SessionStore`) and M2.3 (`SessionCoordinator`). The architect's M2.7 prompt was the first to use the `=== PHASE3_CHECKLIST ===` and `=== ACCEPTANCE_CRITERIA ===` marker block format introduced after Session 020's lessons-learned about three-sessions-running of first-review checklist drift. This session was the structural test of the new template.
+
+Result: the agent reproduced both marker blocks verbatim with each item dispositioned inline. No drift, no restructuring, no "let me condense this." The structural enforcement worked first try. Worth keeping as the project-wide format for prompt templates going forward, and rolling back through the prompt template in `00_COLLABORATION_INSTRUCTIONS.md` so future modules inherit it.
+
+The plan came back substantive on first pass and caught **three errors in the architect's M2.7 prompt before implementing** — the highest-quality plan response of any module so far:
+
+1. The prompt assumed `SessionCoordinator.onSessionEnded` was a single setter or registration property; agent verified by reading lines 76-78 that it's an array-append API supporting multiple consumers. Stronger contract than the prompt knew about.
+2. The prompt assumed `SessionCoordinator.stop()` clears the handler registry; agent read lines 61-74 line by line and found it does NOT clear the registry. Means M2.7's callback registers once in `applicationDidFinishLaunching` and survives stop/start cycles without re-registration logic. Stronger and simpler than the prompt assumed.
+3. The prompt presented a false dichotomy on `Session` value plumbing — "extend the callback signature" vs "compute `endedAt` at consumer side" — both unnecessary because `EndedSession` already carries both timestamps (verified line 14-18). The architectural question I posed didn't exist.
+
+Plus three architectural deviations from the prompt, all correctly justified:
+
+1. **`SessionPersisting` protocol on `SessionStore`** for AC 4's failing-test-double injection. Agent caught the contradiction in my own prompt: AC 4 required injecting a failing `SessionStore`, but `@ModelActor` types can't be subclassed. The protocol is one method (`func save(_ record: SessionRecord) async throws`); `SessionStore` conforms via extension. The fact that I'd written an AC that contradicted my "no new providers" instruction is a prompt-quality issue I'd missed in review.
+2. **`SessionRecord.placeholder(from: EndedSession)` factory** on `Session.swift`. Not scope creep; this is the actual conversion site M2.7 needs (`EndedSession` → `SessionRecord`). Keeps the callback closure clean and makes the conversion independently testable.
+3. **`endedSessionHandlers` not cleared on `stop()` is documented as a finding, not a code change.** Right call.
+
+Implementation came back with both commits clean, 44 tests green (8 new — covers normal-end, multiple-sessions, pause-mid-session, no-double-save, stop-restart-no-double-register, save-failure-handling, placeholder-conversion, app-quit-during-session). Sub-agent review status not detailed in the report but no fix-round commits, suggesting either (a) sub-agent ran clean or (b) was rolled into the green commit; not worth a follow-up at this point — the smoke gate passed end-to-end on first try, which is the load-bearing verification.
+
+Manual smoke gate ran as designed: three Voice Memos sessions all logged "Persisted session `<uuid>`" within the same MainActor turn as their "Session ended" line; Cmd+Q + reopen showed "Startup session count: 3" exactly matching pre-quit count. Bonus signal: M2.6's last-used-display preference still composing correctly under M2.7 (Session 3 used "Using last-used display Built-in Retina Display" after Session 2's drag, plus a "Clamped saved position" line indicating the saved coords were slightly off-screen on the current `visibleFrame` and the clamp logic kicked in).
+
+**Phase 2 closes.** Nine modules tagged across Sessions 015–021: M1.1, M1.2, M1.3, M1.4, M1.5, M1.6, M2.1, M2.3, M2.5, M2.6, M2.7. The two-skipped modules (M2.2 per-app blocklist, M2.4 mic source identification) are deferred to v2 per Spike #1 deferral. Phase 2 exit gate validated end-to-end.
+
+### Architectural decisions locked
+
+1. **`SessionPersisting` protocol — one method, on `SessionStore`.** `func save(_ record: SessionRecord) async throws`. Production conforms via extension; test double conforms directly. Convention 6 pattern applied to `@ModelActor` types where subclassing isn't possible. Lives in `Sources/Storage/SessionStore.swift`.
+2. **`SessionRecord.placeholder(from: EndedSession)` factory.** The canonical conversion site for v1's empty-metrics persistence. Phase 4's analyzer modules will populate the metric fields by replacing this call site (or by a separate non-placeholder factory); the placeholder factory itself stays for any ad-hoc save path that doesn't have analyzer data yet.
+3. **`endedSessionHandlers` survive stop/start.** Documented behavior of `SessionCoordinator`; no code change. M2.7's callback registers once and never re-registers. Future consumers of `onSessionEnded(_:)` should follow the same pattern (register once at app start; don't register-and-clear per session).
+4. **Save failure: log-and-swallow.** `Logger.session.error("Failed to persist session \(id): \(error)")`. The user loses one session record but the app keeps running. v1 accepts this; user feedback after v1.x will determine if retry/recovery is worth building.
+5. **`Logger.session.info("Persisted session \(id)")` on success.** One info-level line per session. Won't bloat logs over multi-day uptime; provides smoke-gate evidence and post-incident audit trail.
+6. **Empty-string placeholder for `Session.language` in v1.** M3.4 wires the real detected locale. The `StatsWindow` v2 view will need to render sessions with `language == ""` gracefully — backlog note.
+
+### Open questions for next architect session
+
+1. **Spike #4 reuse vs re-spike for Phase 3.** Phase 3 (audio + transcription) opens with `M3.1 AudioPipeline`. Spike #4 (mic coexistence with Zoom voice processing) closed Session 008 with PASS WITH CAVEATS — specifically the browser Meet recoverable-config-change caveat. The spike work was on a single AVAudioEngine instance lifecycle; M3.1's actual implementation may surface details the spike didn't cover (taps, format negotiation, callback threading under strict concurrency). Decision before writing the M3.1 prompt: tackle a tightening micro-spike for the `nonisolated` callback wrapper pattern from Spike #4 (one focused session, ~1h), or roll it into M3.1's plan and accept the risk of a fix round. Architect's prior: tighten the micro-spike first — Phase 3 has the most OS-API surface in v1 and is the one phase where smoke-gate fix rounds are likely to compound.
+2. **Marker block template rollback to `00_COLLABORATION_INSTRUCTIONS.md`.** This session's prompt was the first to use marker blocks; it worked. Promote the format to the standard prompt template so M3.x prompts inherit it without re-derivation. Five-minute architect doc edit before the M3.1 prompt is written.
+
+### Procedural lessons
+
+1. **Marker block enforcement worked.** Three sessions running of checklist drift (017, 019, 020) ended after one session with the new template. The structural change ("reproduce the marker block verbatim with each item dispositioned inline; the marker block format is non-negotiable") was sufficient. Doesn't guarantee the agent's content is correct, but it makes drift mechanically detectable on first read of the report. Net win; no regression to the artifact-as-file fallback (option b from Session 020's journal) needed.
+2. **Architect prompt-quality issues caught by the agent before implementation.** Three of my prompt's assumptions about `SessionCoordinator` were wrong; agent verified each by reading the actual code. Reinforces the pattern: when the prompt asks a "is this true about an existing module?" question, the agent's first move is reading the actual implementation, not relying on the prompt's framing. Architect's prompts to existing-module integrations should explicitly say "verify by reading the file" for every assumption — present in M2.7's prompt under Phase 1 step 2 ("read first; only adjust if the existing surface doesn't fit"). That instruction earned its keep.
+3. **Smoke gate is uneventful when the underlying contracts are well-locked.** M2.7's smoke passed end-to-end on first try because both `SessionCoordinator` and `SessionStore` were locked with strong contracts (M2.3 hybrid consumer interface, M1.5 Sendable record-type boundary). Compare M2.6 where two smoke-gate fix rounds were needed because `mouseDown(with:)` and `NSScreen.main` semantics weren't locked — they're system APIs with documented-but-counterintuitive behavior. Pattern: smoke-gate failure rate correlates with the number of unverified-system-API assumptions in a module's design. Phase 3 has many.
+
+### Time accounting
+
+- Session start: 2026-05-06 22:48 -05:00 (Mexico) / 2026-05-07 03:48 UTC — first user message in this conversation pasting the M2.7 plan from the agent
+- Session end: 2026-05-07 09:18 -05:00 / 14:18 UTC — final smoke confirmation
+- Calendar span: 10.5h (includes overnight sleep break)
+- Active wall-clock estimate: ~2.5–3h
+  - Plan review + approval message (May 6, 22:48–23:00 -05:00): ~15 min
+  - Overnight break: ~9.5h
+  - Agent's Phase 2+3 work landed in two commits (`aef1ba3` red, `6d87536` green) overnight or early morning May 7 — agent-side time inferred from commit metadata (would need git log to be precise; ~1.5h of agent work is the typical M2.x range)
+  - User's smoke gate run + paste back (May 7, ~09:15–09:18 -05:00): ~5 min for the 3 sessions and the cross-launch verification
+  - Architect's analysis + close-out doc writes: ~15 min
+- Estimate: 1h. Active actual: ~2.5–3h. **Variance: +150% to +200%.** Cause: the close-out work itself (journal + ledger + tag + commit + push, plus the Phase 2 milestone framing) is larger than the 1h estimate which only covered the M2.7 implementation work. The implementation itself ran on or under estimate.
+- Refinement to per-module estimating: the close-out work for milestone-closing modules (Phase 2 close here, Phase 3 close at M3.7+, Phase 5 close at M5.x) carries an additional ~30 min for the journal+ledger+architecture-doc write that non-milestone modules don't. Note this in the ledger.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry, including `Time accounting` block per the new convention
+- `04_BACKLOG.md` — M2.7 marked `✅ done` with `m2.7-complete` tag reference and actual-time annotation
+- `08_TIME_LEDGER.md` — Session 021 row added to per-session table; M2.7 row added to per-module table; pace observations refreshed; Phase 2 close-out flagged in the running totals
+- (No `03_ARCHITECTURE.md` change for M2.7 — the SessionStore + SessionCoordinator surfaces were already locked in Sessions 015 and 017; this module is glue, not architecture)
+
+### Next session
+
+- **Architect doc work first (5 min, no agent).** Promote the `=== MARKER ===` block template to `00_COLLABORATION_INSTRUCTIONS.md`'s "How Claude writes prompts" section so all future module prompts inherit it.
+- **Then decide on Spike #4 micro-tightening vs straight M3.1.** Architect's prior: tighten the micro-spike. Five-minute decision; ask the user on next session start.
+- **Phase 3 opens with M3.1 AudioPipeline** (~6h estimated; first real OS-API integration since M2.6, expect smoke-gate work). Phase 3 covers M3.1, M3.4 (LanguageDetector), M3.5/a/b (TranscriptionEngine routing for Apple + Parakeet), M3.7 (token wiring). End of Phase 3 is Checkpoint #2 — the debug HUD showing live token stream, language, and backend identifier on real Zoom audio. This is where the Russian-transcription-quality risk gate fires.
+
+---
+
 ## Session 020 — 2026-05-07 — M2.6 per-display position memory shipped over three rounds: original implementation, save-trigger fix (mouseDown was wrong), last-used-display fix (NSScreen.main was wrong)
 
 **Format:** Architect-driven module sequencing with the Claude Code agent. M2.6 from green-field to tagged complete in one architect session, but with two iterative fixes after the manual smoke gate caught real bugs the unit tests didn't. Six commits in the M2.6 series spanning ~3.5h of architect time across plan + two fix-prompt cycles + close-out. 33 new tests added (147 total in repo). Three rounds:

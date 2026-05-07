@@ -60,7 +60,7 @@ Goal: the app knows when the mic turns on, shows an empty placeholder widget, kn
 | M2.3 | `SessionCoordinator` skeleton: receive mic events, manage session state, check `coachingEnabled` | ✅ tag `m2.3-complete` (Session 017, ~1.5h actual) | 3h | M2.1 |
 | M2.5 | `FloatingPanel`: NSPanel + SwiftUI host, show on mic-active / persistent during session with "Listening…" placeholder / hide 5s after mic-off, dismissable with confirmation alert (per Sessions 013 + 018) | ✅ tag `m2.5-complete` (Session 019, ~3h actual) | 4h | M2.3 |
 | M2.6 | Per-display widget position memory + last-used-display preference + drag-trigger reliability | ✅ tag `m2.6-complete` (Session 020, ~4.5h actual incl. 2 fix rounds) | 2h + ~1.5h fixes | M2.5 |
-| M2.7 | Session persistence (empty metrics) at end of session | 📋 | 1h | M1.5, M2.3 |
+| M2.7 | Session persistence (empty metrics) at end of session | ✅ tag `m2.7-complete` (Session 021, ~3h actual incl. overnight break) | 1h | M1.5, M2.3 |
 
 **Phase 2 total: ~14h.**
 

@@ -8,45 +8,52 @@
 
 ## Pace observations (refresh each session close-out)
 
-**Sessions 015–020 (Phase 1 close + Phase 2 progression to M2.6):**
+**Sessions 015–021 (Phase 1 close + Phase 2 complete):**
 
-- Cumulative wall-clock: ~13.7 hours over 6 sessions.
-- Estimate vs actual aggregate: ~27h estimated, ~13.7h actual = **0.51x overall**. User runs at roughly half of nominal estimates on average.
+- Cumulative wall-clock: ~16.5 hours over 7 sessions.
+- Estimate vs actual aggregate: ~28h estimated, ~16.5h actual = **0.59x overall**. User runs at roughly 60% of nominal estimates on average.
 - **Greenfield/skeleton modules (M1.1–M1.6) ran 0.12–0.42x estimate.** User is 2–8x faster on integration of architecturally-validated patterns. Spike work has already de-risked the API surface and the agent's scaffolding is fast.
 - **Skeleton modules with new architectural patterns (M2.1, M2.3, M2.5) ran 0.4–0.75x estimate.** Still significantly faster than estimates.
-- **M2.6 ran 2.25x estimate** (2h plan, ~4.5h actual). Two smoke-gate-caught fix rounds for `mouseDown` async-handoff and `NSScreen.main` semantics. The smoke gate itself was the risk-detection mechanism that worked as designed; the cost of the fix rounds is the cost of fixing what the smoke gate found.
+- **M2.6 ran 2.25x estimate** (2h plan, ~4.5h actual). Two smoke-gate-caught fix rounds for `mouseDown` async-handoff and `NSScreen.main` semantics. Outlier driven by real-OS-API surprises.
+- **M2.7 ran 2.5–3x estimate** (1h plan, ~2.5–3h actual). The implementation itself ran on-estimate; the +1.5h overage was the milestone-closing close-out work (journal entry summarizing Phase 2, ledger update, architecture-doc consideration, multiple commits). Pure glue modules at phase boundaries should budget +1h for close-out.
 
-**Pattern: skeleton work runs 2–4x faster than estimates; OS-integration with real-AppKit dependencies can run 2x slower when smoke gates surface real bugs.** The variance is asymmetric — skeleton work always faster, integration work sometimes much slower. Average comes out near 0.5x but the underlying distribution is bimodal.
+**Pattern: skeleton work runs 2–4x faster than estimates; integration work hits 1.5–2x slower when smoke gates surface real OS-API bugs; milestone-closing modules add ~1h of close-out beyond their nominal scope.** The variance has three modes (skeleton-fast, integration-on-or-slower, milestone-overhead). Average comes out near 0.6x but the underlying distribution is multimodal.
 
 **Estimate-adjustment guidance for upcoming modules:**
 
 - Pure skeleton / integration of validated patterns: **estimate × 0.3–0.5**
-- Module with one real OS-API dependency (AVAudioEngine, SpeechAnalyzer, NSScreen): **estimate × 1.0** (assumes one fix round in worst case, near-zero in best case)
-- Module with multiple real OS-API dependencies + multi-state behavior: **estimate × 1.5–2.0** (assumes one or two fix rounds)
+- Module with one real OS-API dependency (AVAudioEngine, SpeechAnalyzer, NSScreen): **estimate × 1.0** (one fix round in worst case, near-zero in best case)
+- Module with multiple real OS-API dependencies + multi-state behavior: **estimate × 1.5–2.0** (one or two fix rounds)
 - Modules following spike pre-validation (M2.1 after Spike #4): **estimate × 0.5** (the spike absorbed the risk)
+- **Phase-closing modules: add +1h to estimate for close-out** (journal milestone framing, ledger refresh, architecture-doc consolidation)
 
 **Calendar pace:**
 
-- Typical session: 2–4h wall-clock, 1 module per session
+- Typical session: 2–4h wall-clock active, 1 module per session
 - Phase 1 was an exception: 6 modules in ~3h on May 5 morning (all greenfield with locked architecture, all spike-pre-validated)
 - Multi-fix sessions (M2.6) ran 4.5–5h with two distinct smoke-gate cycles
-- Daily cadence: ~1 session per day, sometimes two on a heavy day (May 5 had three: morning Phase 1 close, afternoon M2.1, evening M2.3)
+- Phase-closing sessions (M2.7 / Session 021) add ~1h of close-out work beyond the module itself
+- Daily cadence: ~1 session per day; sometimes two on a heavy day (May 5 had three)
+- Multi-day modules (M2.7 spanned an overnight break) are fine — agent's commits land asynchronously, architect picks up in the next conversation; the calendar span isn't a useful metric, the active wall-clock is
 
 **Projected remaining to Phase 5 (real UI + meaningful data):**
 
-Per release plan: ~65–71h estimate from now.
+Per release plan: ~57–63h estimate from now (Phase 3 + Phase 4 + Phase 5).
+
 Adjusted by observed pace breakdown:
 
-- Phase 3 (transcription) — many real OS-API integrations, high smoke-gate risk: estimate × 1.0 = ~37–43h
+- Phase 3 (transcription) — many real OS-API integrations, high smoke-gate risk: estimate × 1.0–1.2 = ~37–50h
 - Phase 4 (analyzer) — algorithmic, low OS-API surface: estimate × 0.5 = ~3.5h
 - Phase 5 (widget UI) — design implementation, moderate OS-API: estimate × 0.7 = ~14h
-- **Adjusted total: ~55–60h.**
+- **Adjusted total: ~55–68h.**
 
-At ~1 session/day × 3h average, **~18–20 working days** to Phase 5. At 5 sessions/week = 4 calendar weeks. Heavier weeks (8–10h/week) push to 6–7 weeks. Lighter weeks (4–5h/week) push to ~12 weeks.
+At ~3h/session active and ~1 session/day, **~18–22 working days** to Phase 5. At 5 sessions/week = ~4–5 calendar weeks. Heavier weeks (8–10h/week) push toward 6 weeks; lighter weeks (4–5h/week) toward ~10–12 weeks.
+
+**Phase 2 actual cost (Sessions 015–021):** ~14h actual against ~17h estimated = **0.82x**. Phase 2 included the M2.6 smoke-gate outlier; without it the phase ratio would have been ~0.5x, consistent with Phase 1's pattern.
 
 ---
 
-## Per-session wall-clock (Sessions 015–020)
+## Per-session wall-clock (Sessions 015–021)
 
 | Session | Date (Mexico, -05:00) | Commit span | Wall-clock | Modules | Notes |
 |---|---|---|---|---|---|
@@ -57,8 +64,9 @@ At ~1 session/day × 3h average, **~18–20 working days** to Phase 5. At 5 sess
 | 018 | uncertain (May 5–6) | uncommitted until May 6 17:23 | unknown | docs only | Locto rebrand + filler deferral. User can backfill. |
 | 019 | 2026-05-06 | 06:50 → 08:10 (impl) + 17:21 → 17:23 (close) | ~3h split (~2h impl + ~1h close-out) | M2.5 | FloatingPanel. Sub-agent caught TokenStorage leak. |
 | 020 | 2026-05-06 | 18:19 → 22:17 (3h 58m) | ~4.5h | M2.6 + 2 fix rounds | Per-display position memory; smoke caught two real bugs. |
+| 021 | 2026-05-06 → 2026-05-07 | aef1ba3 → 6d87536 (overnight) + smoke 09:15 -05:00 | ~2.5–3h active (10.5h calendar incl. overnight break) | M2.7 | Session persistence. Phase 2 closes. First session under marker-block prompt template — no checklist drift. Agent caught 3 prompt errors before implementing. Smoke uneventful. |
 
-## Per-module estimate vs actual (Sessions 015–020)
+## Per-module estimate vs actual (Sessions 015–021)
 
 | Module | Session | Commit span | Actual wall-clock | Estimate (canonical) | Variance | Path |
 |---|---|---|---|---|---|---|
@@ -72,8 +80,9 @@ At ~1 session/day × 3h average, **~18–20 working days** to Phase 5. At 5 sess
 | M2.3 | 017 | 18:24 → 18:54 (30m) | ~1.5h | 3h | -50% | SessionCoordinator skeleton |
 | M2.5 | 019 | 06:50 → 08:10 + close 17:21 | ~3h | 4h | -25% | FloatingPanel skeleton |
 | M2.6 | 020 | 18:19 → 22:17 (3h 58m) | ~4.5h | 2h | +125% | Per-display position + 2 fix rounds (mouseDown async-handoff + NSScreen.main semantics) |
+| M2.7 | 021 | aef1ba3 → 6d87536 (overnight) | ~2.5–3h active | 1h | +150–200% | Session persistence. Implementation on-estimate; close-out for milestone-closing module added ~1.5h beyond M2.7's nominal 1h scope. |
 
-**Aggregate (Sessions 015–020):** ~27h estimated, ~13.7h actual = **0.51x ratio**. User runs at roughly half of nominal estimates on average, with a single significant outlier (M2.6) where smoke-gate fix rounds drove actual above estimate.
+**Aggregate (Sessions 015–021):** ~28h estimated, ~16.5h actual = **0.59x ratio**. The M2.6 + M2.7 outliers (smoke-gate fix rounds + Phase 2 milestone close-out work) brought the overall ratio up from Session 020's 0.51x. Skeleton work alone still runs 0.12–0.50x.
 
 **Notes:**
 - Per-module actual = git commit span + ~15–30 min architect-side time before first commit (plan + approval) + ~10–20 min close-out time after last commit. Multi-module sessions (Session 015) divide the surrounding time across modules touched.
