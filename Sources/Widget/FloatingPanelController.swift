@@ -194,8 +194,18 @@ final class FloatingPanelController {
     // MARK: - Position Logic
 
     private func frameForShow() -> NSRect {
-        let targetScreen = screenProvider.mainScreen()
-            ?? screenProvider.allScreens().first
+        let allScreens = screenProvider.allScreens()
+        let targetScreen: ScreenDescription?
+        if let lastUsedName = settingsStore.lastUsedDisplay(),
+           let match = allScreens.first(where: { $0.localizedName == lastUsedName }) {
+            targetScreen = match
+            Logger.floatingPanel.info("Using last-used display \(lastUsedName)")
+        } else {
+            if settingsStore.lastUsedDisplay() != nil {
+                Logger.floatingPanel.info("Last-used display disconnected, falling back to NSScreen.main")
+            }
+            targetScreen = screenProvider.mainScreen() ?? allScreens.first
+        }
         guard let targetScreen else {
             return Self.fallbackFrame()
         }
@@ -229,6 +239,7 @@ final class FloatingPanelController {
             y: panelFrame.origin.y - destScreen.frame.origin.y
         )
         settingsStore.setPosition(relative, for: destScreen.localizedName)
+        settingsStore.setLastUsedDisplay(destScreen.localizedName)
         Logger.floatingPanel.info(
             "Saved position (\(relative.x), \(relative.y)) for \(destScreen.localizedName)"
         )

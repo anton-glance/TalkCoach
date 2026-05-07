@@ -13,6 +13,7 @@ final class SettingsStore: ObservableObject {
         static let hasCompletedSetup = "hasCompletedSetup"
         static let fillerDict = "fillerDict"
         static let widgetPositionByDisplay = "widgetPositionByDisplay"
+        static let widgetLastUsedDisplay = "widgetLastUsedDisplay"
     }
 
     private let userDefaults: UserDefaults
@@ -70,6 +71,13 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var widgetLastUsedDisplay: String? {
+        didSet {
+            guard !isSyncing else { return }
+            userDefaults.set(widgetLastUsedDisplay, forKey: Keys.widgetLastUsedDisplay)
+        }
+    }
+
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
 
@@ -90,6 +98,8 @@ final class SettingsStore: ObservableObject {
         } else {
             self.widgetPositionByDisplay = [:]
         }
+
+        self.widgetLastUsedDisplay = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
 
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -121,9 +131,9 @@ final class SettingsStore: ObservableObject {
 
     // MARK: - Last-used display
 
-    func lastUsedDisplay() -> String? { nil }
+    func lastUsedDisplay() -> String? { widgetLastUsedDisplay }
 
-    func setLastUsedDisplay(_ name: String?) {}
+    func setLastUsedDisplay(_ name: String?) { widgetLastUsedDisplay = name }
 
     // MARK: - Locale management
 
@@ -170,6 +180,9 @@ final class SettingsStore: ObservableObject {
 
         let newFillers = userDefaults.object(forKey: Keys.fillerDict) as? [String: [String]] ?? [:]
         if newFillers != fillerDict { fillerDict = newFillers }
+
+        let newLastUsed = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
+        if newLastUsed != widgetLastUsedDisplay { widgetLastUsedDisplay = newLastUsed }
 
         syncPositionsFromDefaults()
     }
