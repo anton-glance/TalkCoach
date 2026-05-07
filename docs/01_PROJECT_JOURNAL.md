@@ -74,12 +74,28 @@ Smoke gate confirmed end-to-end. M2.6 done.
 - Three sessions running of first-review checklist drift. Promote to structural prompt-template change before M2.7.
 - First sub-agent review of the save-trigger fix wasn't credible. Same procedural-trust signal as the checklist drift; same need for prompt-template tightening.
 
+### Time accounting
+
+- Session start: 2026-05-06 ~17:30 -05:00 (Mexico) — first user message in this conversation establishing M2.6 work; user preceded with Session 019 close-out push at 17:23
+- Session end: 2026-05-06 22:17 -05:00 — final commit (M2.6 close-out docs)
+- Wall-clock total: ~4.5h (with one ~30m fix-prompt-write/architect break in the middle between rounds)
+- Commit span (per git log): 18:19 → 22:17 = 3h 58m
+- Per-fix-round breakdown:
+  - M2.6 original implementation: 18:19 → 18:21 = 2 min commit-spread, ~30m architect setup before, ~30m smoke gate after = ~1h
+  - Save-trigger fix (didMoveNotification): 19:59 → 20:07 = 8 min commit-spread, ~1h architect time around (clarification round + plan + approval) + smoke gate = ~1.5h
+  - Last-used-display fix: 21:50 → 22:02 = 12 min commit-spread, ~1.2h architect time around (design discussion via elicitation + plan + approval) + smoke gate = ~1.5h
+  - Close-out: 22:02 → 22:17 = 15m commits + ~15m architect = ~30m
+- Estimate: 2h. Actual: ~4.5h. **Variance: +125%** — driven by two smoke-gate-caught fix rounds. M2.6's nominal 2h scope ran on-estimate (~25 min for the original implementation); the cost above estimate was the real-OS-bug-fix cycles.
+- See `08_TIME_LEDGER.md` for the cumulative pace data.
+
 ### What changed in the docs this session
 
-- `01_PROJECT_JOURNAL.md` — this entry
-- `04_BACKLOG.md` — M2.6 marked `✅ done` with `m2.6-complete` tag reference and updated description (per-display position + last-used-display + drag-trigger reliability)
+- `01_PROJECT_JOURNAL.md` — this entry, including the new `Time accounting` block
+- `04_BACKLOG.md` — M2.6 marked `✅ done` with `m2.6-complete` tag reference and updated description (per-display position + last-used-display + drag-trigger reliability); per-module actual-time annotations added retrospectively to all completed M1.x and M2.x rows
 - `03_ARCHITECTURE.md` §8 (FloatingPanel) — extended Implementation block with Session 020 locked design: per-display position memory, screen-relative coordinate storage, drag-save trigger (with explicit note on why the `mouseDown` approach was wrong), last-used-display preference, screen-identification rule on save, `ScreenProvider` injection, updated file list
 - `03_ARCHITECTURE.md` §10 (Settings) — added `widgetLastUsedDisplay` key (seventh v1 key), documented orphaned-entry-no-auto-clear behavior, expanded `widgetPositionByDisplay` description to cover M2.6's typed accessors and corrupt-data warning
+- `08_TIME_LEDGER.md` — new file, time tracking ledger with per-session and per-module actuals; backfilled from git log for Sessions 015–020
+- `00_COLLABORATION_INSTRUCTIONS.md` — added Time-tracking section requiring `Time accounting` block in every session journal entry going forward
 
 ### Next session
 

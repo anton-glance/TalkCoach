@@ -132,7 +132,8 @@ This module is done when:
 7. **Repeat 4–6** until plan is correct
 8. **Implement** — User says: *"Plan approved. Proceed with Phase 2 (implement) and Phase 3 (self-review)"*
 9. **Result reporting** — Agent reports back with proof (tests passing, screenshots if UI)
-10. **Journal** — Claude updates `01_PROJECT_JOURNAL.md` with what was built, what surprised, what's next
+10. **Journal** — Claude updates `01_PROJECT_JOURNAL.md` with what was built, what surprised, what's next, plus a `### Time accounting` block (see "Time tracking" below)
+11. **Time ledger** — Claude appends per-session and per-module wall-clock to `08_TIME_LEDGER.md` and refreshes the pace observations
 
 ### Cadence rules
 - **One module per session.** No mixing.
@@ -140,6 +141,19 @@ This module is done when:
 - **Tests committed before implementation.** Catches the agent modifying tests to make them pass.
 - **Two-strike rule:** If the same correction is needed twice in one session, stop. Start a new session with a refined prompt. Continuing in polluted context fails ~89% of the time vs. starting clean.
 - **No "I think it works."** If verification doesn't pass, the work isn't done, period.
+
+### Time tracking
+Every session journal entry ends with a `### Time accounting` block before the `### What changed in the docs this session` block. Format:
+
+- Session start: `YYYY-MM-DD HH:MM ±TZ` — first user message in the architect conversation
+- Session end: `YYYY-MM-DD HH:MM ±TZ` — final commit or last journal write
+- Wall-clock total: rough hours
+- Per-module breakdown if multi-module or multi-fix-round: each entry shows commit-spread + architect-side time before/after
+- Estimate vs actual: variance percentage with one-line reason
+
+Claude captures session start by calling `date` via bash on the first message that establishes a session. Capture session end at journal-write time. For backfill of prior sessions, use `git log --pretty=format:'%h %ad %s' --date=iso-local --reverse` to compute commit-spreads.
+
+After writing the journal entry, Claude appends a row to `08_TIME_LEDGER.md`'s per-session and per-module tables and refreshes the pace observations near the top of that file. The ledger is the canonical source for the project's pace data; the journal entry's `Time accounting` block is the per-session detail that feeds it.
 
 ---
 
@@ -155,6 +169,7 @@ This module is done when:
 | `05_SPIKES.md` | De-risking tasks | Claude after each spike resolves | Claude + user |
 | `06_PHASE1_PROMPTS.md` | Archived draft Phase 1 prompts (reference only; canonical prompts are individually delivered as `.md` files via `present_files`) | Frozen | Reference only |
 | `07_RELEASE_PLAN.md` | What's testable when, two feedback checkpoints, calendar | Claude at phase boundaries and at scope-change decisions | Claude at every session start, user when planning calendar |
+| `08_TIME_LEDGER.md` | Per-session and per-module wall-clock data; pace observations; estimate-adjustment guidance | Claude at every session close-out (append rows + refresh pace observations) | Claude when proposing estimates for new modules; user when planning calendar |
 | `docs/design/` | Locto brand + visual + behavioral reference (`01-design-spec.md`, `02-brand-guidelines.html`, brand SVG assets) | Claude at brand/design-related decisions | Claude during widget-related modules (M2.5, M5.x) and any user-facing surface work; Claude Code agent for visual specs |
 | `CLAUDE.md` (in repo root) | Per-project rules for Claude Code | Claude (this conversation) | Claude Code agent every session |
 
@@ -262,6 +277,7 @@ Paste:
 > - *`04_BACKLOG.md`*
 > - *`05_SPIKES.md`*
 > - *`07_RELEASE_PLAN.md`*
+> - *`08_TIME_LEDGER.md`*
 >
 > *Recap state in 3–5 lines, including which phase we're in per `07_RELEASE_PLAN.md`. Today I want to work on [specific module ID / spike ID / question]."*
 

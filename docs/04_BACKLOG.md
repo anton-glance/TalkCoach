@@ -33,12 +33,12 @@ Goal: a runnable menu bar app with no real functionality, but all the structural
 
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
-| M1.1 | Xcode project setup, entitlements, Info.plist, code signing | ✅ tag `m1.1-complete` | 2h | — |
-| M1.2 | App lifecycle: `TalkCoachApp`, `LSUIElement`, `MenuBarExtra` skeleton (About, Pause/Resume, Settings…, Quit) | ✅ tag `m1.2-complete` | 2h | M1.1 |
-| M1.3 | Settings window: auto-opens on first launch, language picker (~50 locales, max 2, system locale silent-committed), model download confirmation prompts, `hasCompletedSetup` | ✅ tag `m1.3-complete` | 4h | M1.2, M1.4 |
-| M1.4 | Settings: UserDefaults wrapper + `declaredLocales`, `wpmTargetMin/Max`, `coachingEnabled`, `fillerDict` schema (note: `fillerDict` registered but unused after Session 018 deferral; v2.0 reactivates) | ✅ tag `m1.4-complete` | 1h | M1.2 |
-| M1.5 | SwiftData `Session` schema + empty `SessionStore` | ✅ tag `m1.5-complete` | 3h | M1.1 |
-| M1.6 | Permission request flow for mic + speech (point-of-use, not pre-emptive) | ✅ tag `m1.6-complete` | 2h | M1.2 |
+| M1.1 | Xcode project setup, entitlements, Info.plist, code signing | ✅ tag `m1.1-complete` (Session 015, ~30m actual) | 2h | — |
+| M1.2 | App lifecycle: `TalkCoachApp`, `LSUIElement`, `MenuBarExtra` skeleton (About, Pause/Resume, Settings…, Quit) | ✅ tag `m1.2-complete` (Session 015, ~15m actual) | 2h | M1.1 |
+| M1.3 | Settings window: auto-opens on first launch, language picker (~50 locales, max 2, system locale silent-committed), model download confirmation prompts, `hasCompletedSetup` | ✅ tag `m1.3-complete` (Session 015, ~45m actual) | 4h | M1.2, M1.4 |
+| M1.4 | Settings: UserDefaults wrapper + `declaredLocales`, `wpmTargetMin/Max`, `coachingEnabled`, `fillerDict` schema (note: `fillerDict` registered but unused after Session 018 deferral; v2.0 reactivates) | ✅ tag `m1.4-complete` (Session 015, ~10m actual) | 1h | M1.2 |
+| M1.5 | SwiftData `Session` schema + empty `SessionStore` | ✅ tag `m1.5-complete` (Session 015, ~30m actual) | 3h | M1.1 |
+| M1.6 | Permission request flow for mic + speech (point-of-use, not pre-emptive) | ✅ tag `m1.6-complete` (Session 015, ~50m actual) | 2h | M1.2 |
 
 **Phase 1 total: ~14h estimate, met. ✅ tag `phase-1-complete`.**
 
@@ -56,10 +56,10 @@ Goal: the app knows when the mic turns on, shows an empty placeholder widget, kn
 
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
-| M2.1 | `MicMonitor`: Core Audio HAL listener for mic running state | ✅ tag `m2.1-complete` (Session 016) | 4h | S4 (passed) |
-| M2.3 | `SessionCoordinator` skeleton: receive mic events, manage session state, check `coachingEnabled` | ✅ tag `m2.3-complete` (Session 017) | 3h | M2.1 |
-| M2.5 | `FloatingPanel`: NSPanel + SwiftUI host, show on mic-active / persistent during session with "Listening…" placeholder / hide 5s after mic-off, dismissable with confirmation alert (per Sessions 013 + 018) | ✅ tag `m2.5-complete` (Session 019) | 4h | M2.3 |
-| M2.6 | Per-display widget position memory + last-used-display preference + drag-trigger reliability | ✅ tag `m2.6-complete` (Session 020) | 2h + ~1.5h fixes | M2.5 |
+| M2.1 | `MicMonitor`: Core Audio HAL listener for mic running state | ✅ tag `m2.1-complete` (Session 016, ~1.75h actual) | 4h | S4 (passed) |
+| M2.3 | `SessionCoordinator` skeleton: receive mic events, manage session state, check `coachingEnabled` | ✅ tag `m2.3-complete` (Session 017, ~1.5h actual) | 3h | M2.1 |
+| M2.5 | `FloatingPanel`: NSPanel + SwiftUI host, show on mic-active / persistent during session with "Listening…" placeholder / hide 5s after mic-off, dismissable with confirmation alert (per Sessions 013 + 018) | ✅ tag `m2.5-complete` (Session 019, ~3h actual) | 4h | M2.3 |
+| M2.6 | Per-display widget position memory + last-used-display preference + drag-trigger reliability | ✅ tag `m2.6-complete` (Session 020, ~4.5h actual incl. 2 fix rounds) | 2h + ~1.5h fixes | M2.5 |
 | M2.7 | Session persistence (empty metrics) at end of session | 📋 | 1h | M1.5, M2.3 |
 
 **Phase 2 total: ~14h.**
