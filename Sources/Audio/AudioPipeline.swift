@@ -2,6 +2,9 @@ import AVFAudio
 import os
 import OSLog
 
+private let logger = Logger.audio
+private let signposter = OSSignposter(logger: logger)
+
 // MARK: - Error type
 
 enum AudioPipelineError: Error {
@@ -79,14 +82,92 @@ final class AudioPipeline {
     }
 
     func start() throws {
-        // Stub — implementation in next commit
+        guard !isStarted, !isStopped else { return }
+
+        do {
+            try provider.setVoiceProcessingEnabled(false)
+        } catch {
+            throw AudioPipelineError.vpioConfigurationFailed(underlying: error)
+        }
+
+        provider.installTap(
+            bufferSize: 0,
+            format: nil,
+            block: makeTapBlock(continuation: continuation)
+        )
+
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.recover()
+            }
+        }
+
+        provider.prepare()
+
+        do {
+            try provider.start()
+        } catch {
+            provider.removeTap()
+            if let observer = configChangeObserver {
+                NotificationCenter.default.removeObserver(observer)
+                configChangeObserver = nil
+            }
+            throw AudioPipelineError.engineStartFailed(underlying: error)
+        }
+
+        isStarted = true
     }
 
     func stop() {
-        // Stub — implementation in next commit
+        guard isStarted else { return }
+
+        provider.removeTap()
+        provider.stop()
+
+        if let observer = configChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configChangeObserver = nil
+        }
+
+        continuation.finish()
+        isStarted = false
+        isStopped = true
     }
 
     func recover() {
-        // Stub — implementation in next commit
+        let start = CFAbsoluteTimeGetCurrent()
+        let interval = signposter.beginInterval("AudioRecovery")
+
+        provider.stop()
+        provider.removeTap()
+
+        do {
+            try provider.setVoiceProcessingEnabled(false)
+        } catch {
+            logger.warning("VPIO re-disable failed during recovery: \(error.localizedDescription)")
+        }
+
+        provider.installTap(
+            bufferSize: 0,
+            format: nil,
+            block: makeTapBlock(continuation: continuation)
+        )
+
+        provider.prepare()
+
+        do {
+            try provider.start()
+        } catch {
+            logger.warning("Engine restart failed during recovery: \(error.localizedDescription)")
+        }
+
+        let elapsed = CFAbsoluteTimeGetCurrent() - start
+        lastRecoveryDuration = elapsed
+        signposter.endInterval("AudioRecovery", interval)
+        logger.info("Recovered in \(Int(elapsed * 1000))ms")
     }
 }
