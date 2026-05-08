@@ -57,6 +57,11 @@ nonisolated func makeTapBlock(
 
 // MARK: - AudioPipeline
 
+/// Owns an `AVAudioEngine` input tap and delivers `CapturedAudioBuffer` values
+/// via `AsyncStream`. Copied from the canonical pattern in
+/// `MicTapTightenSpike/AudioTapBridge.swift` (Spike #4 Phase 2, Session 022).
+/// Composes with `MicMonitor`'s log-and-continue pattern: if the default device
+/// disappears during recovery, the pipeline logs and awaits the next config-change.
 final class AudioPipeline {
     private(set) var isStarted: Bool = false
     private(set) var lastRecoveryDuration: TimeInterval?
@@ -139,6 +144,7 @@ final class AudioPipeline {
     }
 
     func recover() {
+        guard isStarted else { return }
         let start = CFAbsoluteTimeGetCurrent()
         let interval = signposter.beginInterval("AudioRecovery")
 

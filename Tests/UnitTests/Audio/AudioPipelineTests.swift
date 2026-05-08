@@ -264,6 +264,28 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertTrue(fake.callLog.contains("setVPIO(false)"))
     }
 
+    func testRecoverAfterStopIsNoOp() async throws {
+        makeSUT()
+        try sut.start()
+        sut.stop()
+        fake.callLog.removeAll()
+        sut.recover()
+        XCTAssertTrue(
+            fake.callLog.isEmpty,
+            "No recovery steps should run after stop: \(fake.callLog)"
+        )
+        XCTAssertNil(sut.lastRecoveryDuration)
+
+        let expectation = XCTestExpectation(description: "Stream terminated")
+        let stream = sut.bufferStream
+        let task = Task { @MainActor in
+            for await _ in stream {}
+            expectation.fulfill()
+        }
+        await fulfillment(of: [expectation], timeout: 1.0)
+        task.cancel()
+    }
+
     // MARK: - Recovery latency
 
     func testRecoverMeasuresLatencyOnFirstEvent() throws {
