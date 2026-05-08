@@ -12,7 +12,7 @@
 |---|---|---|---|
 | S10 | Parakeet (NVIDIA) feasibility on macOS 26 / Apple Silicon | ✅ passed Sessions 006–007 | (10h actual) |
 | S6 | WPM ground truth on real EN/RU recordings | ✅ passed (EN Session 005, RU Session 007) | (5h actual) |
-| S4 | Mic coexistence with Zoom voice processing | ✅ passed Session 008 (browser Meet has recoverable config-change caveat) | (3h actual) |
+| S4 | Mic coexistence with Zoom voice processing | ✅ passed Session 008 (browser Meet has recoverable config-change caveat); Phase 2 strict-concurrency tightening ✅ Session 022 (canonical pattern locked, recovery cycle validated 196.9ms) | (3h Phase 1 + ~3h Phase 2) |
 | S2 | Language auto-detect mechanism | ✅ passed Session 010 | (6h actual) |
 | S8 | Token-arrival robustness across mics & environments | ✅ passed Session 011 | (3h actual) |
 | S7 | Power & CPU profiling Architecture Y (Apple baseline + 1hr session) | ✅ conditional pass Session 012 | (4h actual) |

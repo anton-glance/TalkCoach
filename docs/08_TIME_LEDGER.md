@@ -8,16 +8,17 @@
 
 ## Pace observations (refresh each session close-out)
 
-**Sessions 015–021 (Phase 1 close + Phase 2 complete):**
+**Sessions 015–022 (Phase 1 close + Phase 2 complete + Phase 3 prep micro-spike):**
 
-- Cumulative wall-clock: ~16.5 hours over 7 sessions.
-- Estimate vs actual aggregate: ~28h estimated, ~16.5h actual = **0.59x overall**. User runs at roughly 60% of nominal estimates on average.
+- Cumulative wall-clock: ~19.5 hours over 8 sessions.
+- Estimate vs actual aggregate: ~29.5h estimated, ~19.5h actual = **0.66x overall**. User runs at roughly 65% of nominal estimates on average.
 - **Greenfield/skeleton modules (M1.1–M1.6) ran 0.12–0.42x estimate.** User is 2–8x faster on integration of architecturally-validated patterns. Spike work has already de-risked the API surface and the agent's scaffolding is fast.
 - **Skeleton modules with new architectural patterns (M2.1, M2.3, M2.5) ran 0.4–0.75x estimate.** Still significantly faster than estimates.
 - **M2.6 ran 2.25x estimate** (2h plan, ~4.5h actual). Two smoke-gate-caught fix rounds for `mouseDown` async-handoff and `NSScreen.main` semantics. Outlier driven by real-OS-API surprises.
 - **M2.7 ran 2.5–3x estimate** (1h plan, ~2.5–3h actual). The implementation itself ran on-estimate; the +1.5h overage was the milestone-closing close-out work (journal entry summarizing Phase 2, ledger update, architecture-doc consideration, multiple commits). Pure glue modules at phase boundaries should budget +1h for close-out.
+- **Spike #4 Phase 2 ran 2x estimate** (1.5h plan, ~3h actual). The plan ran on-estimate; the +1.5h overage was the S4 trigger-debug round (Chrome Meet didn't reproduce Phase 1's config-change behavior; input-device switch trigger validated the recovery code path instead). Smoke-gate-equivalent pattern: micro-spikes that exercise OS-API behavior carry the same +1.5h trigger-debug-or-fix-round risk as integration modules. The trigger problem also surfaced a real Phase 1 → Phase 2 reproducibility gap that's now documented as a finding for M3.1.
 
-**Pattern: skeleton work runs 2–4x faster than estimates; integration work hits 1.5–2x slower when smoke gates surface real OS-API bugs; milestone-closing modules add ~1h of close-out beyond their nominal scope.** The variance has three modes (skeleton-fast, integration-on-or-slower, milestone-overhead). Average comes out near 0.6x but the underlying distribution is multimodal.
+**Pattern: skeleton work runs 2–4x faster than estimates; integration and OS-API spike work hits 1.5–2x slower when smoke gates surface real OS-API behavior; milestone-closing modules add ~1h of close-out beyond their nominal scope.** The variance has three modes (skeleton-fast, integration-on-or-slower, milestone-overhead). Average comes out near 0.65x but the underlying distribution is multimodal.
 
 **Estimate-adjustment guidance for upcoming modules:**
 
@@ -25,6 +26,7 @@
 - Module with one real OS-API dependency (AVAudioEngine, SpeechAnalyzer, NSScreen): **estimate × 1.0** (one fix round in worst case, near-zero in best case)
 - Module with multiple real OS-API dependencies + multi-state behavior: **estimate × 1.5–2.0** (one or two fix rounds)
 - Modules following spike pre-validation (M2.1 after Spike #4): **estimate × 0.5** (the spike absorbed the risk)
+- Micro-spikes that exercise OS-API behavior at runtime: **estimate × 1.5–2.0** (S4-equivalent trigger-debug risk)
 - **Phase-closing modules: add +1h to estimate for close-out** (journal milestone framing, ledger refresh, architecture-doc consolidation)
 
 **Calendar pace:**
@@ -53,7 +55,7 @@ At ~3h/session active and ~1 session/day, **~18–22 working days** to Phase 5. 
 
 ---
 
-## Per-session wall-clock (Sessions 015–021)
+## Per-session wall-clock (Sessions 015–022)
 
 | Session | Date (Mexico, -05:00) | Commit span | Wall-clock | Modules | Notes |
 |---|---|---|---|---|---|
@@ -65,8 +67,9 @@ At ~3h/session active and ~1 session/day, **~18–22 working days** to Phase 5. 
 | 019 | 2026-05-06 | 06:50 → 08:10 (impl) + 17:21 → 17:23 (close) | ~3h split (~2h impl + ~1h close-out) | M2.5 | FloatingPanel. Sub-agent caught TokenStorage leak. |
 | 020 | 2026-05-06 | 18:19 → 22:17 (3h 58m) | ~4.5h | M2.6 + 2 fix rounds | Per-display position memory; smoke caught two real bugs. |
 | 021 | 2026-05-06 → 2026-05-07 | aef1ba3 → 6d87536 (overnight) + smoke 09:15 -05:00 | ~2.5–3h active (10.5h calendar incl. overnight break) | M2.7 | Session persistence. Phase 2 closes. First session under marker-block prompt template — no checklist drift. Agent caught 3 prompt errors before implementing. Smoke uneventful. |
+| 022 | 2026-05-08 | spike commits (TBD by user push) | ~3h | Spike #4 Phase 2 + 00_COLLABORATION_INSTRUCTIONS.md edit | Strict-concurrency tap pattern micro-spike. All 5 scenarios PASS. S4 trigger-debug round (Chrome Meet did not reproduce Phase 1 trigger; input-device switch validated recovery instead). Marker-block template promoted to standard prompt template; second session running with no checklist drift. |
 
-## Per-module estimate vs actual (Sessions 015–021)
+## Per-module estimate vs actual (Sessions 015–022)
 
 | Module | Session | Commit span | Actual wall-clock | Estimate (canonical) | Variance | Path |
 |---|---|---|---|---|---|---|
@@ -81,8 +84,9 @@ At ~3h/session active and ~1 session/day, **~18–22 working days** to Phase 5. 
 | M2.5 | 019 | 06:50 → 08:10 + close 17:21 | ~3h | 4h | -25% | FloatingPanel skeleton |
 | M2.6 | 020 | 18:19 → 22:17 (3h 58m) | ~4.5h | 2h | +125% | Per-display position + 2 fix rounds (mouseDown async-handoff + NSScreen.main semantics) |
 | M2.7 | 021 | aef1ba3 → 6d87536 (overnight) | ~2.5–3h active | 1h | +150–200% | Session persistence. Implementation on-estimate; close-out for milestone-closing module added ~1.5h beyond M2.7's nominal 1h scope. |
+| Spike #4 Phase 2 | 022 | TBD by user push | ~3h | 1.5h | +100% | Strict-concurrency tap pattern + recovery cycle. Plan + impl on-estimate; +1.5h overage was S4 trigger-debug round (Chrome Meet did not reproduce Phase 1 trigger; input-device switch validated recovery instead). All 5 scenarios PASS. |
 
-**Aggregate (Sessions 015–021):** ~28h estimated, ~16.5h actual = **0.59x ratio**. The M2.6 + M2.7 outliers (smoke-gate fix rounds + Phase 2 milestone close-out work) brought the overall ratio up from Session 020's 0.51x. Skeleton work alone still runs 0.12–0.50x.
+**Aggregate (Sessions 015–022):** ~29.5h estimated, ~19.5h actual = **0.66x ratio**. The M2.6, M2.7, and Spike #4 Phase 2 outliers (smoke-gate fix rounds + milestone close-out + spike trigger-debug) brought the overall ratio up from Session 020's 0.51x. Skeleton work alone still runs 0.12–0.50x.
 
 **Notes:**
 - Per-module actual = git commit span + ~15–30 min architect-side time before first commit (plan + approval) + ~10–20 min close-out time after last commit. Multi-module sessions (Session 015) divide the surrounding time across modules touched.
@@ -104,12 +108,12 @@ Approximate wall-clock per the commit timeline:
 
 ---
 
-## Project totals (current state, end of Session 020)
+## Project totals (current state, end of Session 022)
 
-- Calendar days from project start (May 1) to current: **6 days**
-- Approximate total wall-clock: **45–50h** (Phase 0 spikes ~30h + Phase 1+2 modules ~17h)
-- Tagged modules complete: 9 (M1.1, M1.2, M1.3, M1.4, M1.5, M1.6, M2.1, M2.3, M2.5, M2.6)
-- Modules remaining for v1: ~12 (M2.7 + Phase 3 modules + Phase 4 + Phase 5 + Phase 6)
+- Calendar days from project start (May 1) to current: **8 days**
+- Approximate total wall-clock: **48–53h** (Phase 0 spikes ~30h + Phase 1+2 modules ~17h + Spike #4 Phase 2 ~3h)
+- Tagged modules complete: 11 (M1.1, M1.2, M1.3, M1.4, M1.5, M1.6, M2.1, M2.3, M2.5, M2.6, M2.7) + Spike #4 Phase 2
+- Modules remaining for v1: ~11 (Phase 3 modules + Phase 4 + Phase 5 + Phase 6)
 
 ---
 

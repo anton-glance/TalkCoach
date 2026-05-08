@@ -4,6 +4,87 @@
 
 ---
 
+## Session 022 — 2026-05-08 — Spike #4 Phase 2 (strict-concurrency tap tightening) shipped: canonical pattern locked for M3.1; second session running with marker-block template and zero checklist drift; `00_COLLABORATION_INSTRUCTIONS.md` updated to make the template standard
+
+**Format:** Architect-driven micro-spike between Phase 2 close (Session 021) and Phase 3 open (M3.1 next). Decision at session start: tighten Spike #4's Swift 6 strict-concurrency findings via a focused micro-spike before M3.1 vs roll into M3.1's plan. User chose tighten — *"I don't want to move forward if the base decisions are not fully validated and clearly documented."* That choice paid off: the spike surfaced a real Phase 1 → Phase 2 reproducibility gap (Chrome Meet didn't trigger config-change behavior reproducibly) plus a frame-size assumption that would have been wrong in M3.1.
+
+### What happened
+
+The session opened with two architect doc items carried over from Session 021's open-questions list. Item 1 (promote `=== MARKER ===` block template to `00_COLLABORATION_INSTRUCTIONS.md`'s standard prompt template) was a 5-minute doc edit: marker blocks added to Phase 3 self-review and Acceptance Criteria sections of the Standard Prompt Template, plus a new Always-do #10 explaining marker blocks as a generalizable mechanism for any list the agent must reproduce verbatim. Item 2 (Spike #4 micro-tighten vs straight M3.1 decision) was answered by the user: tighten.
+
+The Spike #4 Phase 2 spec was added inline under the existing Spike #4 entry in `05_SPIKES.md` (preserves the Phase 1 outcomes from Session 008, adds the Phase 2 question + method + pass criteria). The agent prompt (`spike4_phase2_tap_tightening.md`) covered: harness layout mirroring `MicCoexistSpike/`, three-section `AudioTapBridge` API surface, hand-off mechanism candidates with primary + fallback, backpressure policy candidates with primary + fallback, 5 scenarios (S1 baseline, S2 strict-concurrency compile gate, S3 TSAN, S4 manual config-change recovery, S5 backpressure stress), full Phase 3 checklist marker block, Acceptance Criteria marker block, and a third Scenario Outcomes marker block.
+
+The agent's Phase 1 plan came back substantive on first pass with five real verifications:
+
+1. Verified Swift 6.2 SPM strict-concurrency default by reading verbose `swift build -v` output of the existing `MicCoexistSpike/` (compiler passes `-swift-version 6` regardless of additional flags).
+2. Verified `main.swift` top-level code is MainActor-isolated in Swift 6 by reading `MicCoexistSpike/Sources/MicCoexistSpikeCLI/main.swift:57-58` (`nonisolated(unsafe) let engine = AVAudioEngine()`).
+3. Verified production project uses `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` in Xcode build settings — and **flagged the SPM-vs-production divergence as risk #7**: in SPM, top-level free functions are implicitly nonisolated, but in production they're implicitly `@MainActor`. The explicit `nonisolated` keyword on `makeTapBlock` is redundant in SPM but **load-bearing in production**. Without it the function is implicitly `@MainActor` and the tap closure inherits the `_dispatch_assert_queue_fail` crash from Phase 1. This insight alone justified the spike — it would have hit M3.1 as a runtime crash with no compile signal.
+4. Picked `AsyncStream` continuation + `.bufferingNewest(64)` as the primary hand-off + backpressure choice, with three rejected alternatives documented for each (Task.detached/per-buffer + unbounded mailbox; nonisolated(unsafe) ring buffer; dispatch serial queue / .bufferingOldest; .unbounded; bounded queue with blocking yield).
+5. Unilaterally adjusted S5 stress-delay 50ms → 200ms (with a 50ms confirm-no-trigger pre-pass) because at 48kHz/4096 the callback fires every ~85ms and 50ms can't actually stress the policy. Agent's math was correct; accepted.
+
+Architect approved with one addition: `CapturedAudioBuffer` must carry actual PCM sample data (not just metadata), so the in-closure copy step is validated under strict concurrency / TSAN / sustained rate. Without it, M3.1 would inherit the sample-copy validation as new work and the spike's "copy-paste this pattern" promise would be partial. Plus a requirement that REPORT.md's "how M3.1 copies this" subsection lead with the `nonisolated` factory function's load-bearing role under production isolation, not bury it as a footnote.
+
+Implementation came back clean on S1, S2, S3, S5, but **S4 SKIP'd twice** — Chrome Meet did not trigger `AVAudioEngineConfigurationChange` in two 90s runs (~952 and ~958 buffers received, zero events) despite the engine-first ordering that Spike #4 Phase 1 (Session 008) had recorded as reliably triggering the notification. The agent's first reflex was to suggest closing S4 as SKIP and treating AC5 as a "confidence-builder, not a gating criterion." Architect pushed back directly: AC5 is gating; the whole reason for the spike was to exercise the recovery cycle Phase 1 documented but didn't run. Suggested input-device switch as an alternative trigger source — exercises the same notification + recovery code path, well-known to fire `AVAudioEngineConfigurationChange` reliably.
+
+User confirmed AirPods on hand. Re-ran S4 with input-device switch (MacBook mic → AirPods → MacBook mic). Two config-change events captured cleanly: #1 routed to AirPods (24kHz / 1ch), #2 routed back (48kHz / 1ch). Recovery latency 196.9ms — well under the 500ms AC5 budget. No crash. 177 buffers received post-recovery. The same `AsyncStream` continuation was reused across recovery so the consumer's `for await` loop was uninterrupted.
+
+Final report came back with all three marker blocks dispositioned verbatim: 16 Phase 3 checklist items, 8 ACs (each quoted with file/line/scenario references), 5 scenario outcomes. Sub-agent independent review produced four findings with verbatim notes: one MEDIUM (S4Tracker harness data race, harness-only, doesn't affect production pattern), two LOWs (recover() logs format pre-reinstall — cosmetic; S5 hardcodes 48kHz — harness fragility), and one INFO (`@preconcurrency import AVFoundation` in main.swift is correct; AudioTapBridge.swift uses plain import). All findings dispositioned as harness-level concerns; no production-pattern changes needed. Sub-agent review credible per Session 020's discipline: verbatim notes per item, real findings, dispositions explained.
+
+**Spike #4 Phase 2 closes. M3.1 is unblocked.**
+
+### Architectural decisions locked
+
+1. **Canonical strict-concurrency tap pattern.** A top-level `nonisolated func makeTapBlock(continuation: AsyncStream<CapturedAudioBuffer>.Continuation) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void`, capturing only the Sendable continuation. The `nonisolated` keyword is **load-bearing** under production's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. M3.1 copies this exactly.
+2. **`CapturedAudioBuffer` carries PCM samples, not just metadata.** Sendable value type with `frameLength`, `sampleRate`, `channelCount`, `sampleTime`, `hostTime`, plus the actual sample data copied out of `AVAudioPCMBuffer.floatChannelData` inside the tap closure before yielding. Validated under strict concurrency (S2), TSAN (S3), and sustained rate (S1: 2,976,000 samples copied over 60s).
+3. **Hand-off via `AsyncStream` continuation; backpressure via `.bufferingNewest(64)`.** ~5.5s of audio at 48kHz; bounded memory; oldest dropped when consumer falls behind. Drain count exactly matched policy capacity in S5. Three rejected alternatives documented for each choice (per-buffer Task.detached + unbounded mailbox; nonisolated(unsafe) ring buffer; dispatch serial queue / .bufferingOldest; .unbounded; bounded queue with blocking yield).
+4. **`AVAudioEngineConfigurationChange` recovery cycle.** Observe → stop → remove tap → re-set `setVoiceProcessingEnabled(false)` → reinstall tap with `format: nil` → prepare → start → resume buffer flow. Same `AsyncStream` continuation reused across recovery; consumer loop uninterrupted. Validated via input-device switch trigger (recovery latency 196.9ms in S4).
+5. **Marker block template promoted to standard prompt template.** Added to `00_COLLABORATION_INSTRUCTIONS.md`'s Standard Prompt Template (Phase 3 checklist + Acceptance Criteria) and as Always-do #10. Established Session 021 after three sessions of checklist drift (M2.3, M2.5, M2.6); validated first try in M2.7's prompt; second-try-clean in this session's spike prompt with a third marker block (Scenario Outcomes) added ad-hoc per the new pattern.
+
+### Findings to surface for M3.1
+
+1. **Chrome Meet trigger non-reproducibility from Phase 1.** Two 90s S4 runs with engine-first ordering and Chrome joining a Meet produced zero `AVAudioEngineConfigurationChange` events. Spike #4 Phase 1 (Session 008) recorded this trigger as reliable. Possible causes: Chrome version drift, harness-vs-Phase-1-harness setup difference, or macOS behavior change. M3.1's smoke gate should test both Chrome Meet and input-device switch as trigger sources to surface the discrepancy in production conditions.
+2. **Recovery latency measured only on event #2 in S4.** Either #1's latency was measured but not logged, or the measurement logic activates only on subsequent events after the first. M3.1's plan must specify recovery measurement on **every** config-change event.
+3. **Frame size from `format: nil` on this hardware is ~4792, not 4096.** S5's expected-callback math used 4096 (overestimating by ~17%). M3.1 must derive frame size dynamically from the active format, never hardcode 4096.
+4. **VPIO confirmed `false` after recovery.** No additional re-disable was needed in the recovery cycle's tested path, but the implementation includes the re-disable step defensively. M3.1 should keep the defensive re-disable (cheap; protects against future macOS behavior changes).
+
+### Procedural lessons
+
+1. **Marker block enforcement is now stable across module types.** Two sessions running (M2.7 module, Spike #4 Phase 2 micro-spike) of the new template producing zero checklist drift on first read. The template generalizes beyond modules — adding a third ad-hoc marker block (Scenario Outcomes) for spike-specific work proved the pattern composes. Promote-to-standard-template was the right call; no regression to artifact-as-file fallback (Session 020's option b) needed.
+2. **Architect pushback on agent's premature SKIP-as-PASS framing was load-bearing.** When the first two S4 runs SKIP'd, the agent's reflex was to argue AC5 was a confidence-builder rather than gating. Architect direct response: "AC5 is gating; the whole reason we paid 1.5h for Phase 2 was to exercise the recovery cycle Phase 1 documented but didn't run." Suggested input-device switch as alternative trigger. Run cleared cleanly. Lesson: when an agent reframes an AC's stringency mid-implementation, push back hard — the prompt's framing was the contract, and the agent isn't authorized to renegotiate it.
+3. **The architect's "verify before relying" instruction earned its keep again.** Same pattern as M2.7 (Session 021). The agent verified five real things (Swift 6 SPM defaults, MicCoexistSpike's nonisolated(unsafe) globals pattern, production's SWIFT_DEFAULT_ACTOR_ISOLATION, the SPM-vs-production isolation divergence at risk #7, and the load-bearing role of the explicit `nonisolated` keyword). Risk #7 alone would have cost a runtime crash in M3.1. Keep the instruction in every agent prompt that touches existing patterns.
+4. **OS-API micro-spikes carry the same +1.5h trigger-debug-or-fix-round risk as integration modules.** Spike #4 Phase 2 ran 1.5h plan + 1.5h S4 trigger-debug = 3h total against 1.5h estimate (+100%). Same shape as M2.6's smoke-gate-caught-real-OS-bug pattern. New estimate-adjustment guidance added to `08_TIME_LEDGER.md`: micro-spikes that exercise OS-API behavior at runtime should multiply the estimate × 1.5–2.0.
+
+### Time accounting
+
+- Session start: 2026-05-08 ~07:00 -05:00 (Mexico) — first user message in this conversation establishing continuation work; date bash call on close-out for accuracy
+- Session end: 2026-05-08 12:52 -05:00 / 17:52 UTC — close-out doc writes
+- Wall-clock total: ~3h active (architect-side: doc edit + spike spec + agent prompt + plan audit + approval round + S4 SKIP debug + final audit + close-out; agent-side: ~1.5–2h of impl work landed asynchronously)
+- Per-phase breakdown:
+  - Architect doc edit + Spike #4 question framing: ~30 min
+  - Spike spec write + agent prompt write: ~30 min
+  - Phase 1 plan audit + approval-with-addition: ~15 min
+  - Agent implementation (asynchronous): not on architect clock
+  - S4 SKIP diagnosis + input-device-switch suggestion: ~10 min
+  - Final report audit + close-out doc writes: ~30 min
+  - Spike commits + tag (estimated user-side): TBD
+- Estimate: 1.5h (spike Phase 2 spec). Actual active: ~3h. **Variance: +100%.** Cause: S4 trigger-debug round (Chrome Meet didn't reproduce Phase 1 trigger; one full re-run cycle to validate via input-device switch). Implementation itself ran on-estimate; the overage was the trigger-debug round, same shape as M2.6's smoke-gate fix rounds.
+- See `08_TIME_LEDGER.md` for the cumulative pace data and updated estimate-adjustment guidance.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry, including `Time accounting` block
+- `00_COLLABORATION_INSTRUCTIONS.md` — Standard Prompt Template Phase 3 checklist + Acceptance Criteria sections wrapped in `=== MARKER ===` / `=== END_MARKER ===` blocks with reproduce-verbatim instructions; new Always-do #10 promoting marker blocks as a generalizable mechanism; Last-revised header bumped
+- `05_SPIKES.md` — Spike #4 entry extended with Phase 2 spec inline (preserved Phase 1 outcomes from Session 008); after spike close, Phase 2 status updated to ✅ passed with full validated-outcomes block including canonical pattern, hand-off mechanism, backpressure policy, recovery cycle, and three findings for M3.1 (Chrome Meet trigger non-reproducibility, recovery-latency-on-#1 ambiguity, frame-size assumption); original Phase 2 spec preserved below the validated-outcomes block per the spike-doc convention
+- `04_BACKLOG.md` — S4 row updated to reflect Phase 2 close (`✅ passed Session 008 + Phase 2 strict-concurrency tightening ✅ Session 022; canonical pattern locked, recovery cycle validated 196.9ms`)
+- `08_TIME_LEDGER.md` — Session 022 row added to per-session table; Spike #4 Phase 2 row added to per-module table; pace observations refreshed including new estimate-adjustment guidance for OS-API micro-spikes; project totals updated to end-of-Session-022
+
+### Next session
+
+- **M3.1 AudioPipeline.** First module of Phase 3. Estimate 4h canonical (per backlog); adjusted by Session 022 lessons: copy `MicTapTightenSpike/`'s `AudioTapBridge.swift` canonical pattern directly (the production form, with explicit `nonisolated`), wire it to a real consuming actor that hands buffers to the (yet-unbuilt) transcription engine surface. M3.1's plan must specify: (a) recovery measurement on every config-change event, not just rapid-fire successors; (b) frame size derived dynamically from the active format, never hardcoded; (c) smoke-gate test for both Chrome Meet and input-device switch as trigger sources; (d) the defensive VPIO re-disable in the recovery cycle. Estimate guidance: × 1.0–1.5 (one real OS-API dependency, but the canonical pattern is fully validated by this spike — risk is in wiring + smoke-gate trigger validation).
+- Phase 3 covers M3.1, M3.4 (LanguageDetector), M3.5/a/b (TranscriptionEngine routing for Apple + Parakeet), M3.7 (token wiring). End of Phase 3 is Checkpoint #2 — the debug HUD showing live token stream, language, and backend identifier on real Zoom audio. This is where the Russian-transcription-quality risk gate fires.
+
+---
+
 ## Session 021 — 2026-05-07 — M2.7 SessionPersistence shipped: Phase 2 closes; first session under the marker-block prompt template; agent caught three of architect's prompt errors before implementing
 
 **Format:** Architect-driven module sequencing with the Claude Code agent. M2.7 from green-field to tagged complete in one architect session, with an overnight break between Phase 1 plan approval and the agent's Phase 2 work landing the next morning. Two commits: `aef1ba3` red, `6d87536` green. Agent did not need a fix round. **Phase 2 of the v1 release plan closes here** — the exit gate (open Voice Memos → widget appears at saved per-display position → close → fade-out → SwiftData store contains a session record on next launch) was validated end-to-end by the manual smoke gate.

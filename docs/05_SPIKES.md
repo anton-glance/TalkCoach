@@ -168,7 +168,7 @@ This spike's outputs (WER bars, filler recognition rates, word-boundary expectat
 
 ## Spike #4 — Mic coexistence with Zoom voice processing
 
-**Status:** ⚠️ passed with caveats (Session 008). Full report at `MicCoexistSpike/REPORT.md`.
+**Status:** ⚠️ passed with caveats (Phase 1, Session 008) · 📋 Phase 2 tightening planned (Session 022). Full Phase 1 report at `MicCoexistSpike/REPORT.md`.
 
 ### Validated outcomes (Spike closed Session 008)
 - **VPIO stays false:** `isVoiceProcessingEnabled` remained `false` at every checkpoint across all 10 scenarios. macOS never overrode it. `setVoiceProcessingEnabled(false)` works as documented.
@@ -209,6 +209,88 @@ FM4 (no performance impact). Apple Developer Forums show that VPIO (Voice Proces
 - Confirmed mic coexistence behavior across Zoom / Meet / FaceTime
 - The exact `AVAudioEngine` configuration that works
 - Decision: can we proceed with the architecture as drafted
+
+### Phase 2 — Strict-concurrency tap pattern tightening (Session 022)
+
+**Status:** ✅ passed (Session 022). All 5 scenarios PASS, all 8 ACs met, sub-agent review clean. Full report at `MicTapTightenSpike/REPORT.md`.
+
+#### Validated outcomes (Session 022)
+
+- **Canonical strict-concurrency pattern locked.** A top-level `nonisolated func makeTapBlock(continuation:)` returning `@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void`, capturing only an `AsyncStream<CapturedAudioBuffer>.Continuation` (Sendable). The `nonisolated` keyword is **load-bearing** under production's `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` — without it the function is implicitly `@MainActor` and the tap closure inherits the `_dispatch_assert_queue_fail` crash from Phase 1. In SPM (no default-isolation setting), `nonisolated` is redundant but should be kept for consistency with the production form. M3.1 copies the production form.
+- **Hand-off mechanism: `AsyncStream` continuation with `.bufferingNewest(64)`.** `continuation.yield(_:)` is `@Sendable`, thread-safe, non-blocking — safe to call from CoreAudio's render thread. Consumer pulls via `for await`. Three rejected alternatives documented (per-buffer `Task.detached` allocates on the audio thread + unbounded actor mailbox; `nonisolated(unsafe)` ring buffer fights the concurrency model; dispatch serial queue is pre-Swift-concurrency).
+- **Backpressure policy: `.bufferingNewest(64)`.** ~5.5s of audio at 48kHz; bounded memory; oldest dropped silently when consumer falls behind. Drain count exactly matched policy capacity in S5 (64 elements), confirming the policy held. Three rejected alternatives documented (`.bufferingOldest` keeps stale data — wrong for real-time audio; `.unbounded` carries OOM risk; bounded queue with blocking yield would block the render thread).
+- **`AVAudioEngineConfigurationChange` recovery cycle.** Observe → stop engine → remove tap → re-set `setVoiceProcessingEnabled(false)` → reinstall tap with `format: nil` → prepare → start → resume buffer flow. Same `AsyncStream` continuation reused across recovery so the consumer's `for await` loop is uninterrupted. Recovery latency 196.9ms in S4 (well within 500ms budget). VPIO state confirmed `false` after recovery.
+- **`CapturedAudioBuffer` carries PCM samples, not just metadata.** Per the architect's plan-approval addition: the tap closure copies sample data out of `AVAudioPCMBuffer.floatChannelData` before yielding. Validated under strict concurrency (S2), TSAN (S3), and at sustained rate (S1: 2,976,000 samples copied over 60s, no continuity gaps). M3.1 inherits the validated copy step, not the validation work.
+- **Strict-concurrency + TSAN clean.** S2: 0 errors / 0 warnings under Swift 6 + `-warnings-as-errors`. S3: 0 TSAN warnings over 60s, 618 buffers received. No `_dispatch_assert_queue_fail` in any scenario.
+- **Total spike effort:** ~1.5h estimated, ~3h actual including S4 trigger-debugging round (Chrome Meet did not reproduce Phase 1's config-change behavior; input-device switch trigger validated the recovery code path instead).
+
+#### Caveats and findings for M3.1
+
+1. **Chrome Meet trigger non-reproducibility from Phase 1.** Two 90s S4 runs with engine-first ordering and Chrome joining a Meet produced zero `AVAudioEngineConfigurationChange` events (~952 and ~958 buffers respectively). Spike #4 Phase 1 (Session 008) recorded this trigger as reliable. Possible causes: Chrome version drift, harness-vs-Phase-1-harness setup difference, or macOS behavior change. The recovery code path was validated via input-device switch (MacBook mic ↔ AirPods), which exercises the same notification + recovery cycle. M3.1's smoke gate should include both trigger sources to surface this discrepancy in production conditions.
+2. **Recovery latency measured only on event #2 in S4, not event #1.** Either #1's latency was measured but not logged, or the measurement logic activates only on subsequent events after the first. M3.1's plan must specify recovery measurement on **every** config-change event, not just rapid-fire successors. (Documented in `MicTapTightenSpike/REPORT.md` "S4 recovery-latency measurement: per-event analysis.")
+3. **S5 expected-callback math overestimated.** Report calculated 703 expected callbacks at "48kHz / 4096 frames" but actual frame size delivered by `format: nil` on this hardware is ~4792 (~99.8ms per callback, ~10.0/sec). True expected ≈ 601 over 60s. The `bufferingNewest(64)` policy demonstrably held (drain = 64), so AC6 is met regardless. M3.1 must derive frame size dynamically from the active format, never hardcode 4096.
+4. **Sub-agent MEDIUM finding (harness-only).** `S4Tracker` in `MicTapTightenSpike/main.swift` is `@unchecked Sendable` with mutable state and no synchronization. Benign data race in the harness; does not affect the production pattern M3.1 copies. Not fixed (harness-scope).
+
+#### Original Phase 2 specification (preserved for reference)
+
+##### Question
+What's the canonical Swift 6 strict-concurrency pattern for an `AVAudioEngine` input-tap closure that hands buffers to a non-main consuming actor, plus the recovery cycle for `AVAudioEngineConfigurationChange`, such that the pattern compiles clean under `-strict-concurrency=complete`, runs without `_dispatch_assert_queue_fail`, and survives a Chrome/Safari Meet config-change without buffer-flow loss?
+
+#### Why it matters
+M3.1 (`AudioPipeline`) is the next module after this spike. Spike #4 Phase 1 (Session 008) identified two findings that block confident M3.1 implementation but did not lock the implementation pattern:
+
+1. **Swift 6 finding.** Audio tap closures must NOT inherit `@MainActor` isolation — strict concurrency crashes at runtime (`_dispatch_assert_queue_fail`) if the tap closure is defined in a main-actor context. The fix direction is "define tap callbacks in a separate non-main-actor source file" but the canonical pattern that hands buffers to a non-main consuming actor was not exercised end-to-end under strict mode.
+
+2. **Recovery requirement.** Production must observe `AVAudioEngineConfigurationChange`, restart engine, reinstall tap, use `format: nil` (never hardcode channel count). The end-to-end recovery cycle was not exercised in Phase 1 — only the no-recovery-needed scenarios.
+
+If M3.1 is the validation site for these patterns, a single smoke-gate fix round costs +2–3h; one fix round per finding = +4–6h. A focused 1.5h tightening here pays for itself even if it heads off only one fix round, and protects M3.1's plan content from being driven by unverified assumptions.
+
+#### Method
+1. Build a tiny harness `MicTapTightenSpike/` (mirror `MicCoexistSpike/` structure):
+   - Swift Package executable, `-strict-concurrency=complete -warnings-as-errors`
+   - One `AudioTapBridge.swift` source file containing the canonical pattern (the production-shape artifact this spike validates)
+   - One `main.swift` runner that builds the bridge, runs the scenarios, prints structured outcomes
+   - One `REPORT.md` filled in at the end
+2. Implement the canonical pattern as the bridge:
+   - Owns an `AVAudioEngine` instance
+   - Configures `setVoiceProcessingEnabled(false)` per Phase 1 finding
+   - Installs a tap on the input node with `format: nil`
+   - The tap closure is defined outside any `@MainActor` context
+   - Hands each buffer to a consuming actor via a single, documented mechanism (the spike's job is to pick and validate one of: `AsyncStream` continuation, actor-task spawning, `nonisolated(unsafe)` ring buffer with explicit barrier, etc. — agent picks primary + fallback in Phase 1 plan)
+   - Observes `AVAudioEngineConfigurationChange` and runs a recovery cycle: stop → reinstall tap → re-set VPIO=false → restart → resume buffer flow
+3. Run scenarios:
+   - **S1 — Baseline (60s):** start engine, verify buffer flow at the consuming actor (count, monotonic timestamps).
+   - **S2 — Strict-concurrency compile gate:** must compile clean under `-strict-concurrency=complete -warnings-as-errors`.
+   - **S3 — Thread Sanitizer (60s):** S1 under TSAN; zero warnings.
+   - **S4 — Config-change recovery:** start engine, then user manually opens Chrome and joins a Google Meet (any meeting; self-join test room fine). Confirm `AVAudioEngineConfigurationChange` fires, recovery runs, buffer flow resumes within 500ms, no crash.
+   - **S5 — Backpressure stress (60s):** consuming actor's buffer handler artificially delayed by 50ms per buffer. Documented backpressure policy holds without unbounded memory growth.
+4. Document findings in `REPORT.md` with the canonical pattern code excerpt + decision rationale + scenario outcomes + a "how M3.1 copies this" subsection.
+
+#### Pass criteria
+- S2 compiles clean under `-strict-concurrency=complete -warnings-as-errors`.
+- S3 runs 60s under TSAN with zero warnings.
+- S4 confirms recovery: config-change event observed, buffer flow resumes within 500ms, no crash.
+- S5 confirms documented backpressure policy holds (no unbounded memory growth, no crash).
+- `REPORT.md` documents the canonical pattern, the backpressure policy choice with rationale, the hand-off mechanism choice with rationale, and any caveats M3.1 needs to inherit.
+
+#### Fail mode → action
+- **S2 fails (compile errors under strict concurrency):** the chosen hand-off mechanism is incompatible with strict mode. Try the fallback. Re-run.
+- **S3 fails (TSAN warning):** data race between tap closure and actor consumer. The `nonisolated` boundary alone isn't sufficient — the buffer hand-off has a real race. Investigate `nonisolated(unsafe)` semantics or queue-based hand-off.
+- **S4 fails (recovery doesn't run, or buffer flow doesn't resume):** Phase 1's `AVAudioEngineConfigurationChange` finding is incomplete. Investigate observer attachment timing, engine state after stop, format retention across reinstall.
+- **S5 fails (memory unbounded):** backpressure policy is broken. Pick a stricter policy (drop oldest, drop newest, bounded queue) and re-validate.
+- **All pass:** copy the canonical pattern code excerpt into a Phase 2 validated-outcomes block (architect adds at session close). M3.1 is unblocked.
+
+#### Outputs
+- `MicTapTightenSpike/Sources/AudioTapBridge.swift` — canonical pattern (production-shape; M3.1 copies and adapts).
+- `MicTapTightenSpike/Sources/main.swift` — harness runner.
+- `MicTapTightenSpike/REPORT.md` — scenario outcomes + canonical pattern excerpt + locked policy decisions + "how M3.1 copies this" subsection.
+- Phase 2 validated-outcomes block added to this Spike #4 entry by the architect at session close.
+
+#### Out of scope
+- No production code modifications outside `MicTapTightenSpike/`. M3.1 is the next module *after* this spike.
+- No CPU / RSS measurement — Spike #7's scope.
+- No broader browser Meet coexistence testing — Phase 1 covered that.
+- No audio formats other than what `format: nil` delivers from the system default mic.
 
 ---
 
