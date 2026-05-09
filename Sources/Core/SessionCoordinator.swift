@@ -59,6 +59,11 @@ final class SessionCoordinator: ObservableObject {
     private var relayTask: Task<Void, Never>?
     private var activeEngine: TranscriptionEngine?
 
+    // Per-session measurement state — reset at start/end of each wiring cycle.
+    private var sessionStartTime: Date?
+    private var currentLocale: Locale?
+    private var sessionTokenCount = 0
+
     // MARK: Init
 
     var currentSession: SessionContext? {
@@ -134,13 +139,18 @@ final class SessionCoordinator: ObservableObject {
 
     private func runSession() async {
         guard let w = wiring else { return }
+        let wiringStart = Date()
+        sessionStartTime = wiringStart
+        sessionTokenCount = 0
 
         // Step 1: AudioPipeline
         do {
             try w.audioPipeline.start()
             Logger.session.info("SessionCoordinator: AudioPipeline started")
         } catch {
-            Logger.session.error("SessionCoordinator: wiring failed at AudioPipeline.start: \(error)")
+            let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
+            Logger.session.error("SessionCoordinator: wiring failed at AudioPipeline.start after \(elapsedMs)ms: \(error). Rollback complete in 0ms.")
+            sessionStartTime = nil
             return
         }
 
@@ -150,8 +160,12 @@ final class SessionCoordinator: ObservableObject {
             locale = try await w.languageDetector.start()
             Logger.session.info("SessionCoordinator: LanguageDetector detected \(locale.identifier)")
         } catch {
+            let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
+            let rollbackStart = Date()
             w.audioPipeline.stop()
-            Logger.session.error("SessionCoordinator: wiring failed at LanguageDetector.start: \(error)")
+            let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
+            Logger.session.error("SessionCoordinator: wiring failed at LanguageDetector.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
+            sessionStartTime = nil
             return
         }
 
@@ -170,9 +184,13 @@ final class SessionCoordinator: ObservableObject {
                 supportedLocalesProvider: w.supportedLocalesProvider
             )
         } catch {
+            let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
+            let rollbackStart = Date()
             await w.languageDetector.stop()
             w.audioPipeline.stop()
-            Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.init: \(error)")
+            let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
+            Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.init after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
+            sessionStartTime = nil
             return
         }
 
@@ -181,37 +199,64 @@ final class SessionCoordinator: ObservableObject {
             try await engine.start()
             Logger.session.info("SessionCoordinator: TranscriptionEngine started [\(locale.identifier)]")
         } catch {
+            let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
+            let rollbackStart = Date()
             await engine.stop()
             await w.languageDetector.stop()
             w.audioPipeline.stop()
-            Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.start: \(error)")
+            let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
+            Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
+            sessionStartTime = nil
             return
         }
 
         activeEngine = engine
+        currentLocale = locale
         localeMonitorTask = Task { [weak self] in await self?.monitorLocaleChanges() }
         relayTask = Task { [weak self] in await self?.relayTokens(from: engine) }
+
+        let setupMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
+        Logger.session.info("SessionCoordinator: wiring complete in \(setupMs)ms — locale=\(locale.identifier), backend=\(engine.backendName)")
     }
 
     private func monitorLocaleChanges() async {
         guard let w = wiring else { return }
         for await newLocale in w.languageDetector.localeChange {
-            // Locale-swap live re-routing is deferred to M3.8. Log only.
-            Logger.session.info("SessionCoordinator: locale change detected (\(newLocale.identifier)) — deferred to M3.8")
+            let prevIdentifier = currentLocale?.identifier ?? "none"
+            let elapsedMs = sessionStartTime.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
+            Logger.session.info("SessionCoordinator: locale change \(prevIdentifier)→\(newLocale.identifier) at \(elapsedMs)ms session time — deferred to M3.8")
+            currentLocale = newLocale
         }
     }
 
     private func relayTokens(from engine: TranscriptionEngine) async {
+        var windowStart = Date()
+        var tokensInWindow = 0
+
         for await token in engine.tokenStream {
             if Task.isCancelled { break }
             Logger.session.debug("SessionCoordinator: token '\(token.token)' t=[\(token.startTime, format: .fixed(precision: 2))–\(token.endTime, format: .fixed(precision: 2))] final=\(token.isFinal)")
+            sessionTokenCount += 1
+            tokensInWindow += 1
             for consumer in consumers {
                 await consumer.consume(token)
+            }
+
+            let elapsed = Date().timeIntervalSince(windowStart)
+            if elapsed >= 5.0 {
+                let windowMs = Int(elapsed * 1000)
+                let rate = Double(tokensInWindow) / elapsed
+                Logger.session.info("SessionCoordinator: token rate = \(tokensInWindow) tokens in \(windowMs)ms (\(String(format: "%.1f", rate)) tok/s)")
+                tokensInWindow = 0
+                windowStart = Date()
             }
         }
     }
 
     private func teardownWiring() async {
+        let teardownStart = Date()
+        let sessionMs = sessionStartTime.map { Int(teardownStart.timeIntervalSince($0) * 1000) } ?? 0
+
         sessionWiringTask?.cancel()
         localeMonitorTask?.cancel()
         relayTask?.cancel()
@@ -234,6 +279,15 @@ final class SessionCoordinator: ObservableObject {
         for consumer in consumers {
             await consumer.sessionEnded()
         }
+
+        let teardownMs = Int(Date().timeIntervalSince(teardownStart) * 1000)
+        let totalTokens = sessionTokenCount
+        let avgRate = sessionMs > 0 ? Double(totalTokens) / (Double(sessionMs) / 1000.0) : 0.0
+        Logger.session.info("SessionCoordinator: session ended — duration=\(sessionMs)ms, total tokens=\(totalTokens), avg rate=\(String(format: "%.1f", avgRate)) tok/s, teardown=\(teardownMs)ms")
+
+        sessionStartTime = nil
+        currentLocale = nil
+        sessionTokenCount = 0
 
         Logger.session.info("SessionCoordinator: session teardown complete")
     }

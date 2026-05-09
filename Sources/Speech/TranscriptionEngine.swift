@@ -16,6 +16,8 @@ final class TranscriptionEngine {
     private let continuation: AsyncStream<TranscribedToken>.Continuation
     private var relayTask: Task<Void, Never>?
 
+    var backendName: String { String(describing: type(of: backend)) }
+
     // async because SpeechTranscriber.supportedLocales is an async property;
     // throws because an unsupported locale is a programming error caught at session start.
     init(
