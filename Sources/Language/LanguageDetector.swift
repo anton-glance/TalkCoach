@@ -97,3 +97,15 @@ actor LanguageDetector {
         isStopped = true
     }
 }
+
+// MARK: - LanguageDetecting
+
+/// Convention-6 seam allowing SessionCoordinator tests to inject a FakeLanguageDetector
+/// without constructing a full LanguageDetector with all three strategy dependencies.
+nonisolated protocol LanguageDetecting: Sendable {
+    var localeChange: AsyncStream<Locale> { get }
+    func start() async throws -> Locale
+    func stop() async
+}
+
+extension LanguageDetector: LanguageDetecting {}
