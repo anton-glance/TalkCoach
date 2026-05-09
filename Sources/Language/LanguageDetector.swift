@@ -72,9 +72,21 @@ actor LanguageDetector {
         guard !isStarted, !isStopped else { return storedLocale ?? strategy.initialLocale }
         isStarted = true
 
-        let locale = strategy.initialLocale
-        storedLocale = locale
-        return locale
+        if strategy.isBlocking {
+            let detected = try await strategy.runDetection(continuation: continuation)
+            let locale = detected ?? strategy.initialLocale
+            storedLocale = locale
+            return locale
+        } else {
+            let s = strategy
+            let c = continuation
+            detectionTask = Task { [s, c] in
+                _ = try? await s.runDetection(continuation: c)
+            }
+            let locale = strategy.initialLocale
+            storedLocale = locale
+            return locale
+        }
     }
 
     func stop() {

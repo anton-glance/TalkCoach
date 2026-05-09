@@ -12,5 +12,21 @@ nonisolated enum ScriptCategory: Sendable, Equatable {
 }
 
 nonisolated func dominantScript(for locale: Locale) -> ScriptCategory {
-    .other
+    let langCode = locale.language.languageCode?.identifier ?? ""
+    let scriptID = Locale.Language(identifier: langCode).script?.identifier
+
+    switch scriptID {
+    case "Latn":
+        return .latin
+    case "Cyrl":
+        return .cyrillic
+    case "Jpan", "Kore", "Hans", "Hant":
+        return .cjk
+    case "Arab", "Aran":
+        return .arabic
+    case "Deva":
+        return .devanagari
+    default:
+        return .other
+    }
 }
