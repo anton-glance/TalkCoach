@@ -188,4 +188,24 @@ final class TranscriptionEngineTests: XCTestCase {
         )
         XCTAssertNotNil(engine)
     }
+
+    // MARK: AC8 (engine layer) — stop() twice is safe; tokenStream finishes after second stop
+
+    func testStopTwiceIsSafe() async throws {
+        let stub = SpeechStubBackend()
+        let apple = TestAppleBackendFactory()
+        apple.stubbedBackend = stub
+
+        let engine = try await makeEngine(locale: "en-US", appleLocales: ["en-US"], appleFactory: apple)
+        try await engine.start()
+        await engine.stop()
+        await engine.stop()  // second stop must not crash or hang
+
+        let expectation = XCTestExpectation(description: "tokenStream finishes after double stop")
+        Task {
+            for await _ in engine.tokenStream {}
+            expectation.fulfill()
+        }
+        await fulfillment(of: [expectation], timeout: 2.0)
+    }
 }
