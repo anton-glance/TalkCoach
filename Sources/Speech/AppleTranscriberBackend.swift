@@ -202,7 +202,7 @@ nonisolated func tokenize(from result: SpeechTranscriber.Result) -> [Transcribed
 
         for part in raw.split(separator: " ") {
             tokens.append(TranscribedToken(
-                word: String(part),
+                token: String(part),
                 startTime: start,
                 endTime: end,
                 isFinal: isFinal

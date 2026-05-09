@@ -3,9 +3,9 @@ import Foundation
 // MARK: - TranscribedToken
 
 struct TranscribedToken: Sendable, Equatable {
-    let word: String
-    let startTime: Double
-    let endTime: Double
+    let token: String
+    let startTime: TimeInterval
+    let endTime: TimeInterval
     let isFinal: Bool
 }
 
