@@ -151,7 +151,7 @@ nonisolated struct WhisperLIDStrategy: LanguageDetectionStrategy {
             logger.info("LanguageDetector: Strategy 3 committed \(detected.identifier)")
             continuation.finish()
             return detected
-        } catch is WhisperLIDProviderError {
+        } catch WhisperLIDProviderError.modelUnavailable {
             logger.warning("Whisper-tiny model unavailable, falling back to declaredLocales[0] best-guess")
             continuation.finish()
             return nil
