@@ -60,6 +60,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         sessionCoordinator.start()
+
+        let audioPipeline = AudioPipeline()
+        let declaredLocales = settingsStore.declaredLocales.map { Locale(identifier: $0) }
+        let bufferProvider = AudioPipelineBufferProvider(pipeline: audioPipeline)
+        let languageDetector = LanguageDetector(
+            declaredLocales: declaredLocales,
+            partialTranscriptProvider: StubPartialTranscriptProvider(),
+            whisperLIDProvider: StubWhisperLIDProvider(),
+            audioBufferProvider: bufferProvider
+        )
+        sessionCoordinator.wiring = SessionWiring(
+            audioPipeline: audioPipeline,
+            languageDetector: languageDetector,
+            appleBackendFactory: SystemAppleBackendFactory(),
+            parakeetBackendFactory: PlaceholderParakeetBackendFactory(supportedLocaleIdentifiers: []),
+            supportedLocalesProvider: SystemSupportedLocalesProvider()
+        )
+
         floatingPanelController.start()
 
         if let store = sessionStore {
