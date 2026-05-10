@@ -4,6 +4,11 @@ import Speech
 
 // MARK: - Fakes
 
+final class FakeSpeechTranscriberInstalledLocalesProvider: InstalledLocalesProvider, @unchecked Sendable {
+    var locales: [Locale] = []
+    func installedLocales() async -> [Locale] { locales }
+}
+
 final class FakeAssetInventoryStatusProvider: AssetInventoryStatusProvider, @unchecked Sendable {
     nonisolated(unsafe) var installedResult: Bool = true
     nonisolated(unsafe) var callCount = 0
@@ -104,5 +109,36 @@ final class AppleTranscriberBackendTests: XCTestCase {
         let (backend, _) = makeBackend()
         await backend.stop()
         await backend.stop()
+    }
+
+    // MARK: InstalledLocalesProvider seam
+
+    func testIsInstalledTrustsInstalledLocalesSet() async throws {
+        // Convention-6 seam: FakeSpeechTranscriberInstalledLocalesProvider controls the
+        // installed set without real OS state, making the test machine-independent.
+        // Locale is extracted from SpeechTranscriber via Mirror since .locale is not
+        // a public property on SpeechTranscriber (verified Session 026 diagnostic).
+        let fakeProvider = FakeSpeechTranscriberInstalledLocalesProvider()
+        fakeProvider.locales = [Locale(identifier: "en_US")]
+        let sut = SystemAssetInventoryStatusProvider(installedLocalesProvider: fakeProvider)
+
+        let enUS = SpeechTranscriber(
+            locale: Locale(identifier: "en_US"),
+            transcriptionOptions: [],
+            reportingOptions: AppleTranscriberBackend.reportingOptions,
+            attributeOptions: AppleTranscriberBackend.attributeOptions
+        )
+        let deDE = SpeechTranscriber(
+            locale: Locale(identifier: "de_DE"),
+            transcriptionOptions: [],
+            reportingOptions: AppleTranscriberBackend.reportingOptions,
+            attributeOptions: AppleTranscriberBackend.attributeOptions
+        )
+
+        let enUSInstalled = try await sut.isInstalled(transcriber: enUS)
+        let deDEInstalled = try await sut.isInstalled(transcriber: deDE)
+
+        XCTAssertTrue(enUSInstalled, "en_US in fakeInstalledLocales → should be installed")
+        XCTAssertFalse(deDEInstalled, "de_DE not in fakeInstalledLocales → should not be installed")
     }
 }
