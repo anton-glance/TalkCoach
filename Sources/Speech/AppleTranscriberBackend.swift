@@ -71,7 +71,7 @@ actor AppleTranscriberBackend: TranscriberBackend {
         )
 
         // Sessions must never trigger network IO. Refuse if model is not on disk.
-        let installed = try await assetStatusProvider.isInstalled(transcriber: transcriber)
+        let installed = try await assetStatusProvider.isInstalled(locale: matched)
         guard installed else {
             throw TranscriberBackendError.modelUnavailable
         }

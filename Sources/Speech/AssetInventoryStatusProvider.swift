@@ -3,6 +3,10 @@ import Speech
 
 // MARK: - InstalledLocalesProvider (Convention-6 seam)
 
+// InstalledLocalesProvider is kept as a Convention-6 seam: it lets
+// SystemAssetInventoryStatusProvider be unit-tested without real OS state.
+// FakeAssetInventoryStatusProvider covers AppleTranscriberBackend at the layer
+// above; this seam covers SystemAssetInventoryStatusProvider at the layer below.
 nonisolated protocol InstalledLocalesProvider: Sendable {
     func installedLocales() async -> [Locale]
 }
@@ -14,8 +18,8 @@ nonisolated struct SystemInstalledLocalesProvider: InstalledLocalesProvider {
 // MARK: - AssetInventoryStatusProvider
 
 nonisolated protocol AssetInventoryStatusProvider: Sendable {
-    /// Returns true if the model for the given transcriber is already installed on disk.
-    func isInstalled(transcriber: SpeechTranscriber) async throws -> Bool
+    /// Returns true if the speech model for `locale` is installed on this machine.
+    func isInstalled(locale: Locale) async throws -> Bool
 }
 
 // MARK: - SystemAssetInventoryStatusProvider
@@ -27,19 +31,11 @@ nonisolated struct SystemAssetInventoryStatusProvider: AssetInventoryStatusProvi
         self.installedLocalesProvider = installedLocalesProvider
     }
 
-    func isInstalled(transcriber: SpeechTranscriber) async throws -> Bool {
-        // installedLocales is the empirical source of truth: a locale present here means
-        // SpeechAnalyzer.start() will succeed for it on this machine (verified Session 026
-        // diagnostic). The previously-used AssetInventory.assetInstallationRequest signal
-        // returns non-nil even when the model is fully usable — it's the API for triggering
-        // download flows (M3.6 territory), not a session-start gate. See journal entry
-        // Session 026 for the full diagnostic findings and Spike #6 for the prior
-        // SpeechTranscriber.supportedLocale(equivalentTo:) trap of similar shape.
-        let locale = Mirror(reflecting: transcriber).children
-            .first(where: { $0.label == "locale" })?.value as? Locale
-        guard let locale else {
-            return try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) == nil
-        }
+    func isInstalled(locale: Locale) async throws -> Bool {
+        // SpeechTranscriber.installedLocales is the empirical source of truth: a locale present
+        // here means SpeechAnalyzer.start() will succeed (verified Session 026 diagnostic).
+        // AssetInventory.assetInstallationRequest returns non-nil even for fully-usable models
+        // — it is the API for triggering download flows (M3.6), not a session-start gate.
         let installed = await installedLocalesProvider.installedLocales()
         return installed.contains { $0.identifier == locale.identifier }
     }

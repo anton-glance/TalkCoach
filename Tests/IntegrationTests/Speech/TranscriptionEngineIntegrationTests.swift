@@ -74,14 +74,8 @@ final class TranscriptionEngineIntegrationTests: XCTestCase {
         }
 
         // Probe model without triggering a download.
-        let probedTranscriber = SpeechTranscriber(
-            locale: matched,
-            transcriptionOptions: [],
-            reportingOptions: AppleTranscriberBackend.reportingOptions,
-            attributeOptions: AppleTranscriberBackend.attributeOptions
-        )
         let isInstalled = try await SystemAssetInventoryStatusProvider()
-            .isInstalled(transcriber: probedTranscriber)
+            .isInstalled(locale: matched)
         if !isInstalled {
             throw XCTSkip("EN speech model not installed — skipping integration test")
         }
