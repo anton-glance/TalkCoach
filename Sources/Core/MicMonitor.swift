@@ -151,4 +151,19 @@ final class MicMonitor {
             delegate?.micDeactivated()
         }
     }
+
+    // MARK: - External Process Tracking (M3.7.1 — stubs, implementation pending)
+
+    /// Called by SessionCoordinator after AudioPipeline.start() completes.
+    /// Begins polling kAudioHardwarePropertyProcessObjectList at 1 Hz to detect
+    /// when all external processes release the mic without quitting.
+    func beginExternalProcessTracking() {}
+
+    /// Called by SessionCoordinator before AudioPipeline.stop() in teardown.
+    func endExternalProcessTracking() {}
+
+    /// Performs one poll tick: re-enumerates the HAL process list and checks
+    /// kAudioProcessPropertyIsRunningInput for all non-self processes.
+    /// Internal access so tests can drive ticks directly without real timers.
+    func executePollTick() {}
 }
