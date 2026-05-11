@@ -276,8 +276,11 @@ final class SessionCoordinator: ObservableObject {
 
         if let w = wiring {
             await w.languageDetector.stop()
-            micMonitor.endExternalProcessTracking()
+            // audioPipeline.stop() before endExternalProcessTracking(): releasing our I/O proc
+            // first ensures isDeviceRunningSomewhere transitions to false before the
+            // IsRunningSomewhere listener is re-enabled, preventing a spurious micActivated.
             w.audioPipeline.stop()
+            micMonitor.endExternalProcessTracking()
         }
 
         for consumer in consumers {

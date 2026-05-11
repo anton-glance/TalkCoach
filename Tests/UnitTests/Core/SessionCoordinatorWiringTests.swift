@@ -2,6 +2,49 @@ import AVFAudio
 import XCTest
 @testable import TalkCoach
 
+// MARK: - Ordering spy helpers (AC-W11)
+
+private final class OrderingEventLog: @unchecked Sendable {
+    var events: [String] = []
+}
+
+private final class OrderingSpyEngineProvider: AudioEngineProvider, @unchecked Sendable {
+    let log: OrderingEventLog
+    var isVoiceProcessingEnabled: Bool { false }
+    init(log: OrderingEventLog) { self.log = log }
+    func setVoiceProcessingEnabled(_ enabled: Bool) throws {}
+    func installTap(
+        bufferSize: AVAudioFrameCount,
+        format: AVAudioFormat?,
+        block: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) {}
+    func removeTap() {}
+    func prepare() {}
+    func start() throws {}
+    func stop() { log.events.append("audioPipelineStop") }
+}
+
+private final class OrderingSpyCoreAudioProvider: CoreAudioDeviceProvider, @unchecked Sendable {
+    let log: OrderingEventLog
+    init(log: OrderingEventLog) { self.log = log }
+    nonisolated func defaultInputDeviceID() -> AudioObjectID? { nil }
+    nonisolated func isDeviceRunningSomewhere(_ id: AudioObjectID) -> Bool? { nil }
+    nonisolated func addIsRunningListener(
+        device: AudioObjectID, handler: @escaping @Sendable () -> Void
+    ) -> AnyObject? { nil }
+    nonisolated func removeIsRunningListener(device: AudioObjectID, token: AnyObject) {}
+    nonisolated func addDefaultDeviceListener(
+        handler: @escaping @Sendable () -> Void
+    ) -> AnyObject? { nil }
+    nonisolated func removeDefaultDeviceListener(token: AnyObject) {}
+    nonisolated func addProcessObjectListListener(
+        handler: @escaping @Sendable () -> Void
+    ) -> AnyObject? { NSObject() }
+    nonisolated func removeProcessObjectListListener(token: AnyObject) {
+        log.events.append("endExternalTracking")
+    }
+}
+
 // MARK: - MinimalCoreAudioProvider
 // Internal (not private) so integration tests in Tests/IntegrationTests/Core/ can reuse it.
 
@@ -430,6 +473,57 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         deliverBuffer(to: engineProvider, frameCount: 480)
         await fulfillment(of: [newBufferExpectation], timeout: 2.0)
         consumeTask.cancel()
+    }
+
+    // MARK: - AC-W11: teardown stops AudioPipeline before ending external-process tracking
+
+    func testTeardownStopsAudioPipelineBeforeEndingExternalTracking() async throws {
+        let eventLog = OrderingEventLog()
+
+        let suiteName = "WiringTests.\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(true, forKey: "coachingEnabled")
+        let settingsStore = SettingsStore(userDefaults: defaults)
+        let micMonitor = MicMonitor(provider: OrderingSpyCoreAudioProvider(log: eventLog))
+        let sut = SessionCoordinator(micMonitor: micMonitor, settingsStore: settingsStore)
+
+        let spyEngine = OrderingSpyEngineProvider(log: eventLog)
+        let pipeline = AudioPipeline(provider: spyEngine)
+        let fakeLD = FakeLanguageDetector()
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let localesProvider = FakeSupportedLocalesProvider()
+        localesProvider.locales = [Locale(identifier: "en-US")]
+
+        sut.wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: yieldingFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: localesProvider
+        )
+
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        let consumer = FakeTokenConsumer()
+        sut.addConsumer(consumer)
+        let teardownExp = XCTestExpectation(description: "teardown completes")
+        consumer.onSessionEnded = { teardownExp.fulfill() }
+
+        sut.micDeactivated()
+        await fulfillment(of: [teardownExp], timeout: 3.0)
+
+        let pipelineStopIdx = eventLog.events.firstIndex(of: "audioPipelineStop")
+        let externalEndIdx = eventLog.events.firstIndex(of: "endExternalTracking")
+        XCTAssertNotNil(pipelineStopIdx,
+            "audioPipeline.stop() must be called during teardown; log=\(eventLog.events)")
+        XCTAssertNotNil(externalEndIdx,
+            "endExternalProcessTracking() must be called during teardown; log=\(eventLog.events)")
+        if let p = pipelineStopIdx, let e = externalEndIdx {
+            XCTAssertLessThan(p, e,
+                "audioPipeline.stop() must precede endExternalProcessTracking(); log=\(eventLog.events)")
+        }
     }
 
     private func deliverBuffer(
