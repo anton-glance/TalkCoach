@@ -147,6 +147,9 @@ final class SessionCoordinator: ObservableObject {
         do {
             try w.audioPipeline.start()
             Logger.session.info("SessionCoordinator: AudioPipeline started")
+            // We are now a HAL reader — isDeviceRunningSomewhere stays true while we run.
+            // Switch MicMonitor to process-list polling so external mic releases are detected.
+            micMonitor.beginExternalProcessTracking()
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at AudioPipeline.start after \(elapsedMs)ms: \(error). Rollback complete in 0ms.")
@@ -273,6 +276,7 @@ final class SessionCoordinator: ObservableObject {
 
         if let w = wiring {
             await w.languageDetector.stop()
+            micMonitor.endExternalProcessTracking()
             w.audioPipeline.stop()
         }
 
