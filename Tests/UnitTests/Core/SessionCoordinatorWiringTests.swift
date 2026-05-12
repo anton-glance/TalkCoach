@@ -170,19 +170,48 @@ final class YieldingAppleBackendFactory: AppleBackendFactory, @unchecked Sendabl
     }
 }
 
+// MARK: - FakeInactivityTimer
+
+final class FakeInactivityTimer: InactivityTimer, @unchecked Sendable {
+    private(set) var scheduleCallCount = 0
+    private(set) var cancelCallCount = 0
+    private(set) var lastScheduledTimeout: TimeInterval?
+    private var pendingAction: (@MainActor () -> Void)?
+
+    func schedule(after timeout: TimeInterval, action: @escaping @MainActor () -> Void) {
+        scheduleCallCount += 1
+        lastScheduledTimeout = timeout
+        pendingAction = action
+    }
+
+    func cancel() {
+        cancelCallCount += 1
+        pendingAction = nil
+    }
+
+    @MainActor func fireNow() {
+        let a = pendingAction
+        pendingAction = nil
+        a?()
+    }
+}
+
 // MARK: - SessionCoordinatorWiringTests
 
 @MainActor
 final class SessionCoordinatorWiringTests: XCTestCase {
 
-    private func makeSUT(coachingEnabled: Bool = true) -> SessionCoordinator {
+    private func makeSUT(
+        coachingEnabled: Bool = true,
+        inactivityTimer: any InactivityTimer = FakeInactivityTimer()
+    ) -> SessionCoordinator {
         let suiteName = "WiringTests.\(UUID())"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         defaults.set(coachingEnabled, forKey: "coachingEnabled")
         let settingsStore = SettingsStore(userDefaults: defaults)
         let micMonitor = MicMonitor(provider: MinimalCoreAudioProvider())
-        return SessionCoordinator(micMonitor: micMonitor, settingsStore: settingsStore)
+        return SessionCoordinator(micMonitor: micMonitor, settingsStore: settingsStore, inactivityTimer: inactivityTimer)
     }
 
     private func makeWiring(
@@ -537,5 +566,208 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         buffer.frameLength = frameCount
         let time = AVAudioTime(sampleTime: 0, atRate: 48_000)
         provider.lastInstalledBlock?(buffer, time)
+    }
+
+    // MARK: - M3.7.2 Inactivity Timer
+
+    func testInactivityTimer_FiresEndCurrentSession_When30sElapseWithoutTokens() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+
+        var endedSessions: [EndedSession] = []
+        sut.onSessionEnded { endedSessions.append($0) }
+
+        let (wiring, _, _, _) = makeWiring()
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        XCTAssertGreaterThanOrEqual(fakeTimer.scheduleCallCount, 1,
+                                    "Timer must be armed after runSession() enters")
+        XCTAssertEqual(fakeTimer.lastScheduledTimeout, 30,
+                       "Timer must use the 30s inactivity constant (AC5 regression guard)")
+
+        fakeTimer.fireNow()
+
+        XCTAssertEqual(endedSessions.count, 1, "Exactly one session must end on inactivity fire")
+        XCTAssertEqual(sut.state, .idle)
+    }
+
+    func testInactivityTimer_DoesNotFire_WhenTokenReceivedBefore30s() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let (wiring, _, _, _) = makeWiring(appleFactory: yieldingFactory)
+        sut.wiring = wiring
+
+        let consumer = FakeTokenConsumer()
+        sut.addConsumer(consumer)
+
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        let countAfterWiring = fakeTimer.scheduleCallCount
+
+        let tokenExp = XCTestExpectation(description: "token consumed")
+        consumer.onReceiveToken = { tokenExp.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "hello", startTime: 0, endTime: 0.5, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp], timeout: 2.0)
+
+        XCTAssertGreaterThan(fakeTimer.scheduleCallCount, countAfterWiring,
+                             "Timer must reset (reschedule) on token receipt")
+        if case .active = sut.state { } else {
+            XCTFail("Session must still be active — timer was not fired")
+        }
+    }
+
+    func testInactivityTimer_DoesNotFire_AfterMicDeactivated() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+
+        var endedCount = 0
+        sut.onSessionEnded { _ in endedCount += 1 }
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let (wiring, _, _, _) = makeWiring(appleFactory: yieldingFactory)
+        sut.wiring = wiring
+
+        let consumer = FakeTokenConsumer()
+        sut.addConsumer(consumer)
+        let teardownExp = XCTestExpectation(description: "teardown completes")
+        consumer.onSessionEnded = { teardownExp.fulfill() }
+
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        sut.micDeactivated()
+        await fulfillment(of: [teardownExp], timeout: 3.0)
+
+        XCTAssertGreaterThanOrEqual(fakeTimer.cancelCallCount, 1,
+                                    "Timer must be cancelled when session ends")
+        XCTAssertEqual(endedCount, 1)
+
+        fakeTimer.fireNow()
+        XCTAssertEqual(endedCount, 1, "Timer fire after cancel must be a no-op")
+    }
+
+    func testInactivityTimer_DoesNotFire_AfterEndCurrentSessionCalled() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+        sut.start()
+
+        var endedCount = 0
+        sut.onSessionEnded { _ in endedCount += 1 }
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let (wiring, _, _, _) = makeWiring(appleFactory: yieldingFactory)
+        sut.wiring = wiring
+
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        sut.stop()  // calls endCurrentSession() → inactivityTimer.cancel()
+
+        XCTAssertEqual(endedCount, 1, "Session must end via stop()")
+        XCTAssertGreaterThanOrEqual(fakeTimer.cancelCallCount, 1,
+                                    "Timer must be cancelled in stop()")
+
+        fakeTimer.fireNow()
+        XCTAssertEqual(endedCount, 1, "Fire after cancel is a no-op (idempotency under any session-end path)")
+    }
+
+    func testInactivityTimer_ResetsCleanly_OnEveryTokenReceipt() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let (wiring, _, _, _) = makeWiring(appleFactory: yieldingFactory)
+        sut.wiring = wiring
+
+        let consumer = FakeTokenConsumer()
+        sut.addConsumer(consumer)
+
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        let countAfterWiring = fakeTimer.scheduleCallCount
+
+        let allTokensExp = XCTestExpectation(description: "5 tokens consumed")
+        allTokensExp.expectedFulfillmentCount = 5
+        consumer.onReceiveToken = { allTokensExp.fulfill() }
+
+        for i in 0..<5 {
+            yieldingFactory.stubbedBackend.yield(
+                TranscribedToken(token: "word\(i)", startTime: Double(i), endTime: Double(i) + 0.5, isFinal: true)
+            )
+        }
+        await fulfillment(of: [allTokensExp], timeout: 3.0)
+
+        XCTAssertEqual(fakeTimer.scheduleCallCount, countAfterWiring + 5,
+                       "Timer must be rescheduled exactly once per token (5 resets)")
+        if case .active = sut.state { } else {
+            XCTFail("Session must still be active — timer reset, not fired")
+        }
+    }
+
+    func testInactivityTimer_FiresOnceOnly_NotMultipleTimes() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+
+        var endedCount = 0
+        sut.onSessionEnded { _ in endedCount += 1 }
+
+        let (wiring, _, _, _) = makeWiring()
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        fakeTimer.fireNow()
+        XCTAssertEqual(endedCount, 1, "Session must end on first fire")
+
+        fakeTimer.fireNow()
+        XCTAssertEqual(endedCount, 1, "Second fire must be a no-op (pendingAction cleared + state .idle)")
+    }
+
+    func testInactivityTimer_CleanlyCancels_OnSessionCoordinatorStop() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+        sut.start()
+
+        let (wiring, _, _, _) = makeWiring()
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        sut.stop()
+
+        XCTAssertGreaterThanOrEqual(fakeTimer.cancelCallCount, 1,
+                                    "Timer must be cancelled on SessionCoordinator.stop()")
+    }
+
+    func testInactivityTimer_FiresEvenAfterWiringFailure() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let sut = makeSUT(inactivityTimer: fakeTimer)
+
+        var endedCount = 0
+        sut.onSessionEnded { _ in endedCount += 1 }
+
+        let (wiring, _, _, _) = makeWiring(engineStartShouldThrow: true)
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        XCTAssertEqual(fakeTimer.scheduleCallCount, 1,
+                       "Timer must be armed at top of runSession() before wiring failure")
+        if case .active = sut.state { } else {
+            XCTFail("Session must still be .active after wiring failure — only timer can end it")
+        }
+
+        fakeTimer.fireNow()
+
+        XCTAssertEqual(endedCount, 1, "Session must end on inactivity fire even after wiring failure")
+        XCTAssertEqual(sut.state, .idle)
     }
 }

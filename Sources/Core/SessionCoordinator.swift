@@ -63,6 +63,7 @@ final class SessionCoordinator: ObservableObject {
     private var sessionStartTime: Date?
     private var currentLocale: Locale?
     private var sessionTokenCount = 0
+    private let inactivityTimer: any InactivityTimer
 
     // MARK: Init
 
@@ -70,9 +71,14 @@ final class SessionCoordinator: ObservableObject {
         if case .active(let ctx) = state { return ctx } else { return nil }
     }
 
-    init(micMonitor: MicMonitor, settingsStore: SettingsStore) {
+    init(
+        micMonitor: MicMonitor,
+        settingsStore: SettingsStore,
+        inactivityTimer: any InactivityTimer = DispatchInactivityTimer()
+    ) {
         self.micMonitor = micMonitor
         self.settingsStore = settingsStore
+        self.inactivityTimer = inactivityTimer
     }
 
     // MARK: Coordinator lifecycle
