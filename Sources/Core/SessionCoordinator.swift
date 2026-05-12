@@ -59,6 +59,9 @@ final class SessionCoordinator: ObservableObject {
     private var relayTask: Task<Void, Never>?
     private var activeEngine: TranscriptionEngine?
 
+    // v1.x: constant; future versions may expose this in Settings.
+    private static let inactivityTimeout: TimeInterval = 30
+
     // Per-session measurement state — reset at start/end of each wiring cycle.
     private var sessionStartTime: Date?
     private var currentLocale: Locale?
@@ -103,6 +106,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func stop() {
+        inactivityTimer.cancel()
         guard isRunning else { return }
         isRunning = false
         Logger.session.info("SessionCoordinator stopping")
@@ -127,7 +131,13 @@ final class SessionCoordinator: ObservableObject {
 
     // MARK: Private — session lifecycle
 
+    private func handleInactivityTimeout() {
+        Logger.session.info("SessionCoordinator: inactivity timeout — ending session")
+        endCurrentSession()
+    }
+
     private func endCurrentSession() {
+        inactivityTimer.cancel()
         guard case .active(let ctx) = state else { return }
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
@@ -149,13 +159,14 @@ final class SessionCoordinator: ObservableObject {
         sessionStartTime = wiringStart
         sessionTokenCount = 0
 
+        inactivityTimer.schedule(after: Self.inactivityTimeout) { [weak self] in
+            self?.handleInactivityTimeout()
+        }
+
         // Step 1: AudioPipeline
         do {
             try w.audioPipeline.start()
             Logger.session.info("SessionCoordinator: AudioPipeline started")
-            // We are now a HAL reader — isDeviceRunningSomewhere stays true while we run.
-            // Switch MicMonitor to process-list polling so external mic releases are detected.
-            micMonitor.beginExternalProcessTracking()
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at AudioPipeline.start after \(elapsedMs)ms: \(error). Rollback complete in 0ms.")
@@ -247,6 +258,9 @@ final class SessionCoordinator: ObservableObject {
             Logger.session.debug("SessionCoordinator: token '\(token.token)' t=[\(token.startTime, format: .fixed(precision: 2))–\(token.endTime, format: .fixed(precision: 2))] final=\(token.isFinal)")
             sessionTokenCount += 1
             tokensInWindow += 1
+            inactivityTimer.schedule(after: Self.inactivityTimeout) { [weak self] in
+                self?.handleInactivityTimeout()
+            }
             for consumer in consumers {
                 await consumer.consume(token)
             }
@@ -282,11 +296,7 @@ final class SessionCoordinator: ObservableObject {
 
         if let w = wiring {
             await w.languageDetector.stop()
-            // audioPipeline.stop() before endExternalProcessTracking(): releasing our I/O proc
-            // first ensures isDeviceRunningSomewhere transitions to false before the
-            // IsRunningSomewhere listener is re-enabled, preventing a spurious micActivated.
             w.audioPipeline.stop()
-            micMonitor.endExternalProcessTracking()
         }
 
         for consumer in consumers {

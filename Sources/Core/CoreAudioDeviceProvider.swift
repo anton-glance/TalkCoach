@@ -18,35 +18,6 @@ protocol CoreAudioDeviceProvider: Sendable {
         handler: @escaping @Sendable () -> Void
     ) -> AnyObject?
     nonisolated func removeDefaultDeviceListener(token: AnyObject)
-
-    // MARK: External process tracking (M3.7.1)
-
-    /// Returns all process objectIDs currently registered with the HAL.
-    nonisolated func processObjects() -> [AudioObjectID]
-    /// Returns the PID for a HAL process object, or nil on error.
-    nonisolated func pid(of processObjectID: AudioObjectID) -> pid_t?
-    /// Returns true if the given process object has an active input I/O proc.
-    nonisolated func isProcessRunningInput(_ processObjectID: AudioObjectID) -> Bool
-    /// Returns the PID of the current process (used to filter self from the list).
-    nonisolated func selfPID() -> pid_t
-    /// Registers a listener that fires whenever the HAL process list changes.
-    nonisolated func addProcessObjectListListener(
-        handler: @escaping @Sendable () -> Void
-    ) -> AnyObject?
-    nonisolated func removeProcessObjectListListener(token: AnyObject)
-}
-
-// MARK: - Default stubs for test fakes that don't exercise external process tracking
-
-extension CoreAudioDeviceProvider {
-    nonisolated func processObjects() -> [AudioObjectID] { [] }
-    nonisolated func pid(of processObjectID: AudioObjectID) -> pid_t? { nil }
-    nonisolated func isProcessRunningInput(_ processObjectID: AudioObjectID) -> Bool { false }
-    nonisolated func selfPID() -> pid_t { ProcessInfo.processInfo.processIdentifier }
-    nonisolated func addProcessObjectListListener(
-        handler: @escaping @Sendable () -> Void
-    ) -> AnyObject? { nil }
-    nonisolated func removeProcessObjectListListener(token: AnyObject) {}
 }
 
 // MARK: - Production Implementation
@@ -182,89 +153,6 @@ struct SystemCoreAudioDeviceProvider: CoreAudioDeviceProvider {
         if status != noErr {
             Self.log.warning("Failed to remove default-device listener: OSStatus \(status)")
         }
-    }
-
-    // MARK: External process tracking (M3.7.1)
-
-    nonisolated func processObjects() -> [AudioObjectID] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var dataSize: UInt32 = 0
-        let sizeStatus = AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize
-        )
-        guard sizeStatus == noErr, dataSize > 0 else { return [] }
-        let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
-        var objects = [AudioObjectID](repeating: 0, count: count)
-        let status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &objects
-        )
-        guard status == noErr else { return [] }
-        return objects
-    }
-
-    nonisolated func pid(of processObjectID: AudioObjectID) -> pid_t? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioProcessPropertyPID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var p: pid_t = -1
-        var size = UInt32(MemoryLayout<pid_t>.size)
-        let status = AudioObjectGetPropertyData(processObjectID, &address, 0, nil, &size, &p)
-        guard status == noErr else { return nil }
-        return p
-    }
-
-    nonisolated func isProcessRunningInput(_ processObjectID: AudioObjectID) -> Bool {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioProcessPropertyIsRunningInput,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var value: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        let status = AudioObjectGetPropertyData(processObjectID, &address, 0, nil, &size, &value)
-        guard status == noErr else { return false }
-        return value != 0
-    }
-
-    nonisolated func selfPID() -> pid_t {
-        ProcessInfo.processInfo.processIdentifier
-    }
-
-    nonisolated func addProcessObjectListListener(
-        handler: @escaping @Sendable () -> Void
-    ) -> AnyObject? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let queue = DispatchQueue(label: "com.talkcoach.mic.processObjectList")
-        let block: AudioObjectPropertyListenerBlock = { _, _ in handler() }
-        let status = AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &address, queue, block
-        )
-        guard status == noErr else {
-            Self.log.error("Failed to add ProcessObjectList listener: OSStatus \(status)")
-            return nil
-        }
-        return ListenerToken(
-            objectID: AudioObjectID(kAudioObjectSystemObject),
-            address: address, queue: queue, block: block
-        )
-    }
-
-    nonisolated func removeProcessObjectListListener(token: AnyObject) {
-        guard let listenerToken = token as? ListenerToken else { return }
-        var address = listenerToken.address
-        AudioObjectRemovePropertyListenerBlock(
-            listenerToken.objectID, &address, listenerToken.queue, listenerToken.block
-        )
     }
 }
 
