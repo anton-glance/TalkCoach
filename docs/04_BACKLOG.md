@@ -74,17 +74,17 @@ Goal: while a session is active, audio is being captured, transcribed in the rig
 
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
-| M3.1 | `AudioPipeline`: AVAudioEngine setup, voice-processing-OFF, raw input tap | 📋 | 4h | S4 (passed) |
+| M3.1 | `AudioPipeline`: AVAudioEngine setup, voice-processing-OFF, raw input tap | ✅ code-complete tag `m3.1-code-complete` (Session 023, ~3.5h actual); AC11 smoke gate deferred to M3.7 wiring | 4h | S4 (passed Phase 1 + Phase 2) |
 | M3.2 | `SpeakingActivityTracker`: derive speaking duration from token timestamps | 📋 | 2h | M3.5, S6/S8 (passed) |
-| M3.4 | `LanguageDetector`: N=1 trivial path + N=2 script-aware hybrid (3 strategies: NLLanguageRecognizer, word-count, Whisper-tiny LID) | 📋 | 4–6h | S2 (passed), M1.3 |
-| M3.5 | `TranscriptionEngine` routing layer: locale → backend selection, unified token stream output | 📋 | 4h | M3.5a, M3.5b, M3.4 |
-| M3.5a | `AppleTranscriberBackend`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | 📋 | 4h | M3.4 |
-| M3.5b | `ParakeetTranscriberBackend`: Core ML model load, inference loop, timestamp normalization | 📋 | 8–12h | S10 (passed) |
-| M3.6 | Model download flow — Apple `AssetInventory` + Parakeet CDN fetch (triggered from Settings confirmation) | 📋 | 4h | M3.5a, M3.5b |
-| M3.7 | Token stream wiring: audio → engine → unified token output | 📋 | 3h | M3.1, M3.5 |
+| M3.4 | `LanguageDetector`: N=1 trivial path + N=2 script-aware hybrid (3 strategies: NLLanguageRecognizer, word-count, Whisper-tiny LID) | ✅ code-complete tag `m3.4-code-complete` (Session 024, ~2.5–3h actual); SG1–SG5 deferred to M3.7 wiring | 4–6h | S2 (passed), M1.3 |
+| M3.5 | `TranscriptionEngine` routing layer: locale → backend selection, unified token stream output | ✅ code-complete tag `m3.5-code-complete` (Session 025, ~3-4h actual against 4h estimate); shipped with M3.5a | 4h | M3.5a, M3.5b, M3.4 |
+| M3.5a | `AppleTranscriberBackend`: `SpeechAnalyzer` + `SpeechTranscriber`, locale init | ✅ code-complete tag `m3.5-code-complete` (Session 025); 5 Convention-6 seams; AC7 finding: use `SpeechTranscriber.supportedLocales` LIST not `supportedLocale(equivalentTo:)` HELPER | 4h | M3.4 |
+| M3.5b | `ParakeetTranscriberBackend`: Core ML model load, inference loop, timestamp normalization | 📋 DEFERRED post-WPM-milestone per EN-first sprint (Session 024, reaffirmed 025) | 8–12h | S10 (passed) |
+| M3.6 | Model download flow — Apple `AssetInventory` + Parakeet CDN fetch (triggered from Settings confirmation) | 📋 DEFERRED post-WPM-milestone per EN-first sprint | 4h | M3.5a, M3.5b |
+| M3.7 | Token stream wiring: audio → engine → unified token output | 🟡 PIPELINE COMPLETE / DEACTIVATION-SIGNAL OPEN (Sessions 026 + 027 + 028 marathon, ~8-10h actual + Spike #13 pending). First speech tokens emitted Session 026. Four Apple-framework runtime-discovery findings documented. M3.7.2 ships interim inactivity-timer (correct code, wrong product fit) — Spike #13 (external-mic-detection) determines correct deactivation signal | 3h + Spike #13 (4–6h) | M3.1, M3.5 |
 | M3.8 | Mid-session language re-detection / swap (if Spike #2 mechanism supports it) | 📋 | 4h | M3.4, M3.5 |
 
-**Phase 3 total: ~37–43h.**
+**Phase 3 total (EN-first sprint scope, M3.7 pipeline complete + Spike #13 pending): ~25h with M3.5b + M3.6 deferred to post-WPM-milestone.**
 
 **End-of-phase checkpoint:** Speak English → Apple backend transcribes; speak Russian → Parakeet backend transcribes; first-time Russian shows download confirmation in Settings. Token streams from both backends look identical to downstream consumers.
 

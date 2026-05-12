@@ -4,6 +4,403 @@
 
 ---
 
+## Session 028 — 2026-05-12 — M3.7.2 inactivity-timer ships as INTERIM deactivation; fourth Apple-framework runtime-discovery finding locked; product-UX miss caught at session close — Spike #13 opened for correct external-mic-detection signal
+
+**Format:** Multi-day marathon close (Sessions 027 + 028 across ~3 calendar days). M3.7.2 ships as code-complete interim, but M3.7 itself does NOT close — the inactivity-timer doesn't match the product UX (orange-dot-tied session lifecycle). The session ends with Spike #13 opened to find the correct external-mic-detection signal.
+
+### What happened
+
+Session opened with M3.7.1 polling code committed (commits `2486dde` red, green; `cc0855b` teardown-race fix), 277 tests green, smoke gate blocked. First major beat: 86-tick polling diagnostic with QuickTime as external recorder, ~62 seconds of `External tracking:` log lines.
+
+**Diagnostic disproved M3.7.1's load-bearing assumption.** Direct reads of `kAudioProcessPropertyIsRunningInput` returned `false` for QuickTime across every one of the 86 ticks while QuickTime was actively recording. QuickTime's PID never appeared in our `kAudioHardwarePropertyProcessObjectList` enumeration. The only process showing `isRunningInput=true` was our OWN `corespeechd` daemon (PID 937), spawned by SpeechAnalyzer in M3.7. Three conclusions: HAL filters external recording processes out of our sandbox's process view; `kAudioProcessPropertyIsRunningInput` direct reads are not symmetric across the process boundary; this is the **fourth Apple-framework runtime-discovery finding** for the project (after misleading `supportedLocale(equivalentTo:)`, non-nil `assetInstallationRequest` for installed models, silent-no-fire `kAudioProcessPropertyIsRunningInput` listeners).
+
+Architect presented Options A/B/C/D for next direction: A trust-the-wiring; B user-action-driven; C accept constraint; D audio-content inactivity. Anton made the Chief of Product call: restore original M2.x UX — widget appears when mic active, fades 5s after mic-inactive, X-button as manual override. **The Chief of Product call's intent was clear: session lifecycle tied to the macOS orange-dot mic indicator, NOT to speech activity.**
+
+**Architect's engineering response was incorrect.** Architect interpreted the call as "use audio-content inactivity as the signal" (Option D), drafted the M3.7.2 prompt accordingly, ran the agent through Phase 1+2+3, validated smoke, and was about to tag `m3.7-complete` when Anton flagged the actual product implication: in an hour-long Zoom call where the user speaks for 10–15 minutes of the call, a 30s inactivity timer would END the session during listening portions, fragmenting one pitch performance into multiple micro-sessions or missing it entirely.
+
+The Chief of Engineering error was real: architect traded the clear product UX (orange-dot-tied lifecycle) for an "engineering-elegant" inactivity-timeout that sidestepped the Apple HAL problem but did not match what the product needed. The error pattern: when Apple framework APIs trap us, the engineering instinct is to find a clean orthogonal signal, even when that orthogonal signal doesn't match the product's actual semantics. **The Chief of Engineering role exists precisely to prevent this trade-off; architect failed to enforce it this session.**
+
+M3.7.2 still shipped as code-complete in implementation (clean InactivityTimer Convention-6 protocol with DispatchInactivityTimer production conformance, arm-inactivity-timer at top of runSession for uniform contract across wiring success/failure paths, cancel-at-top in endCurrentSession and stop for race-free idempotency, FakeInactivityTimer with `lastScheduledTimeout` regression guard, 8 new tests, ~475 lines net deletion of M3.7.1 polling code, sub-agent ninth-in-a-row substantive review with one harmless-double-cancel observation noted as non-issue). Smoke ran cleanly across both inactivity and X-button scenarios (Session 80A0B93E: 15 real speech tokens, 59.1s duration, 9ms teardown; Session 8FC750D5: X-button dismiss with no inactivity-timeout firing). The CODE quality is good; the PRODUCT match is wrong.
+
+**M3.7 does NOT close this session.** The token pipeline works (15 real speech tokens in smoke Session 80A0B93E, 59.1s session duration, 9ms teardown). The deactivation signal is wrong.
+
+**Spike #13 opened at session close.** Three-probe empirical investigation of external-mic-detection signals: (A) `AVCaptureDevice.isInUseByAnotherApplication` KVO-observable property; (B) Core Audio process tap with aggregate device; (C) AVCaptureSession-based audio capture. Each probe must satisfy four hard requirements: detects external recording, survives our own capture, **survives mid-session default-device change (AirPods scenario)**, observable from sandbox. 4–6h budget, gated on first success. Spike #13's outcome defines whether M3.7 closes with correct UX (any probe passes) or ships with documented v1 limitation (all three fail).
+
+### Architectural decisions locked
+
+1. **Product UX is the contract; engineering creativity does not substitute for it.** When Apple framework APIs make the natural implementation hard, the engineering response is to investigate more probes before pivoting to a different signal. M3.7's path should have been: HAL listener fails → polling fails → investigate `AVCaptureDevice.isInUseByAnotherApplication`, Core Audio process tap, AVCaptureSession → if all fail, THEN reframe with product. Architect short-circuited this and pivoted to inactivity-timer prematurely. **Lock: when product UX is unambiguous and the engineering path is hard, the response is "more probes," not "different product."**
+
+2. **M3.7.2 inactivity-timer is preserved as defense-in-depth fallback, not removed.** Even after Spike #13 succeeds, the inactivity-timer code stays — gated to fire only if the chosen external-mic-detection signal fails to deactivate the session within a reasonable bound (e.g., 5 minutes of no signal change). Belt-and-suspenders pattern. **Lock: when v1 has multiple potential deactivation triggers, all of them are wired with priority ordering — primary signal first, secondary signal as fallback.**
+
+3. **The fourth Apple-framework runtime-discovery finding establishes the empirical-validation culture as project-level pattern.** All four findings now share a generalized lesson: **for any Apple HAL/Speech-framework property, validate every step empirically before relying on it in production logic. Direct-read reliability is not equivalent to listener reliability is not equivalent to documented semantics.** Going forward: any module touching unfamiliar HAL or Speech APIs gets a probe-spike that validates property reads, listener registrations, AND listener callback delivery before the production module commits. Spike #13 is the first formalization of this pattern.
+
+4. **Mid-session default-device change (AirPods scenario) is a hard requirement on any deactivation signal.** User starts call on built-in mic, mid-call connects AirPods, default input device changes. The session must NOT end as a side effect of this. M2.1's pattern of re-attaching observers to the new default device (`kAudioHardwarePropertyDefaultInputDevice` listener) is the architectural shape any chosen Spike #13 probe must match. **Lock: any deactivation signal that doesn't survive default-device changes fails the spike.**
+
+5. **Original M2.1 `kAudioDevicePropertyDeviceIsRunningSomewhere` listener stays untouched.** Composition bug was never in the listener — it was in adding ourselves as a reader without rethinking the deactivation contract. If Spike #13's Probe B or C succeeds (capture mechanism that doesn't trip IsRunningSomewhere), the M2.1 listener works as originally designed. **Lock: M2.1's HAL listener is preserved; any signal change happens in the capture-mechanism layer or in a new observer alongside the existing one.**
+
+### Procedural lessons
+
+1. **Architect can rush to engineering elegance and miss the product call. This session is the canonical example.** The mitigation pattern: when about to tag a milestone as complete, restate the product UX one more time and verify the implementation matches. Architect should have asked "does an hour-long call with 10 min of speaking work correctly?" BEFORE drafting the M3.7.2 prompt. **Going forward: the product-UX-fits-implementation check is a required architect-side audit before approving Phase 2 of any module that touches user-visible session semantics.**
+
+2. **Sub-agent design-review at architect-side caught three real corrections to the M3.7.2 Phase 1 plan** (cancel-at-top semantics, lastScheduledTimeout assertion, arm-at-top of runSession). The corrections were good engineering. But they were corrections to the WRONG SOLUTION — the implementation was clean for what it built; what it built was wrong. **Lesson: sub-agent design review catches implementation defects but cannot catch product-fit defects. Product-fit is the architect's responsibility and cannot be delegated.**
+
+3. **The four-finding Apple-framework runtime-trap inventory is now a project-level pattern with Spike #13 as the first formalized application.** Future modules touching HAL/Speech APIs will gate themselves behind a probe-spike that validates every property/listener step. Cost of NOT doing this: M3.7 → M3.7.1 → M3.7.2 → reopened cycle, ~10h+ vs straight-line probe-first.
+
+4. **Reply-formatting convention (Session 027 locked) held throughout this session.** Zero copy-paste regression. Same for smoke-gate-evidence convention (Session 026): every smoke verification produced structured log evidence with measured timings.
+
+5. **"0 issues found" without verbatim notes is not credible (Session 020 lesson) held: nine-in-a-row sub-agent reviews with substantive findings.**
+
+### Time
+
+Session 028 wall-clock: ~3h (diagnostic + Chief of Product call + M3.7.2 prompt drafting + agent Phase 1+2+3 + smoke gate + product-UX correction at close). M3.7 total across Sessions 026 + 027 + 028: ~8–10h estimated against M3.7's nominal 3h budget = **~2.7–3.3x estimate** with M3.7 STILL OPEN pending Spike #13. Driver: four Apple-framework runtime-discovery findings, plus one architect-side product-fit miss. Estimate guidance: **modules with user-visible session semantics get a mandatory product-fit audit before Phase 2; modules touching unfamiliar HAL/Speech APIs get a probe-spike gate before any production code.**
+
+---
+
+## Session 027 — 2026-05-11 — M3.7 smoke surfaced MicMonitor/AudioPipeline composition bug; three HAL probes empirically established `kAudioProcessPropertyIsRunningInput` listener never fires; M3.7.1 polling architecture designed; reply-formatting + terminal-commands conventions locked
+
+### What happened
+
+M3.7 wiring landed code-complete in Session 026 (token-stream pipeline functional, first speech tokens emitted). Smoke gate in Session 027 surfaced a load-bearing composition bug: after `AudioPipeline.start()` runs in `runSession()` step 1, TalkCoach becomes a HAL reader of the default input device. `kAudioDevicePropertyDeviceIsRunningSomewhere` stays `true` while ANY process holds the device — including us — so MicMonitor's `IsRunningSomewhere=false` notification (M2.1's deactivation signal) never fires when external apps release the mic.
+
+Architect's first response was detection-by-listening on a different HAL surface. Three probes ran empirically:
+
+**Probe 1: `kAudioHardwarePropertyProcessObjectList` listener** — DOES fire. Confirmed callback when QuickTime joined process list at recording start and again when it left at quit.
+
+**Probe 2: `kAudioProcessPropertyIsRunningInput` listener on external process objects** — registers successfully (`addStatus = 0`) but callback NEVER fires. Verified across three external apps over multiple cycles. **Third Apple-framework runtime-discovery finding.**
+
+**Probe 3: same listener on our OWN process object** — same behavior. Listener registration mechanism is functionally inert for this property regardless of subject process.
+
+M3.7.1 polling architecture designed as the listener-can't-work fallback: re-enumerate process objects every 1s, direct-read `IsRunningInput` per non-self process, maintain `externalMicState` state machine. Six new Convention-6 protocol methods. Landed in `2486dde` (red), green commit, `cc0855b` (sub-agent-caught teardown-race fix). 277 tests green at session close.
+
+**Two collaboration conventions locked at session close:**
+
+1. **Agent reply formatting** (locked in `00_COLLABORATION_INSTRUCTIONS.md` + project-root `CLAUDE.md`): pick ONE — pure prose with indented blocks, OR single fenced code block. Never mixed. Xcode chat panel can't select across fenced-block boundaries.
+
+2. **Architect terminal commands**: every command prefixed `cd /Users/antonglance/coding/TalkCoach &&` with absolute paths, zero placeholders, one-action copy-paste.
+
+Session ended in mid-M3.7.1 with code committed but smoke-gate-blocked, expecting Session 028 to be smoke verification of polling. Session 028 instead revealed polling itself was insufficient (fourth finding), triggering the M3.7.2 architectural pivot (which itself proved a product-fit miss — see Session 028).
+
+### Architectural decisions locked
+
+1. **The MicMonitor/AudioPipeline composition bug is project-level documented.** Any module that adds a new observable resource (HAL reader, NotificationCenter publisher, KVO observer) must trace how its presence affects every downstream observer.
+
+2. **Three HAL probes are canonical artifacts.** Preserved in `Spike/HALProcessProbe/`. Future modules can reuse the probe shapes.
+
+3. **Reply-formatting convention is repo-locked in two files** (`00_COLLABORATION_INSTRUCTIONS.md` + `CLAUDE.md`). Duplication intentional — different audiences, low cost vs missed convention.
+
+4. **Architect-terminal-commands convention is repo-locked.** Zero ambiguity in command runs across the rest of the marathon.
+
+### Procedural lessons
+
+1. **First-ever runtime smoke surfaced an architectural bug, not an implementation bug.** Previous smoke fixes (M2.6 mouseDown, M2.6 NSScreen.main, M3.4 false-positive) were implementation-level. M3.7 was the first instance of architectural redesign needed at smoke time.
+
+2. **"Apple framework looks right in headers, runtime behavior gaps" pattern is project-level expectation.** Finding 3 was the second in M3.7's path (Finding 2 was Session 026's `assetInstallationRequest` trap).
+
+3. **Reply-formatting convention pre-empts marathon-session pain.** Zero copy-paste regression in Sessions 028+ after convention lock.
+
+### Time
+
+Session 027 wall-clock: ~3–4h. M3.7 smoke gate setup + bug investigation + 3 HAL probes + M3.7.1 prompt + agent Phase 1+2+3 + convention writeup. Driver of overage: HAL probe investigation (~2h) unbudgeted in M3.7's original 3h estimate.
+
+---
+
+## Session 026 — 2026-05-10 — M3.7 wiring landed; FIRST SPEECH TOKENS EMITTED in project history; smoke-gate-evidence convention locked; second Apple-Speech API trap caught (`assetInstallationRequest` non-nil for fully-installed models)
+
+### What happened
+
+M3.7 prompt drafted with inherited 8-smoke-scenario scope from M3.1 + M3.4 deferred gates. Three baked architect-side calls: (1) wiring as ordered async sequence in `runSession()` (not concurrent); (2) teardown single-point at `endCurrentSession()` with stop-in-reverse order; (3) per-step timing instrumentation via `Logger.session` with measured ms durations.
+
+Agent landed M3.7 across three commits: `85ffba9` initial wiring, `d9d9683` measurement log lines (driven by this session's emerging smoke-gate-evidence convention), `fb6d98f` SessionWiring construction at `TalkCoachApp.swift:73`. 268 tests green. Smoke gate started immediately, blocked on a real Apple-framework trap.
+
+**The trap:** `AssetInventory.assetInstallationRequest(supporting:)` returned non-nil for the en-US SpeechAnalyzer model even when fully installed. M3.7's wiring interpreted non-nil as "download required" and blocked. Sessions wouldn't start.
+
+Architect ran empirical bypass test: skip the `assetInstallationRequest` check, directly call `SpeechAnalyzer.start(...)` against en-US. Result: succeeded immediately. Model WAS installed; API was lying. **Finding 2 in the project's Apple-framework runtime-trap inventory.**
+
+Architect first proposed Mirror-reflection fix. Agent correctly rejected as architecturally wrong (Mirror reflection fragile against framework updates) and proposed alternative: check `SpeechTranscriber.installedLocales` directly and skip `assetInstallationRequest` path entirely. Architect agreed; commit `9460359` landed `SystemAssetInventoryStatusProvider` with clean `isInstalled(locale:) -> Bool`. Smoke unblocked.
+
+**First-ever speech token from green pipeline:** `token '.' t=[0.00–15.49] final=false` — synthetic silence-detection token, but the entire pipeline path worked end-to-end. Project-level milestone.
+
+**Smoke-gate-evidence convention locked** in `00_COLLABORATION_INSTRUCTIONS.md`: structured artifacts only — Console logs with timestamps and measured values, production-code measured Logger lines (durations in ms, counts, rates), XCTest output, `defaults` diffs, screenshots when UI rendering is the gate. Unacceptable: adjectives without measurement. Trigger: prior smoke evidence ("the animation was smooth") couldn't be re-derived weeks later for related bug investigation.
+
+### Architectural decisions locked
+
+1. **`SystemAssetInventoryStatusProvider` uses `SpeechTranscriber.installedLocales` (LIST), not `assetInstallationRequest` (HELPER).** Finding 2's resolution. Pattern: query the system's installed-locales set directly; `assetInstallationRequest` is for INITIATING downloads, not QUERYING installation status.
+
+2. **No Mirror-based reads of Apple framework internals in production code.** Fragile under framework updates; introduces silent failure modes.
+
+3. **Smoke-gate-evidence convention enforced via paste-back review.** Every smoke evidence is audited against the convention.
+
+4. **First-token milestone logged as project-level event.** Before this session: nothing. After: a pipeline.
+
+### Procedural lessons
+
+1. **Agent rejecting wrong architect proposal (Mirror reflection) and proposing right alternative is healthy.** Treated as feature, not friction.
+
+2. **Empirical diagnostic test BEFORE accepting an API's reported state.** Bypass test surfaced truth in <5 min.
+
+3. **Pure-documentation conventions can carry significant project-level value.** Smoke-gate-evidence convention has no code change but reshapes what counts as evidence.
+
+### Time
+
+Session 026 wall-clock: ~3h. On-estimate for M3.7 slice in this session.
+
+---
+
+## Session 025 — 2026-05-09 — M3.5 + M3.5a shipped code-complete; five Convention-6 seams; AC7 finding (`SpeechTranscriber.supportedLocales` LIST not `supportedLocale(equivalentTo:)` HELPER); agent caught over-broad catch
+
+### What happened
+
+M3.5 (TranscriptionEngine routing) + M3.5a (AppleTranscriberBackend) shipped together as ~4h cycle. M3.5b (Parakeet) and M3.6 (download flow) explicitly deferred to post-M3.7-WPM-milestone per EN-first sprint locked in Session 024.
+
+**Five Convention-6 protocol seams** instantiated in one session — highest count in project history:
+
+1. `AudioBufferProvider` (reused from M3.4)
+2. `AppleBackendFactory` (new)
+3. `ParakeetBackendFactory` (new, stub returning unsupported since M3.5b deferred)
+4. `SupportedLocalesProvider` (new)
+5. `AssetInventoryStatusProvider` (new — production form revisited in Session 026's assetInstallationRequest trap)
+
+**AC7 load-bearing finding:** prompt told agent to use `SpeechTranscriber.supportedLocale(equivalentTo:)` HELPER. Agent's research surfaced misleading return values (passing en_US returned ru_RU on test machine). Correct API: `supportedLocales` LIST. **Finding 1 in the project's Apple-framework runtime-trap inventory.**
+
+Agent caught architect's over-broad catch clause via sub-agent review. `catch is WhisperLIDProviderError` would swallow `.inferenceFailed` along with `.modelUnavailable`; per AC6 wording only `.modelUnavailable` should fall through to declaredLocales[0]. Agent narrowed to `catch WhisperLIDProviderError.modelUnavailable`.
+
+250 tests + 1 skipped (M3.6-dependent) green. PowerSpike's `LiveTranscriptionRunner.swift:99-104` referenced as canonical for live-streaming SpeechAnalyzer API; transferred clean.
+
+### Architectural decisions locked
+
+1. **Five-Convention-6-seam pattern scales within a single module.** Don't collapse seams unless two share single semantic responsibility.
+
+2. **`SpeechTranscriber.supportedLocales` (LIST) is canonical, NOT `supportedLocale(equivalentTo:)` (HELPER).** Finding 1's resolution.
+
+3. **Defensive catch narrowed to specific cases, not error-protocol types.** `catch SomeError.specificCase`, not `catch is SomeErrorProtocol`.
+
+4. **EN-first sprint reaffirmed: M3.5b + M3.6 deferred until after M4.1 WPM milestone.**
+
+### Procedural lessons
+
+1. **Spike artifacts are canonical for Apple API patterns; prompts are advisory.** Confirmed pattern from Session 024.
+
+2. **Sub-agent review catching over-broad error handling is recurring real-finding category.** Eight-in-a-row substantive sub-agent reviews including this one.
+
+### Time
+
+Session 025 wall-clock: ~3–4h. Estimated 8h combined. **Ran 0.5x estimate** — spike-pre-validated.
+
+---
+
+## Session 024 — 2026-05-08 — M3.4 LanguageDetector shipped code-complete: spike-pre-validated three-strategy dispatch transferred clean, sub-agent caught real over-broad catch, prompt's wrong API name corrected by agent, subsystem convention pinned
+
+**Format:** Second module of Phase 3, immediately after M3.1. Clean inheritance from Spike #2 (Session 010's three-strategy validation). Same-day continuation of Session 023 (M3.1) — user pushed M3.1 then went straight into M3.4 without a session break, so what reads as Session 024 in the journal is wall-clock continuous with 023. Estimate guidance × 0.5–0.8 against 4–6h canonical = ~2.5–4h adjusted band. Actual landed near low end.
+
+### What happened
+
+User confirmed M3.4 as next module right after M3.1 push. Architect drafted M3.4 prompt with three baked architect-side calls (best-guess = `declaredLocales[0]` not last-used; all three strategies in single M3.4 not split; unvalidated pairs route by inference with `Logger.lang.notice`), all three marker blocks (16-item Phase 3 checklist, 12 ACs, 5 SG scenarios all PENDING M3.7 per the AC11 deferral pattern Session 023 locked).
+
+Convention-6 protocol seam pattern from M3.1 carried into M3.4 for THREE external dependencies — not one. M3.4 ships before its production inputs (TranscriptionEngine partial-transcript stream M3.5; Whisper-tiny model download M3.6) and before its production output consumer (SessionCoordinator wiring M3.7). All external dependencies were specified as protocols with production stubs that graceful-degrade, mocked in tests, mirroring the `AudioEngineProvider` / `SystemAudioEngineProvider` / `FakeAudioEngineProvider` triplet from M3.1.
+
+User pasted the prompt into a fresh agent session in plan mode. **The plan-audit step happened this time** — Session 023's lesson on user-side workflow discipline held. (Note: in this delivery cycle the Phase 1 plan and approval round happened in-session but the architect-side audit step wasn't surfaced through the conversation transcript; from the implementation evidence and clean disposition, the plan was substantively right and chose the right Foundation API for ScriptCategory mapping.)
+
+Agent shipped Phase 2 across three commits: `dc0475b` red phase (49 tests), `a9179f6` green phase (full implementation), `26ed849` sub-agent review fix. 228/228 green (179 prior + 49 new), zero regressions, TDD lock preserved (`git diff dc0475b..26ed849 -- Tests/` empty for all committed test files).
+
+The first Phase 3 self-review repeated the marker-block drift pattern from M3.1's first self-review — both `=== PHASE3_CHECKLIST ===` and `=== ACCEPTANCE_CRITERIA ===` items renumbered/replaced with impl-artifact summaries rather than reproduced verbatim. **Second drift in two sessions under the marker-block template; the pattern is clearly recurring, not a one-off.** Architect issued the same corrective shape as M3.1 Session 023: paste-back to agent with explicit verbatim-reproduction instruction, the 16-item Phase 3 checklist enumerated explicitly to remove ambiguity, and a per-AC drift map ("your AC1 ≈ my AC8 ScriptCategory; your AC5 ≈ my AC3 SameScript; your AC9+10 = my AC7 Convention-6; my AC1/AC10/AC12 silently dropped"). Agent's second pass came back clean: all 16 Phase 3 items dispositioned with file:line evidence, all 12 ACs in the prompt's order with concrete test names + git diff outputs.
+
+Three real architect-relevant findings surfaced from the audit cycle:
+
+**Finding 1: prompt-drift on Apple API names is a real risk; agent's spike-cross-check discipline caught it.** My M3.4 prompt told the agent Strategy 1 should use `NLLanguageRecognizer`'s `languageHints` (soft weighted-prior dictionary). Agent ignored the prompt and used `languageConstraints` (hard restriction array) — that's the right API for binary classification, and it's what the Spike #2 harness had validated (`LangDetectSpike/Sources/LangDetectSpikeLib/NLDetection.swift:62`). Agent's discipline of cross-checking against the spike artifact rather than blindly following the prompt's API-name string caught the architect's error. **Worth pinning as a procedural lesson: when the prompt and the spike artifact disagree on an Apple API name, the spike artifact is canonical.** The prompt is architect-authored at desk-time; the spike artifact compiled and ran against the real OS API.
+
+**Finding 2: subsystem convention is `com.talkcoach.app` with per-category names, NOT `com.locto.<area>` as the M3.1 prompt instructed.** `grep -r 'com.locto' .` returns zero matches across the repo. All `Logger` categories share the single subsystem `com.talkcoach.app` with per-category names (`audio`, `lang`, `mic`, `session`, `widget`, `floatingPanel`, `analyzer`, `speech`, `app`, `settings` — 10 categories total). M3.1's prompt told the agent to use `com.locto.audio`; the agent silently corrected during M3.1 to align with the existing `Logger+Subsystem.swift:4` convention. M3.4 followed the same correction. **The architect's mental model of the subsystem convention has been wrong from M3.1 onward.** Future prompts use `com.talkcoach.app` / category `<area>`, not `com.locto.<area>`. No code change needed (the convention is consistent and locked); architect-side prompt-template fix only.
+
+**Finding 3: first false-positive sub-agent finding in project history.** Sub-agent flagged `LanguageDetectionStrategy.swift`'s use of direct `Logger(subsystem:category:)` construction vs accessing `Logger.lang` as a "logger consistency issue." Agent correctly identified this as false positive: `Logger.lang` is `MainActor`-isolated (per the existing `Logger+Subsystem.swift` extension pattern) and can NOT be accessed from a nonisolated top-level `let` in a struct that needs to run off main actor. The strategy types are nonisolated structs by design (so they can run on the `LanguageDetector` actor's serial executor and not bounce to main); accessing `Logger.lang` directly would require a `MainActor.assumeIsolated` or worse. **The strategy types' direct-construction is correct.** Sub-agent reviews continue to be substantive — six-in-a-row including this run's real finding on the over-broad catch — but this is the first instance where a sub-agent finding required architect judgment to dismiss rather than implement. Pattern: sub-agent findings need architect-level judgment, not blanket apply.
+
+**Sub-agent's real finding** that DID get fixed (commit `26ed849`): `WhisperLIDStrategy`'s catch clause was originally over-broad (`catch is WhisperLIDProviderError` would have swallowed `.inferenceFailed` and any future error case under the modelUnavailable graceful-degrade path). Agent narrowed to `catch WhisperLIDProviderError.modelUnavailable` per the AC6 wording. `.inferenceFailed` now propagates as a thrown error (correct — that's a real bug, not a graceful-degrade case).
+
+**`.bufferingNewest(1)` for `localeChange`** confirmed intentional. Preserves at-most-one swap event for late-attaching consumers. Strategy 1 / 2 yield once + finish; Strategy 3 / N=1 finish without yielding. Either 0 or 1 locale delivered, never lost to consumer-attach race. Plays well with M3.7's expected wiring (SessionCoordinator attaches `for await` shortly after calling `start()` — buffer covers the window between).
+
+**M3.4 closes code-complete (`m3.4-code-complete`).** AC1–AC11 fully MET; AC12 PENDING M3.7 wiring. SG1–SG5 deferred to M3.7's smoke gate. M3.7 now inherits SG1/SG2/SG3 from M3.1 + SG1–SG5 from M3.4 = 8 smoke scenarios at wiring time. M3.7's adjusted estimate should include the inherited smoke scope.
+
+### Architectural decisions locked
+
+1. **Three Convention-6 protocols mirror M3.1's pattern across multiple seams.** `PartialTranscriptProvider`, `WhisperLIDProvider`, `AudioBufferProvider` — each with protocol + production stub + test fake. M3.4 demonstrates the pattern scales to N=3 seams in one module. Strategy types are nonisolated structs (Sendable); providers are nonisolated `Sendable` protocols. The shape diverges from M3.1's `AnyObject` + `final class` because M3.4's strategies don't need reference semantics — they're stateless dispatchers operating on injected providers. **Lock: when the providee is stateless, use `nonisolated protocol P: Sendable` + struct providers; when the providee wraps stateful OS-API state (like `AVAudioEngine`), use `protocol P: AnyObject` + `final class`. M3.1's pattern and M3.4's pattern are both correct in their respective contexts.**
+
+2. **Strategy dispatch is one-time at `init()`, not runtime-mutable.** `LanguageDetector.init()` selects exactly one of `SingleLocaleStrategy` / `SameScriptStrategy` / `WordCountStrategy` / `WhisperLIDStrategy` based on `dominantScript` of the two declared locales. The chosen strategy is stored as `any LanguageDetectionStrategy` and used for the session's lifetime. **Lock: re-detection mid-session would require a new `LanguageDetector` instance (or an explicit reset API). Mid-session re-detection is M3.8's territory if scope permits, deferred otherwise.**
+
+3. **`isBlocking: Bool` on the strategy protocol distinguishes the two output models.** Non-blocking strategies (SingleLocale, SameScript, WordCount) return `declaredLocales[0]` immediately from `start()` and run detection in a background `Task`, yielding any swap to `localeChange`. Blocking strategy (WhisperLID) awaits detection inside `start()` and returns the committed locale directly; `localeChange` finishes immediately. **Lock: this two-output-model design is the cleanest API surface for the heterogeneous strategies. The `isBlocking` Boolean on the strategy protocol is the right factoring.**
+
+4. **`languageConstraints` is the right `NLLanguageRecognizer` API for binary classification, not `languageHints`.** Validated in Spike #2 harness; followed by M3.4 implementation; correction recorded against architect's prompt error. **Lock: future prompts referencing `NLLanguageRecognizer` use `languageConstraints`. Sub-agent reviews and architect-side audits cross-check spike artifacts when API names appear in prompts.**
+
+5. **Subsystem convention is `com.talkcoach.app` with per-category names.** Locked since project setup (`Logger+Subsystem.swift:4`). 10 categories: app, audio, speech, analyzer, widget, session, mic, floatingPanel, lang, settings. **Lock: future prompts use this convention; architect's mental model corrected.** No code change needed.
+
+6. **`.bufferingNewest(1)` for at-most-one-emission `AsyncStream`.** Preserves the single yield for late-attaching consumers. Different from `AudioPipeline.bufferStream`'s `.bufferingNewest(64)` (continuous flow, drop-oldest under backpressure). **Lock: pick the buffer policy by the stream's emission pattern, not by uniform default.**
+
+### Procedural lessons
+
+1. **Marker-block drift is the new default expectation, not the exception.** Sessions 021 + 022 ran clean; Session 023 (M3.1) drifted on first self-review and required corrective; Session 024 (M3.4) drifted on first self-review and required corrective. **Two consecutive sessions with the same drift pattern.** The marker-block mechanism still works — it surfaces drift cleanly when the architect catches it — but the mechanism does not self-enforce. Going forward: assume drift will happen on the first self-review of every high-risk module; budget +25 min for the corrective re-disposition cycle in the estimate. The "watch for marker-block drift" item is now a default audit step, not an exception.
+
+2. **Prompt drift on Apple API names is a real risk.** Architect-authored prompts at desk-time can introduce wrong API names (`languageHints` instead of `languageConstraints`). The agent's defense is cross-checking against spike artifacts; the architect's defense is auditing the plan before approving Phase 2. **Mitigation: when a prompt references an Apple API by name AND a spike artifact exists with that API used, the prompt should explicitly say "spike artifact is canonical for the API name." Future prompts add this clause.**
+
+3. **Sub-agent findings need architect-level judgment, not blanket apply.** First false-positive in project history (the `Logger.lang` direct-access suggestion). Pattern: when a sub-agent finding contradicts an established architectural decision (here: nonisolated strategy types), the architect's judgment overrides. The agent's choice to dismiss the false positive in this case was correct; for higher-stakes contradictions, the agent should pause for architect review before either fixing or dismissing.
+
+4. **Architect's mental model of the subsystem convention was wrong from M3.1 onward.** Two sessions of prompts have told the agent to use `com.locto.<area>` while the agent silently corrected to the actual `com.talkcoach.app` convention. No production-code damage (agent always corrected), but architect-side prompt-template error needs fixing. **Mitigation: future prompts grep the existing logger convention before specifying subsystem strings.**
+
+5. **Spike-pre-validated module with deferred smoke ran on the fast end of guidance again.** M3.1 ran 0.75–1.0x against canonical with deferred AC11; M3.4 ran 0.5–0.7x against canonical with deferred AC12. The pattern is consistent: when the spike validates the mechanism AND smoke deferral shifts smoke-gate fix-round risk to the wiring module, the actual lands at or below canonical. **Lock the guidance: spike-pre-validated module with smoke deferred to wiring → estimate × 0.5–0.8 (was × 0.5–0.8 going in; matches actuals exactly).**
+
+6. **Session 024 ran wall-clock continuous with Session 023.** User pushed M3.1 and immediately requested M3.4 without a break. The journal entries are split for clarity (different modules, different sessions of work) but the wall-clock budget compounds. ~3.5–4h Session 023 + ~2.5–3.5h Session 024 = ~6–7.5h continuous architect-active work. Worth flagging for fatigue tracking — the architect-side error rate (the `languageHints` mistake; the `com.locto.audio` subsystem-string error from M3.1 that the agent silently corrected) might correlate with continuous-session length. v1.x: track architect error rate against session position within continuous-work blocks.
+
+### Time accounting
+
+- Session start: 2026-05-08 ~17:30 -05:00 (immediately after M3.1 push at session 023 close)
+- Session end: 2026-05-08 20:46 -05:00 / 02:46 UTC May 9
+- Wall-clock total: ~3.5h elapsed, ~2.5–3h architect+user active (architect-side: M3.4 prompt write + Phase 1 implicit audit + Phase 3 first-pass marker-block drift diagnosis + corrective prompt + second-pass audit + close-out; agent-side: ~2h impl work landed asynchronously within session span)
+- Per-phase breakdown:
+  - M3.4 prompt write: ~30 min
+  - Phase 1 plan production (agent, asynchronous): not on architect clock
+  - Phase 2 implementation (agent, asynchronous): not on architect clock
+  - Phase 3 self-review marker-block drift diagnosis + corrective prompt: ~25 min
+  - Sub-agent review audit (incl. false-positive judgment): ~15 min
+  - Close-out doc writes: ~30 min
+- Estimate: 4–6h canonical (× 0.5–0.8 spike-pre-validated guidance = 2.5–4h adjusted). Actual active: ~2.5–3h. **Variance: 0.5–0.7x against canonical, on the fast end of the adjusted band.** Spike-pre-validated + deferred-smoke pattern continues to amortize. One marker-block correction round (~25 min) plus one false-positive sub-agent judgment (~15 min) did not push the actual past the adjusted band's low end.
+- See `08_TIME_LEDGER.md` for cumulative pace data.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry, including `Time accounting` block
+- `04_BACKLOG.md` — M3.4 row updated to `✅ code-complete tag m3.4-code-complete (Session 024, ~2.5–3h actual); SG1–SG5 deferred to M3.7 wiring`; M3.7 row annotated to inherit SG1–SG5 from M3.4 in addition to SG1/SG2/SG3 from M3.1
+- `08_TIME_LEDGER.md` — Session 024 row added to per-session table; M3.4 row added to per-module table; pace observations refreshed; project totals updated to end-of-Session-024
+
+### Next session
+
+**Suggested: M3.5b `ParakeetTranscriberBackend`.** Largest module of Phase 3 (8–12h estimate). Depends on Spike #10 (passed Sessions 006–007, three sub-spikes validating Parakeet via WhisperKit harness, model sizing, and accuracy parity). Highest ML/Core ML surface in v1; biggest potential for OS-API surprise. Likely splits across two sessions.
+
+**Alternative: M3.5 `TranscriptionEngine` skeleton + `AppleTranscriberBackend`.** Estimate 6–8h canonical. The Apple Speech framework backend is more locked-down than Parakeet (less API surprise). Could be a rest day for the architect after the M3.1+M3.4 continuous run — Apple's `SpeechAnalyzer` API surface was validated in Spike #1.
+
+**Architect-side flags for the next session's opening message** (whichever module is picked):
+
+For M3.5b:
+1. **WhisperKit dependency may need to land here.** M3.4 deferred WhisperKit to M3.6 / M3.5b. M3.5b is the production transcription path — needs the WhisperKit dependency added if Parakeet ships via that integration path. Plan must specify whether Parakeet is via WhisperKit's `transcribe(audioPath:options:)` with a Parakeet-quantized model, or a direct Core ML inference path. Spike #10 validated WhisperKit-with-Parakeet; default to that.
+2. **Model download / on-disk gate is M3.6's territory.** M3.5b ships with a graceful-degrade path same as M3.4's `WhisperLIDStrategy.modelUnavailable` pattern. Until M3.6 lands, `ParakeetTranscriberBackend.transcribe(...)` throws `.modelUnavailable` (or the equivalent). Pattern is locked.
+3. **Backend selection logic stays in M3.5 (the engine), not M3.5b.** M3.5b is the Parakeet *backend*; M3.5 is the engine that holds locale → backend routing. Don't fold them together. Plan must justify the split if it deviates.
+4. **High-risk module: sub-agent review required, plan mode for Phase 1.** ML/Core ML surface + multi-locale routing. Likely splits across two sessions.
+5. **Smoke gate likely defers to M3.7 again.** Same pattern.
+
+For M3.5 + AppleTranscriberBackend:
+1. **`SpeechAnalyzer` was validated in Spike #1** (Sessions 002–003); locale support, partial-result emission, on-device modes. Plan should quote the spike's validated outcomes.
+2. **`TranscriptionEngine` is the routing brain** between locale and backend. Apple's `SpeechAnalyzer` for the locales it supports; Parakeet via M3.5b for the rest. Locale → backend routing locked at construction time (same shape as M3.4's strategy dispatch).
+3. **Smoke gate may NOT defer here.** Apple's `SpeechAnalyzer` runs end-to-end without external dependencies (no model download). Once `AudioPipeline.bufferStream` (M3.1) feeds `TranscriptionEngine`, the system has its first runtime path that exercises real OS APIs. M3.5 might be the right place to land M3.7's wiring partially — exercise an end-to-end audio → transcription smoke without waiting for full token wiring. Architect should think about this before drafting the prompt.
+
+**Reading order at next session start:** standard reading order from `00_COLLABORATION_INSTRUCTIONS.md` + the architect-side flags above + Spike #1 (for M3.5/AppleBackend) or Spike #10 (for M3.5b) validated outcomes. M3.7 (token wiring) inherits AC11 from M3.1 + SG1–SG5 from M3.4 + whatever new smoke deferrals the next module adds.
+
+---
+
+## Session 023 — 2026-05-08 — M3.1 AudioPipeline shipped code-complete: canonical strict-concurrency pattern transferred clean from spike, sub-agent caught real defensive-guard finding, AC11 smoke gate deferred to M3.7
+
+**Format:** First module of Phase 3. Clean inheritance from Spike #4 Phase 2 (Session 022's locked canonical pattern). Three architect-side flags carried into the prompt — recovery measurement on every event including #1, frame-size dynamism, sub-agent-required + plan mode for high-risk module. Marker-block drift regressed on the first self-review (third session under the new template; first regression after Sessions 021–022 ran clean); corrected via direct verbatim-reproduction prompt with per-AC drift map; second pass clean.
+
+### What happened
+
+Session opened with three architect-side items from Session 022's M3.1 prep brief:
+
+1. Copy `AudioTapBridge.swift`'s production form directly — the explicit `nonisolated` keyword on the factory function being load-bearing under `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`.
+2. Plan must specify recovery latency on event #1 (closing the Spike #4 Phase 2 S4 gap), dynamic frame size (not hardcoded 4096), both Chrome Meet and input-device switch as smoke trigger sources, defensive VPIO re-disable in recovery.
+3. High-risk module discipline: sub-agent review required, plan mode for Phase 1.
+
+The M3.1 prompt was written in-session with three marker blocks (Phase 3 checklist with 14 items, Acceptance Criteria 1–12, smoke-gate scenarios SG1/SG2/SG3) per the standard template promoted in Session 022. Estimate guidance × 1.0–1.5 against the 4h canonical per Session 022's OS-API-spike-pre-validated band.
+
+User followed the prompt-paste workflow (architect produces file → user copies into Xcode agent). **The plan-audit step was skipped** — user went prompt → agent → plan → "approve, proceed" → execution without surfacing the plan to the architect for audit. The architect-side instruction to audit the plan does not protect anything if the user's workflow skips it. First-of-phase and high-risk-module prompts going forward should include an explicit "DO NOT proceed past Phase 1 — paste plan to architect first" callout in the chat message accompanying the prompt file delivery, not just inside the prompt file.
+
+Mid-execution the agent appeared to hang on "Run some test" for over an hour — Xcode's chat-panel checklist UI froze, but the agent process was actually working silently. User stopped the running scheme but not the agent; agent continued and completed the session cleanly with red commit `e9891f1`, green commit `16a7932`, 23 new tests + 178 prior = 201 tests... wait, agent reported "23/23 green, 178/178 full suite green." Reconciling: 178 full suite includes the 23 new ones; full suite was 155 before M3.1 + 23 added = 178.
+
+**Lesson: Xcode UI freeze ≠ agent hang.** When the agent's checklist appears stuck for an hour, check git log + file system before assuming the agent is dead. Stopping the running scheme (which the user did) is harmless; killing the agent process (which the user did NOT do) would have lost ~2h of work. Two-strike rule applies in spirit: don't kill an agent until independent evidence (git, file system, console output) confirms it's stuck.
+
+The agent's first self-review came back with substantively-correct AC dispositions on the items addressed, but the marker-block contract was broken: the `=== PHASE3_CHECKLIST ===` block's 14 items were entirely skipped, and `=== ACCEPTANCE_CRITERIA ===` items were renumbered/replaced with agent-invented ACs (Convention-6 protocol design as "AC1", error cleanup as "AC12"). The architect's AC2 (buffer flow within 500ms with non-empty PCM and monotonic `sampleTime` — FM2-critical) was silently dropped. AC3 was missing the spike-line + M3.1-line side-by-side quote that the prompt explicitly required. **First marker-block drift regression** after Sessions 021 (M2.7) and 022 (Spike #4 Phase 2) ran clean. Session 022's "marker block enforcement is now stable" claim was premature.
+
+Architect corrective: paste-back to agent with explicit verbatim-reproduction instruction plus a per-AC drift map (your "AC4" content folds under real AC1; AC2 not dispositioned, this is FM2-critical; AC3 needs both spike line and M3.1 line quoted side-by-side; AC11 disposition is PENDING not omitted; etc.). Agent's invented "AC1" (protocol design) and "AC12" (error cleanup) demoted to "Additional findings beyond the prompt's ACs" rather than renumbered. Second pass clean: 14/14 Phase 3 checklist items dispositioned with file:line evidence, 12/12 ACs dispositioned with proper mapping. Sub-agent independent review followed with verbatim per-item findings.
+
+Sub-agent surfaced one real production-code finding (#4): `recover()` had no guard against being called after `stop()`. Production path is closed (observer deregistered on `stop()`), but the `internal recover()` test surface could be invoked post-stop and the engine state machine would re-fire stop → removeTap → setVPIO → installTap → prepare → start with no defense. Architect dispositioned: fold in. Cost: 5 lines + one new test (`testRecoverAfterStopIsNoOp`) verifying callLog stays empty, `lastRecoveryDuration` stays nil, and `bufferStream` remains terminated.
+
+Architect also called for a class-level `///` doc comment on `AudioPipeline` matching the pattern at `MicMonitor:4` and `SessionCoordinator:20`, re-dispositioning the doc-comment Phase 3 checklist item from NOT MET (self-review) and N/A (sub-agent — methods lack doc comments) to MET cleanly without committing the project to a broader "doc comments on all public APIs" convention.
+
+Both tightenings were additive: no modification of red-phase committed tests (TDD lock preserved), one new test for the new behavior. 178 + 1 = 179 green. Tightening commit landed.
+
+AC11 smoke gate question: M3.1 ships its public API surface (`start()` / `stop()` / `bufferStream`) but per the prompt's Out-of-Scope, M3.1 does NOT wire `AudioPipeline` to `SessionCoordinator`'s lifecycle (that's M3.7). Without that wiring, no runtime path in a built-and-running TalkCoach calls `start()` or consumes `bufferStream` — SG1/SG2/SG3 have nothing to observe in Console. SG3's "log buffer count every 10s" counter check is also not in production code (the agent correctly didn't add it; it wasn't tied to an AC, only described in SG3). Architect proposed two paths: (A) temporary `#if DEBUG` harness now (~30 lines in app entrypoint, removed when M3.7 lands), run smoke today, M3.1 closes fully; (B) defer smoke to M3.7 where the production wiring naturally enables observation, M3.1 closes code-complete with AC11 PENDING. **User chose B.**
+
+**M3.1 closes code-complete (`m3.1-code-complete`).** AC1–AC10 + AC12 fully MET with concrete evidence (file:line, test names, log lines, callLog ordering, build-settings file/line); AC11 PENDING (deferred to M3.7); AC7 PARTIAL pending smoke (test verifies `lastRecoveryDuration` property proxy; production emits `Logger.audio.info` + `OSSignposter` interval at `AudioPipeline.swift:170-171`; smoke gate's per-switch log capture is the closing verification path).
+
+### Architectural decisions locked
+
+1. **Canonical pattern transferred clean from spike to production.** `AudioTapBridge.swift`'s production form (nonisolated factory, `AsyncStream` + `.bufferingNewest(64)`, `AVAudioEngineConfigurationChange` recovery cycle) copied to `AudioPipeline.swift` with no re-derivation. `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` verified at `project.pbxproj:363/398`; the explicit `nonisolated` keyword is genuinely load-bearing in production. Spike #4 Phase 2's investment is fully amortized in M3.1 — the agent did not re-derive any of the locked decisions.
+
+2. **`AudioEngineProvider` Convention-6 protocol added.** Test-injection seam mirroring `CoreAudioDeviceProvider` from M2.1. Production: `SystemAudioEngineProvider` (real `AVAudioEngine` wrapper). Tests: `FakeAudioEngineProvider` with `callLog` recording every method call in order. Convention-6 (`PermissionStatusProvider`-style) extends to audio. Not in the original prompt — agent's design call, accepted.
+
+3. **`recover()` is `internal` for test access.** Tests call directly via `@testable import` rather than posting brittle real `AVAudioEngineConfigurationChange` notifications. Plan justified the choice; sub-agent finding #4 (post-stop guard) depended on this seam being exposed and was addressed by the additive `guard isStarted else { return }` at the top of `recover()`.
+
+4. **`bufferSize: 0` for system-chosen frame size.** Satisfies AC8's no-hardcoded-4096 contract; production reads `AVAudioPCMBuffer.frameLength` at runtime per Spike #4 Phase 2's frame-size finding (~4792 on test hardware). The `0` value follows `AVAudioEngine.installTap(...bufferSize:format:)`'s "preferred-or-system-chooses" semantics.
+
+5. **Recovery latency measured on every event including #1.** `lastRecoveryDuration` property (test-observable proxy) + `Logger.audio.info("Recovered in \(ms)ms")` + `OSSignposter` interval, all emitted unconditionally on every `recover()` invocation. Closes the Spike #4 Phase 2 S4 gap (latency was logged only on event #2 in the spike).
+
+6. **AC11 smoke deferral pattern.** When a module ships its public API but is not yet wired into a runtime path that exercises it, smoke can defer to the wiring module. M3.7 inherits SG1 (input-device switch, gating), SG2 (Chrome Meet, exploratory), SG3 (Zoom 5-min coexistence, gating, FM4) plus the buffer-count-every-10s counter check from M3.1. The deferred-smoke ACs are tracked PENDING and closed in the wiring module's smoke gate. **First time the pattern is formalized; record for future reference.**
+
+### Procedural lessons
+
+1. **Marker-block drift is recurring; one clean session is not enough to declare it stable.** Sessions 021 + 022 ran clean, then Session 023 regressed on the first self-review (full Phase 3 checklist skipped, AC numbering replaced with agent inventions). The corrective per-instance prompt (verbatim-reproduce + per-AC drift map) restored discipline cleanly. Going forward: don't claim marker-block enforcement is stable until ≥5 sessions running clean. Treat drift as the default expectation, not the exception. The marker-block mechanism still works — but only when the architect catches the drift and corrects it; the mechanism doesn't self-enforce.
+
+2. **The plan-audit step needs to actually happen, and the user has to do something to make it happen.** The M3.1 prompt's text said "DO NOT IMPLEMENT YET" and asked for a plan, but the user's natural workflow (paste prompt → wait for output → say "approve, proceed") doesn't surface the plan to the architect. **Mitigation:** future first-of-phase or high-risk-module prompts will include an explicit chat-message callout — *not just inside the prompt file* — saying "After Phase 1 plan is produced, paste it back to architect for audit before approving Phase 2." Belt-and-suspenders: the file says it, the chat message reminds it.
+
+3. **Xcode UI freeze ≠ agent hang.** When the agent's checklist UI appears stuck for an hour, check git log + file system before assuming the agent is dead. The agent was working silently; UI was frozen. Stopping the running scheme (which the user did) is harmless; killing the agent process (which the user did NOT do) would have lost ~2h of work. Two-strike rule applies in spirit: don't kill an agent until independent evidence (git, file system, console output, file timestamps) confirms it's stuck.
+
+4. **Sub-agent reviews continue to surface real findings — four-in-a-row.** Session 020's discipline (zero-issues-without-verbatim-notes is itself a signal) held. Sub-agent's finding #4 (recover-after-stop guard) was a real state-machine defensive gap, not noise. Sub-agent reviews across M2.5 / M2.6 / M2.7 / Spike #4 Phase 2 / M3.1 have all surfaced substantive findings — five-in-a-row when counted with M2.5's TokenStorage leak. The pattern is consistent: sub-agent reviews in this project pay back the time invested.
+
+5. **Spike-validated patterns transfer near-zero-friction.** M3.1's biggest design questions were all answered by Spike #4 Phase 2: hand-off mechanism, backpressure policy, recovery cycle, factory-function concurrency form, sample-data copy-out timing. The agent's plan re-quoted spike outcomes correctly without re-deriving anything. Estimate ran near low end of guidance (× 0.75–1.0 against the 4h canonical), validating Session 022's "spike-pre-validated module" 0.5x adjustment guidance. Counter-pattern would have been: agent ignores spike, re-derives, picks different choices, bugs surface in smoke. None of that happened. The 1.5h of Spike #4 Phase 2 investment continues to amortize.
+
+6. **AC11 smoke deferral is a real architectural pattern, not a procedural shortcut.** Modules that ship producer surfaces (`AudioPipeline.start()` / `bufferStream`) are not testable in isolation against runtime ACs that require consumer activity. Building a temp `#if DEBUG` harness is real cost (small, but real) for a redundancy that disappears in 1–2 modules. Deferring AC11 to M3.7 (the wiring module) is the right call when the wiring module is reasonably close on the schedule. Document the deferral; don't pretend it doesn't exist; M3.7's smoke gate explicitly inherits the M3.1 scenarios.
+
+### Time accounting
+
+- Session start: 2026-05-08 ~12:00 -05:00 (user worked through the silent-agent period before re-engaging architect at ~13:42 -05:00 / 18:42 UTC; architect first prompt write ~12:50 -05:00 / 17:50 UTC)
+- Session end: 2026-05-08 17:21 -05:00 / 23:21 UTC — close-out doc writes
+- Wall-clock total: ~5.5h elapsed, ~3.5–4h architect+user active (architect-side: prompt write + Phase 3 audit + first-pass marker-block drift diagnosis + corrective prompt + second-pass audit + sub-agent finding disposition + tightening prompt + AC11 path question + close-out; agent-side: ~3h of impl work landed asynchronously within session span, including the silent ~1h that appeared as a UI hang)
+- Per-phase breakdown:
+  - M3.1 prompt write: ~30 min
+  - Phase 1 plan production (agent, asynchronous): not on architect clock
+  - Phase 2 implementation (agent, asynchronous, including UI-frozen interval): not on architect clock
+  - Phase 3 self-review marker-block drift diagnosis + corrective prompt: ~25 min
+  - Sub-agent review audit: ~10 min
+  - Two tightenings prompt: ~10 min
+  - AC11 path decision + close-out doc writes: ~45 min
+- Estimate: 4h canonical (× 1.0–1.5 = 4–6h adjusted per Session 022 guidance). Actual active: ~3.5–4h. **Variance: ~0.6–1.0x against canonical, on the fast end of the adjusted band.** The spike pre-validation paid off as guidance predicted; one round of marker-block correction + one round of additive tightening did not push the actual past the canonical estimate. AC11 smoke deferral means the smoke-gate fix-round risk that Session 022's guidance allocated for is shifted to M3.7's actual.
+- See `08_TIME_LEDGER.md` for cumulative pace data.
+
+### What changed in the docs this session
+
+- `01_PROJECT_JOURNAL.md` — this entry, including `Time accounting` block
+- `04_BACKLOG.md` — M3.1 row updated to `✅ code-complete tag m3.1-code-complete (Session 023, ~3.5h actual); AC11 smoke gate deferred to M3.7 wiring`; M3.7 row annotated to inherit AC11 smoke scenarios SG1/SG2/SG3 from M3.1
+- `08_TIME_LEDGER.md` — Session 023 row added to per-session table; M3.1 row added to per-module table; pace observations refreshed including AC11-deferral pattern note; project totals updated to end-of-Session-023
+
+### Next session
+
+**M3.4 `LanguageDetector` confirmed.** Estimate 4–6h canonical, × 0.5–0.8 spike-pre-validated guidance = ~2.5–4h adjusted. Single-session ship target.
+
+Architect-side items to carry into next session's opening message (sequencing + scope flags surfaced here so they're available at session start without re-reading the spike):
+
+1. **Three strategies dispatched at `init()` from `declaredLocales`'s Unicode script properties** (Architecture §5, locked Session 010). Strategy 1 (`NLLanguageRecognizer`) for same-script pairs; Strategy 2 (word-count threshold t=13) for cross-script non-CJK pairs; Strategy 3 (Whisper-tiny audio LID) for Latin↔CJK pairs. Strategy selection is one-time at construction, not runtime-mutable. Spec at Architecture §5 lines 187–217.
+
+2. **N=1 trivial path is its own code path.** No detection runs; `LanguageDetector` returns `declaredLocales[0]` immediately. Tested separately. Spec at Architecture §5 lines 182–185.
+
+3. **Input dependencies — M3.4 ships BEFORE M3.5 / M3.5a / M3.5b.** Strategies 1 & 2 consume partial-transcript text that doesn't exist yet (TranscriptionEngine is M3.5). Strategy 3 consumes raw audio buffers from `AudioPipeline.bufferStream` (M3.1, available). **M3.4 must define a protocol-input seam (Convention-6) for the partial-transcript source** that's mocked in tests and wired in M3.7. Without this, M3.4's Strategies 1 & 2 are unprovable until M3.5 lands. The seam is the architect-side equivalent of `AudioEngineProvider` from M3.1 — protocol + production stub (returns nothing until wired) + test fake.
+
+4. **Whisper-tiny model dependency — M3.4 ships BEFORE M3.6 (download flow).** Strategy 3 needs `openai_whisper-tiny` (75.5 MB) on disk. Until M3.6 wires the download, Strategy 3 cannot run end-to-end. Two clean options for M3.4's prompt: (a) Strategy 3 ships as code with a "model not yet available" graceful-degrade path (logs + falls back to Strategy 2 word-count or to manual override) until M3.6 lands; (b) Strategy 3 ships fully but is gated behind a model-present check, with the bundled-test fixture used for unit tests. Recommend (a) — clean separation of concerns; M3.4 is detection logic, M3.6 is asset management.
+
+5. **AC11 smoke deferral pattern likely applies again.** M3.4 emits a `Locale` to `SessionCoordinator` (per Architecture §5 line 242: "outputs a `Locale`... emitted as a locale-change event to `SessionCoordinator`"). `SessionCoordinator` does not yet consume the locale (that happens in M3.5/M3.7 wiring). No runtime path observes the detection output. Smoke gate likely defers to M3.7 (same pattern as M3.1's AC11). Plan should propose this explicitly.
+
+6. **Cross-script non-CJK fallback for unvalidated pairs** (Architecture §5's untested cases per Spike #2's open follow-ups). EN+AR (Latin+Arabic), EN+HI (Latin+Devanagari), EN+KO/EN+ZH (CJK other than JA), EN+FR/EN+DE/EN+PT/EN+IT (untested same-script). Strategy selection routes them by script rules (CJK → Strategy 3, same-script → Strategy 1, else → Strategy 2). M3.4 ships supporting these; tests exercise the routing logic, not new corpora. Architect flag: when an unvalidated pair routes, log `Logger.lang.info` with pair + selected strategy to surface real-world coverage signals for v1.x corpus expansion.
+
+7. **Strategy 3's lifecycle differs from 1 & 2.** Strategy 3 commits a locale BEFORE `TranscriptionEngine` initializes (widget stays hidden during the ~3s buffering). Strategies 1 & 2 emit a locale-CHANGE event AFTER ~5s if the wrong-guess swap fires. Two different output surfaces: an `init()` async method that returns initial locale (used by all strategies), and an optional `localeChange` `AsyncStream<Locale>` (used only by Strategies 1 & 2; Strategy 3 finishes the stream immediately at start since no swap is possible). Plan should justify the API shape.
+
+8. **High-risk module discipline applies (sub-agent review required).** Three strategies × N=1/N=2 split × four output paths = real combinatorial surface. Plan mode for Phase 1.
+
+**Reading order at next session start:** standard reading order from `00_COLLABORATION_INSTRUCTIONS.md` + Spike #2 validated outcomes (`05_SPIKES.md` lines 297–319) + LanguageDetector spec (`03_ARCHITECTURE.md` §5, lines 172–243). M3.5b (ParakeetTranscriberBackend, 8–12h) remains queued after M3.4. M3.7 (token wiring) remains gated by M3.1 + M3.5; will inherit AC11 smoke from M3.1 + likely from M3.4.
+
+---
+
 ## Session 022 — 2026-05-08 — Spike #4 Phase 2 (strict-concurrency tap tightening) shipped: canonical pattern locked for M3.1; second session running with marker-block template and zero checklist drift; `00_COLLABORATION_INSTRUCTIONS.md` updated to make the template standard
 
 **Format:** Architect-driven micro-spike between Phase 2 close (Session 021) and Phase 3 open (M3.1 next). Decision at session start: tighten Spike #4's Swift 6 strict-concurrency findings via a focused micro-spike before M3.1 vs roll into M3.1's plan. User chose tighten — *"I don't want to move forward if the base decisions are not fully validated and clearly documented."* That choice paid off: the spike surfaced a real Phase 1 → Phase 2 reproducibility gap (Chrome Meet didn't trigger config-change behavior reproducibly) plus a frame-size assumption that would have been wrong in M3.1.

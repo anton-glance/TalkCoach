@@ -758,8 +758,185 @@ Only matters if you go App Store. Run a TestFlight submission as the validation 
 
 ---
 
-## Spike status summary (Session 014)
+## Spike #13 — External-mic-detection signal (replaces inactivity-timeout as session-end trigger)
 
-All architecture-blocking spikes are resolved. Seven spikes completed (S2, S4, S6, S7, S8, S9, S10), one superseded (S3). Two spikes deferred with their features: S1 (blocklist → v2), S11 (MonologueDetector → v1.x). S12 remains parked for v2 (trail-off detector).
+**Status:** ❓ Open, blocks M3.7 close. **Opened Session 028 (2026-05-12).**
+**Owner:** Architect designs probes; agent executes each probe sequentially; architect audits results after each.
+**Budget:** 4–6h total wall-clock across all three probes. Gated: each probe is ~1–2h; stop at the first SUCCESS.
+**Prereq:** None. M3.7.2 inactivity-timer code is in place as interim fallback — does not need to be reverted before this spike runs.
 
-Phase 1 module work is fully unblocked.
+### Why this spike exists
+
+The product UX (locked Session 028 Chief of Product call) requires the widget to be visible whenever macOS shows the orange-dot mic indicator and to fade out when the indicator goes off. This means session lifecycle is bounded by **"is anything on this Mac recording the microphone"** — NOT by speech activity in incoming audio.
+
+M3.7.2 shipped an inactivity-timer-based deactivation (30s without tokens → end session) as an interim, but this breaks a critical v1 use case: an hour-long Zoom call where the user speaks for 10–15 minutes when it's their turn. The session would end at 0:30 of listening, miss the actual pitch entirely, or fragment one pitch into 5–10 micro-sessions.
+
+Session 028 empirically established that one specific HAL API path doesn't work for external-mic detection from inside our sandboxed app (`kAudioProcessPropertyIsRunningInput` direct-reads return false for external recording processes; QuickTime never appears in our process-object list). That established a culture of empirical validation, but it did NOT exhaustively prove that external-mic state is undetectable. We jumped to inactivity-timeout without testing three other candidate signals.
+
+This spike tests those three signals, in order from "cleanest if it works" to "biggest rewrite if it works." First success wins.
+
+### Hard requirements (any probe that passes must satisfy ALL of these)
+
+1. **Detects external recording.** When QuickTime (or Zoom, or any external app) starts recording, signal goes to "external active." When that app stops recording, signal goes to "external inactive." Detected within 1s of state change.
+
+2. **Survives our own active capture.** Our `AudioPipeline.start()` is running throughout the session (we need the audio for transcription). The signal must distinguish "external app is recording" from "we are recording." Specifically: signal goes false when ONLY we are recording, true when ANYONE ELSE (with or without us) is recording.
+
+3. **Survives mid-session default-device change (AirPods scenario).** User starts Zoom on built-in mic, mid-call connects AirPods, system default input device changes. Zoom may or may not follow the system default (varies by app). Our signal observation must NOT see this as "external stopped recording" — the user is still in the same call, the session must stay alive. The chosen probe API must either (a) be device-agnostic in semantics, or (b) be re-attachable to the new default device within ~100ms so the observer continuity isn't lost.
+
+4. **Observable from a sandboxed app.** No new entitlements, no TCC dialogs, no Mach-lookup global-name exceptions beyond what TalkCoach already has. If a probe requires new entitlements, that's a fail.
+
+5. **Works with `AVAudioEngine`-based AudioPipeline as currently implemented, OR the rewrite cost is bounded and acceptable.** Probe A: zero AudioPipeline changes. Probe B and C: AudioPipeline rewrite required; budget impact accepted only if Probe A fails.
+
+### Probes
+
+Each probe is a self-contained Swift package in `Spike/Spike13_ExternalMicDetection/<probe-letter>/`. Each builds as a CLI executable that runs for ~60s, logs observations to stdout, and exits. Manual test choreography (start/stop QuickTime, switch AirPods) noted per probe.
+
+#### Probe A — `AVCaptureDevice.isInUseByAnotherApplication` (KVO-observable)
+
+**Hypothesis:** `AVCaptureDevice` exposes a documented, KVO-observable Boolean property that reports whether ANOTHER application is using the device. If this property reflects reality from our sandbox, and if KVO notifications fire reliably across state changes, this is the cleanest possible signal.
+
+**Why first:** zero changes to existing AudioPipeline. Pure additive observer in MicMonitor or a new component. If it works, integration is ~2h.
+
+**Method:**
+
+1. Get the default audio capture device: `AVCaptureDevice.default(for: .audio)`.
+2. KVO-observe its `isInUseByAnotherApplication` property.
+3. Manually:
+    - t=0: probe starts. Log initial value.
+    - t=5s: open QuickTime, start New Audio Recording. Log observed KVO callbacks.
+    - t=15s: stop QuickTime recording (keep app open). Log.
+    - t=20s: start QuickTime recording again. Log.
+    - t=30s: connect AirPods (switch default input device). Log. Verify probe observer correctly re-attaches to the new default device (or that the property is somehow device-agnostic).
+    - t=45s: stop QuickTime. Log.
+    - t=60s: exit.
+4. Run probe twice with our `AVAudioEngine.inputNode` actively capturing in a parallel thread (simulating M3.7's wiring). Confirm the property reads false when only we are capturing.
+
+**Pass criteria:**
+
+- Property is observable from sandbox (no permission errors, no crashes).
+- Property correctly reflects "external app recording" with our pipeline ALSO active.
+- KVO callbacks fire within 1s of state change.
+- AirPods mid-switch is handled (either property is device-agnostic, or re-attaching to the new default device picks up the existing call's state correctly within 100ms).
+- No false positives from our own activity.
+
+**Fail modes:**
+
+- KVO callbacks never fire even though documented as observable → fail; finding 5 in the project's Apple-framework runtime-trap inventory.
+- Property returns nonsense values (always true, always false, returns the OPPOSITE of reality) → fail.
+- AirPods switch ends the observation chain and we can't re-attach without losing state → fail unless workaround documented.
+- Requires entitlement we don't have → fail.
+
+**Effort budget:** 1h probe + 1h integration if pass. Total Probe A path: 2h.
+
+#### Probe B — Core Audio process tap (`AudioHardwareCreateProcessTap`, macOS 14.2+)
+
+**Hypothesis:** Apple introduced process taps in macOS 14.2 specifically for "monitor another process's audio without becoming a primary reader." If we capture our audio via a tap rather than a direct HAL reader, we don't trip `kAudioDevicePropertyDeviceIsRunningSomewhere`, and M2.1's original listener architecture works as designed.
+
+**Why second:** medium rewrite cost (~4–6h to swap AudioPipeline's underlying mechanism). Tests the cleanest theoretical solution to the composition bug.
+
+**Method:**
+
+1. Create a process tap on our own process: `AudioHardwareCreateProcessTap(...)`.
+2. Create an aggregate device with the tap as a sub-device.
+3. Run `AVAudioEngine` against the aggregate device instead of the default input.
+4. Observe `kAudioDevicePropertyDeviceIsRunningSomewhere` on the ORIGINAL default input device.
+5. Manually:
+    - t=0: probe starts. Log initial state of `IsRunningSomewhere` (should be false if no external app recording).
+    - t=5s: start our aggregate-device-based capture. Log `IsRunningSomewhere` — does it stay false? (Goal: yes.)
+    - t=10s: open QuickTime, start recording on default device. Log `IsRunningSomewhere` — should fire true.
+    - t=20s: stop QuickTime. Log `IsRunningSomewhere` — should fire false (CRITICAL: this is the signal M3.7's bug killed).
+    - t=30s: connect AirPods. Log behavior. Verify our capture continues; verify we re-attach `IsRunningSomewhere` observer to AirPods.
+    - t=45s: stop our capture. Log.
+    - t=60s: exit.
+
+**Pass criteria:**
+
+- Process tap successfully captures audio (we get buffers).
+- `IsRunningSomewhere` stays false while ONLY we are capturing (the load-bearing assumption).
+- `IsRunningSomewhere` correctly fires true→false when external apps start/stop, even with our tap-based capture active.
+- AirPods mid-switch handled cleanly.
+
+**Fail modes:**
+
+- Process tap unavailable on macOS version (we're 14.2+, should be available — but verify).
+- Tap-based capture still trips `IsRunningSomewhere` (apparently Apple counts taps as readers too) → fail; same composition bug returns.
+- Audio quality from tap is degraded (sample rate mismatch, format issues, dropped buffers) → fail.
+- AirPods switch breaks the aggregate device → fail unless workaround documented.
+
+**Effort budget:** 1h probe + 4–6h AudioPipeline rewrite if pass. Total Probe B path: 5–7h.
+
+#### Probe C — `AVCaptureSession`-based audio capture
+
+**Hypothesis:** `AVCaptureSession` uses a different audio plumbing than `AVAudioEngine.inputNode`. The mechanism is higher-level and may not register as a primary HAL reader, leaving `IsRunningSomewhere` clean.
+
+**Why third:** unknown rewrite cost (probably 4–6h, but `AVCaptureSession` is a different paradigm and may not give us the same buffer-tap surface M3.5's TranscriptionEngine expects). Tested last because Probe A and B are cleaner if they work.
+
+**Method:**
+
+1. Create `AVCaptureSession`, add audio input from default device.
+2. Add `AVCaptureAudioDataOutput` with a sample buffer delegate.
+3. Start the session, observe buffers arriving in delegate callbacks.
+4. Observe `kAudioDevicePropertyDeviceIsRunningSomewhere` on the default input device.
+5. Same manual choreography as Probe B (t=0 start, t=5s our capture, t=10s QuickTime, t=20s QuickTime stop, t=30s AirPods, t=45s our stop, t=60s exit).
+
+**Pass criteria:**
+
+- `AVCaptureSession` captures audio buffers cleanly.
+- `IsRunningSomewhere` stays false while only we are capturing.
+- `IsRunningSomewhere` correctly fires true→false when externals start/stop.
+- AirPods mid-switch handled.
+- Buffer format is compatible with M3.5's `AudioBufferProvider` protocol (or convertible without significant added latency).
+
+**Fail modes:**
+
+- `AVCaptureSession` audio output trips `IsRunningSomewhere` same as `AVAudioEngine` → fail.
+- Buffer format incompatible with TranscriptionEngine's expected input → fail (or accept 1-2h conversion shim cost).
+- AirPods switch behavior different/worse than current → fail.
+
+**Effort budget:** 1h probe + 4–6h AudioPipeline rewrite if pass + possibly 1–2h format conversion shim. Total Probe C path: 6–9h.
+
+### Decision tree after probe runs
+
+- **Probe A passes:** integrate `AVCaptureDevice.isInUseByAnotherApplication` observer as the deactivation signal. M3.7.2 inactivity-timer stays in code as defense-in-depth fallback (cancel-on-true-signal-deactivation; fire if no signal ever arrives). 2h integration → M3.7 closes with correct UX.
+
+- **Probe A fails, Probe B passes:** rewrite AudioPipeline to use process-tap-via-aggregate-device. Restore original M2.1 listener semantics. M3.7.2 inactivity-timer kept as defense-in-depth. 5–7h work → M3.7 closes with correct UX.
+
+- **Probe A and B fail, Probe C passes:** rewrite AudioPipeline to use AVCaptureSession. Same integration shape as Probe B but with different underlying mechanism. 6–9h work → M3.7 closes with correct UX.
+
+- **All three probes fail:** the deactivation signal is genuinely unavailable from a sandboxed macOS app. Accept inactivity-timeout as v1 mechanism, document UX limitation explicitly in product spec, ship v1 with the known constraint. Re-investigate in v1.x with a fifth probe direction (e.g., private TCC framework signals, distributed notifications from Sound preferences, etc.) or accept the limitation permanently. M3.7 closes with documented-limitation tag rather than full-correct tag.
+
+### Procedural notes
+
+- **Each probe runs as a STANDALONE Swift package**, not as test code or production code. Compiled with `swift build`, run from terminal. Stdout logs are the evidence. This matches Spike #4's pattern (`MicTapTightenSpike/Sources/MicTapTightenSpike/AudioTapBridge.swift`).
+- **Probes run sequentially with architect audit between each.** Don't pre-run Probe B while A is still being evaluated. Each probe's outcome may change the spec for the next.
+- **Sub-agent review of probe results is mandatory.** Probes report observational evidence; sub-agent confirms the evidence supports the pass/fail conclusion before architect locks the decision.
+- **AirPods test requires physical hardware.** Probe runs that can't reach the AirPods switch step report partial-pass with explicit gap noted. Architect decides whether to proceed to next probe or hold for hardware availability.
+- **AVAudioEngine concurrent capture in Probe A** can be simulated by running M3.7's actual app in parallel terminal (open Xcode, Cmd+R, separately run the probe binary in terminal). This isn't ideal isolation but it's the cheapest way to test "external HAL reader present" without writing extra harness code.
+
+### What this spike does NOT do
+
+- Does not implement the chosen signal in production. That's a separate ~2–7h follow-up depending on which probe passes.
+- Does not investigate `kAudioHardwarePropertyProcessIsAudible` or other obscure HAL properties beyond the three named probes. If all three fail, future investigation is open-ended and v1 ships with the inactivity-timer documented limitation.
+- Does not address the rare case of external apps that record audio without triggering the system mic indicator (e.g., audio interception via virtual audio devices like BlackHole). That's a separate v1.x consideration.
+
+### Outputs
+
+- `Spike/Spike13_ExternalMicDetection/probe-a/main.swift` (Probe A code)
+- `Spike/Spike13_ExternalMicDetection/probe-b/main.swift` (Probe B code, only if needed)
+- `Spike/Spike13_ExternalMicDetection/probe-c/main.swift` (Probe C code, only if needed)
+- Stdout logs from each probe, captured to `/tmp/spike13-probe-{a,b,c}.txt`
+- One architect-level decision artifact in this spec under "Outcome" section (TBD after probes run)
+
+### Outcome
+
+TBD — fill in after probes run.
+
+---
+
+## Spike status summary (Session 028)
+
+All architecture-blocking spikes from earlier project phases are resolved. Seven spikes completed (S2, S4, S6, S7, S8, S9, S10), one superseded (S3). Two spikes deferred with their features: S1 (blocklist → v2), S11 (MonologueDetector → v1.x). S12 remains parked for v2 (trail-off detector). S5 deferred to v1.x.
+
+**Spike #13 (external-mic-detection signal) opened Session 028.** Blocks M3.7 close. Three gated probes, 4–6h budget. First probe (Probe A — `AVCaptureDevice.isInUseByAnotherApplication`) runs next session.
+
+Phase 1 module work is fully unblocked. Phase 3 token pipeline is functional pending Spike #13's deactivation-signal resolution.

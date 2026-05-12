@@ -235,6 +235,78 @@ There is no state C — "looks done, please test it." That's the failure we're d
 
 ---
 
+## Smoke gate evidence: structured artifacts, not subjective judgment
+
+Locked Session 026.
+
+Every gating smoke scenario produces a **structured artifact**, not subjective judgment. The artifact is pasted into the architect's audit chat verbatim, or attached as a file. No "felt fast." No "looked smooth." Numbers, log lines, file diffs.
+
+**Acceptable artifacts (priority order):**
+
+1. **Console subsystem log dumps** — `log show --predicate 'subsystem == "com.talkcoach.app"' --last <duration>` redirected to a `.txt` file. Captures the production code's emitted Logger lines for a scenario time-window.
+2. **Production-code instrumented metrics** — `Logger.*` lines that emit numeric measurements (durations in ms, counts, rates, byte sizes). Examples: `"Recovered in 247ms"`, `"47 tokens delivered in 9823ms (4.78 tok/s)"`, `"Buffer count this session: 312 buffers @ 9.97 buf/s avg"`. Production prompts include explicit log-line emission requirements in the smoke-gate scenarios.
+3. **Test harness output** — XCTest stdout, `xcodebuild test` output, test-time signpost intervals (`os_signpost`).
+4. **State diffs** — `defaults read com.talkcoach.app` before/after, file contents before/after, `git diff`, persisted-record dumps from SwiftData.
+5. **Screenshots** — only when UI rendering correctness is the gate (e.g. "the widget appears in the right corner of the right display"); never as a substitute for numeric data when numbers are available.
+
+**Unacceptable as smoke evidence (never sufficient on their own):**
+
+- "It worked"
+- "Felt fast" / "Felt slow" / "Seemed responsive"
+- "Looked clean" / "Looked right"
+- "Seemed to work"
+- "I think it did the right thing"
+- Any adjective without a measured number behind it
+
+**Roles in the smoke-gate-evidence chain:**
+
+- **Agent during implementation:** emits the data. Production code includes Logger lines that surface measured numbers (durations, counts, rates) at every gating decision point. The prompt's smoke-gate block specifies exactly which log lines must appear and with what shape.
+- **User during smoke:** captures and forwards the artifact. Runs the scenario, redirects Console output to a file, pastes the file or runs `log show` against the right window. Does NOT paraphrase or summarize the output.
+- **Architect during audit:** reads the numbers and decides. Compares observed metrics against the prompt's pass conditions; flags deviations; either approves the smoke gate or requests a fix-round with concrete evidence cited.
+
+**When numeric data genuinely isn't possible** (e.g. "the floating panel appears on screen at the right position"), document this in the prompt's smoke-gate block and accept screenshot + observation as the artifact for that specific scenario — but do not let "no numbers possible" become a default escape hatch. If you can imagine a way to measure it (frame timing, position deltas, render counts), measure it.
+
+**Before any smoke gate runs:** the architect verifies the prompt's smoke-gate block has measurement-shaped expectations, not adjective-shaped expectations. "Token flow is smooth" is wrong. "≥1 token within 500ms of speech onset; sustained ≥2 tok/s for the duration of speech" is right.
+
+---
+
+## Agent reply formatting: copy-pasteable as a single block
+
+Locked Session 027.
+
+When the Claude Code agent (in Xcode) writes a text reply — plan, self-review, status report, diagnostic output, anything that's NOT a code edit to a file — the reply must be **copy-pasteable as a single action by the user**. Xcode's chat panel does not allow selecting text across fenced-code-block boundaries; if the reply mixes prose paragraphs with separate fenced blocks containing code snippets / file paths / commands, the user cannot Cmd+A → Cmd+C → paste the whole reply to the architect for audit. This breaks the smoke-gate evidence chain and the Phase 3 self-review audit loop.
+
+**The rule (every Claude Code agent reply, no exceptions):**
+
+Pick ONE of these two formats for the entire reply:
+
+**(a) Entirely plain prose and indented text.** No fenced code blocks anywhere in the reply. Inline code references use single backticks only (`SpeechTranscriber.installedLocales`, `Logger.session.info`, `m3.4-code-complete`). File paths use single backticks. Multi-line code snippets use indented text (4-space indent), not fences.
+
+**(b) Entirely inside one fenced code block.** The entire reply, including any prose narration, lives inside ONE pair of triple-backticks. The user can click inside the block, Cmd+A, Cmd+C in one action.
+
+**Never mix.** Do not produce a reply that contains prose paragraphs AND separate fenced blocks for snippets. That's the failure mode that breaks the workflow.
+
+**Default choice:**
+- Plans, reviews, status reports, AC dispositions, prose-heavy outputs → format (a)
+- Replies that are mostly code, command sequences, or diff output → format (b)
+- When unsure, prefer (a) — prose with backtick-quoted code is more readable and still single-selectable.
+
+**This rule applies to:**
+- Text replies in the Xcode chat panel
+- Phase 1 plan outputs
+- Phase 3 self-review marker block reproductions
+- Sub-agent review reports
+- Diagnostic outputs the user is expected to paste back to architect
+- Any status update the user might need to forward
+
+**This rule does NOT apply to:**
+- Actual code edits the agent makes to files in the repo (those use whatever Swift/Markdown/etc. format the file requires)
+- Tool calls the agent makes (those are JSON or similar structured format)
+
+**Every standard prompt template now includes a "Reply formatting" section restating this rule.** The rule is repeated per-prompt as a reminder, but the authoritative source is here. If a reply violates the rule, the architect's first response is to ask for a reformatted reply before auditing content — discipline check first, content audit second.
+
+---
+
 ## What if the agent gets stuck
 
 1. **Don't keep correcting it.** Two-strike rule.
