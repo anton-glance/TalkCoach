@@ -628,4 +628,45 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         XCTAssertEqual(sut.lastEndReason, .micOffListener,
                        "micDeactivated must record reason .micOffListener")
     }
+
+    // MARK: - T-FIX3-B2: captureActivityState transitions probing → resuming → waiting (AC-FIX3-B2)
+
+    func testActivityState_TransitionsToProbingThenResuming() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let prober = FakeMicAvailabilityProber()
+        prober.stubbedResult = true // IRS=true → resume
+
+        let suiteName = "CaptureActivity.\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(true, forKey: "coachingEnabled")
+        let settingsStore = SettingsStore(userDefaults: defaults)
+        let micMonitor = MicMonitor(provider: MinimalCoreAudioProvider())
+        let sut = SessionCoordinator(
+            micMonitor: micMonitor,
+            settingsStore: settingsStore,
+            inactivityTimer: fakeTimer,
+            micProber: prober,
+            resumingHoldDuration: 0.1
+        )
+
+        let (wiring, _, _, _) = makeWiringWithResume()
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        XCTAssertEqual(sut.captureActivityState, .waiting,
+                       "captureActivityState must start as .waiting (AC-FIX3-B2)")
+
+        fakeTimer.fireNow()
+        // handleInactivityTimeout sets captureActivityState = .probing synchronously before async task
+        XCTAssertEqual(sut.captureActivityState, .probing,
+                       "captureActivityState must be .probing immediately after inactivity fires (AC-FIX3-B2)")
+
+        // Wait past HAL settling (100ms) + probe + resumeSession + resumingHoldDuration (100ms)
+        try await Task.sleep(for: .milliseconds(800))
+
+        XCTAssertEqual(sut.captureActivityState, .waiting,
+                       "captureActivityState must return to .waiting after resume hold completes (AC-FIX3-B2)")
+    }
 }

@@ -71,6 +71,14 @@ private enum CaptureState {
     case probing
 }
 
+// MARK: - CaptureActivityState
+
+enum CaptureActivityState: Equatable {
+    case waiting
+    case probing
+    case resuming
+}
+
 // MARK: - SessionCoordinator
 
 /// Orchestrates session lifecycle using the disconnect-probe-reconnect algorithm:
@@ -93,6 +101,7 @@ final class SessionCoordinator: ObservableObject {
     // Intentionally non-private setter: tests set this directly to verify the idle guard.
     // Production code: only SessionCoordinator sets this property.
     @Published var lastTokenArrival: Date?
+    @Published private(set) var captureActivityState: CaptureActivityState = .waiting
     private(set) var lastEndReason: SessionEndReason?
     private(set) var isRunning: Bool = false
 
@@ -131,6 +140,10 @@ final class SessionCoordinator: ObservableObject {
 
     private let systemEventObserver: (any SystemEventObserving)?
 
+    // MARK: Resume hold
+
+    let resumingHoldDuration: TimeInterval
+
     // MARK: Init
 
     var currentSession: SessionContext? {
@@ -142,13 +155,15 @@ final class SessionCoordinator: ObservableObject {
         settingsStore: SettingsStore,
         inactivityTimer: any InactivityTimer = DispatchInactivityTimer(),
         micProber: (any MicAvailabilityProbing)? = nil,
-        systemEventObserver: (any SystemEventObserving)? = nil
+        systemEventObserver: (any SystemEventObserving)? = nil,
+        resumingHoldDuration: TimeInterval = 2.0
     ) {
         self.micMonitor = micMonitor
         self.settingsStore = settingsStore
         self.inactivityTimer = inactivityTimer
         self.micProber = micProber
         self.systemEventObserver = systemEventObserver
+        self.resumingHoldDuration = resumingHoldDuration
     }
 
     // MARK: Coordinator lifecycle

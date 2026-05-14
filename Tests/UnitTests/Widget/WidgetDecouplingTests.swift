@@ -37,6 +37,13 @@ private final class WidgetTestHideScheduler: HideScheduler, @unchecked Sendable 
         scheduledActions.removeLast()
         action()
     }
+
+    @MainActor func fire(delay: TimeInterval) {
+        guard let index = scheduledDelays.firstIndex(of: delay) else { return }
+        scheduledDelays.remove(at: index)
+        let action = scheduledActions.remove(at: index)
+        action()
+    }
 }
 
 // MARK: - WidgetDecouplingTests
@@ -355,6 +362,147 @@ final class WidgetDecouplingTests: XCTestCase {
                        "Widget must not reshow when session is idle — no active session (AC-FIX-3)")
         XCTAssertEqual(scheduler.scheduledDelays.count, 0,
                        "No hide timer must be scheduled when session is idle")
+    }
+
+    // MARK: - T-FIX3-A.5.1: Widget stays hidden on mic-on, shows only on first token (AC-FIX3-A1)
+
+    func testWidgetStaysHiddenOnMicOn_UntilFirstToken() async {
+        let (coordinator, _, _, fpc) = makeComponents()
+        fpc.start()
+        coordinator.start()
+
+        coordinator.micActivated()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.panelState, .hidden,
+                       "Widget must remain hidden on mic-on — token arrival is the trigger (AC-FIX3-A1)")
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.panelState, .visible,
+                       "Widget must appear on first token arrival (AC-FIX3-A1)")
+    }
+
+    // MARK: - T-FIX3-A.5.2: Widget clears prior dismiss on new session, shows on token (AC-FIX3-A2)
+
+    func testWidgetClearsPriorDismissOnNewSession() async {
+        let (coordinator, _, _, fpc) = makeComponents(
+            alertPresenter: ConfirmingWidgetAlertPresenter()
+        )
+        fpc.start()
+        coordinator.start()
+
+        // Session 1: activate, show via token, then dismiss
+        coordinator.micActivated()
+        await Task.yield()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.panelState, .visible, "Panel must be visible after token in session 1")
+
+        fpc.requestDismiss()
+        // requestDismiss → requestFinalize → session ends → handleSessionIdle → .hidden
+
+        // Session 2: dismiss state must be cleared, panel stays hidden until token
+        coordinator.micActivated()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.panelState, .hidden,
+                       "Dismissed state must clear on new session — panel stays hidden until token (AC-FIX3-A2)")
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.panelState, .visible,
+                       "Widget must appear on token in new session after prior dismiss (AC-FIX3-A2)")
+    }
+
+    // MARK: - T-FIX3-B1: activityState .waiting → .counting on token, reverts after 1.5s (AC-FIX3-B1)
+
+    func testActivityState_TransitionsToCountingOnToken_AndWaitingAfter1500ms() async {
+        let fakeTimer = FakeInactivityTimer()
+        let (coordinator, _, scheduler, fpc) = makeComponents(
+            inactivityTimer: fakeTimer,
+            widgetHideDelay: 4.0
+        )
+
+        fpc.start()
+        coordinator.start()
+        coordinator.micActivated()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.activityState, .waiting,
+                       "Activity state must be .waiting before any token (AC-FIX3-B1)")
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.activityState, .counting,
+                       "Activity state must be .counting immediately after token arrival (AC-FIX3-B1)")
+
+        // Fire the 1.5s counting timeout (scheduled by handleTokenArrival in Part B impl)
+        scheduler.fire(delay: 1.5)
+
+        XCTAssertEqual(fpc.viewModel.activityState, .waiting,
+                       "Activity state must revert to .waiting after 1.5s counting timeout (AC-FIX3-B1)")
+    }
+
+    // MARK: - T-FIX3-B3: totalTokens increments per token, resets on session end (AC-FIX3-B3)
+
+    func testTotalTokens_IncrementsPerToken_ResetsOnSessionEnd() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let (coordinator, _, _, fpc) = makeComponents(inactivityTimer: fakeTimer)
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let engineProvider = ProbeTestEngineProvider()
+        let pipeline = AudioPipeline(provider: engineProvider)
+        let fakeLD = FakeLanguageDetector()
+        let locales = FakeSupportedLocalesProvider()
+        locales.locales = [Locale(identifier: "en-US")]
+
+        coordinator.wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: yieldingFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: locales
+        )
+
+        fpc.start()
+        coordinator.start()
+
+        let consumer = FakeTokenConsumer()
+        coordinator.addConsumer(consumer)
+        coordinator.micActivated()
+        if let task = coordinator.sessionWiringTask { await task.value }
+
+        let tokenExp1 = XCTestExpectation(description: "first token")
+        consumer.onReceiveToken = { tokenExp1.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp1], timeout: 2.0)
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.totalTokens, 1,
+                       "totalTokens must be 1 after first token (AC-FIX3-B3)")
+
+        let tokenExp2 = XCTestExpectation(description: "second token")
+        consumer.onReceiveToken = { tokenExp2.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "world", startTime: 0.5, endTime: 0.9, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp2], timeout: 2.0)
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.totalTokens, 2,
+                       "totalTokens must be 2 after second token (AC-FIX3-B3)")
+
+        coordinator.micDeactivated()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.totalTokens, 0,
+                       "totalTokens must reset to 0 after session ends (AC-FIX3-B3)")
     }
 
     // MARK: - T21: FPC subscribes to sessionCoordinator.$lastTokenArrival

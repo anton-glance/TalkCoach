@@ -24,7 +24,7 @@ final class FloatingPanelController {
     private let hideScheduler: HideScheduler
     private let screenProvider: ScreenProvider
     private let settingsStore: SettingsStore
-    private let viewModel = WidgetViewModel()
+    let viewModel = WidgetViewModel()
 
     private var panel: CoachingPanel?
     private var stateSubscription: AnyCancellable?
