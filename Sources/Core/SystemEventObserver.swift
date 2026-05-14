@@ -22,9 +22,9 @@ final class SystemEventObserver: SystemEventObserving, @unchecked Sendable {
         onSleep: @escaping @MainActor () -> Void,
         onShutdown: @escaping @MainActor () -> Void
     ) {
-        let nc = NSWorkspace.shared.notificationCenter
+        let center = NSWorkspace.shared.notificationCenter
 
-        sleepObserver = nc.addObserver(
+        sleepObserver = center.addObserver(
             forName: NSWorkspace.willSleepNotification,
             object: nil,
             queue: .main
@@ -33,7 +33,7 @@ final class SystemEventObserver: SystemEventObserving, @unchecked Sendable {
             MainActor.assumeIsolated { onSleep() }
         }
 
-        shutdownObserver = nc.addObserver(
+        shutdownObserver = center.addObserver(
             forName: NSWorkspace.willPowerOffNotification,
             object: nil,
             queue: .main
@@ -46,15 +46,15 @@ final class SystemEventObserver: SystemEventObserving, @unchecked Sendable {
     }
 
     func stop() {
-        let nc = NSWorkspace.shared.notificationCenter
-        if let obs = sleepObserver { nc.removeObserver(obs); sleepObserver = nil }
-        if let obs = shutdownObserver { nc.removeObserver(obs); shutdownObserver = nil }
+        let center = NSWorkspace.shared.notificationCenter
+        if let obs = sleepObserver { center.removeObserver(obs); sleepObserver = nil }
+        if let obs = shutdownObserver { center.removeObserver(obs); shutdownObserver = nil }
         Logger.session.info("SystemEventObserver: stopped")
     }
 
     deinit {
-        let nc = NSWorkspace.shared.notificationCenter
-        if let obs = sleepObserver { nc.removeObserver(obs) }
-        if let obs = shutdownObserver { nc.removeObserver(obs) }
+        let center = NSWorkspace.shared.notificationCenter
+        if let obs = sleepObserver { center.removeObserver(obs) }
+        if let obs = shutdownObserver { center.removeObserver(obs) }
     }
 }

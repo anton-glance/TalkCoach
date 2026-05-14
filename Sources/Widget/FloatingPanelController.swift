@@ -15,6 +15,7 @@ enum PanelVisibilityState: Equatable {
 }
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class FloatingPanelController {
     private(set) var panelState: PanelVisibilityState = .hidden
 

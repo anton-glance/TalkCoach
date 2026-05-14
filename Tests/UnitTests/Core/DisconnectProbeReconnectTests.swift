@@ -1,3 +1,4 @@
+// swiftlint:disable file_length type_body_length
 import AVFAudio
 import XCTest
 @testable import TalkCoach
@@ -111,6 +112,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         )
     }
 
+    // swiftlint:disable:next large_tuple
     private func makeWiringWithResume(
         stubbedLocale: String = "en-US",
         appleLocales: [String] = ["en-US"],

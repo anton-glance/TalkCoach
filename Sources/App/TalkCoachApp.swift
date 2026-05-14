@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     func applicationDidFinishLaunching(_ notification: Notification) {
         let defaults = UserDefaults.standard
         let wasSetupCompletedBefore = defaults.bool(forKey: "hasCompletedSetup")

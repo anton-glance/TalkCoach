@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Combine
 import OSLog
 
@@ -73,6 +74,7 @@ private enum CaptureState {
 ///   IRS after ~45ms, which fires MicMonitor's listener and calls `micDeactivated()`. Without
 ///   this guard, the probe would race against a duplicate finalization.
 @MainActor
+// swiftlint:disable:next type_body_length
 final class SessionCoordinator: ObservableObject {
     @Published private(set) var state: SessionState = .idle
     @Published private(set) var lastTokenArrival: Date?
@@ -226,7 +228,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private func runProbeCycle(prober: any MicAvailabilityProbing) async {
-        guard let w = wiring else {
+        guard let capturedWiring = wiring else {
             probeInFlight = false
             captureState = .capturing
             return
@@ -272,17 +274,18 @@ final class SessionCoordinator: ObservableObject {
         if irsTrue {
             // IRS=true → another app IS using the mic → resume into same session
             Logger.session.info("SessionCoordinator: IRS=true — resuming session (mic in use by another app)")
-            await resumeSession(wiring: w)
+            await resumeSession(wiring: capturedWiring)
         } else {
             // IRS=false → no other app using mic → finalize session
             Logger.session.info("SessionCoordinator: IRS=false — finalizing session (mic is free)")
-            finalizeAfterProbe(wiring: w)
+            finalizeAfterProbe(wiring: capturedWiring)
         }
 
         probeInFlight = false
         captureState = .capturing
     }
 
+    // swiftlint:disable:next function_body_length
     private func resumeSession(wiring: SessionWiring) async {
         guard case .active = state else { return }
 
@@ -381,8 +384,9 @@ final class SessionCoordinator: ObservableObject {
 
     // MARK: Private — wiring sequence
 
+    // swiftlint:disable:next function_body_length
     private func runSession() async {
-        guard let w = wiring else { return }
+        guard let capturedWiring = wiring else { return }
         let wiringStart = Date()
         sessionStartTime = wiringStart
         sessionTokenCount = 0
@@ -394,8 +398,8 @@ final class SessionCoordinator: ObservableObject {
 
         // Step 1: AudioPipeline
         do {
-            try w.audioPipeline.start()
-            activePipeline = w.audioPipeline
+            try capturedWiring.audioPipeline.start()
+            activePipeline = capturedWiring.audioPipeline
             Logger.session.info("SessionCoordinator: AudioPipeline started")
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
@@ -407,12 +411,12 @@ final class SessionCoordinator: ObservableObject {
         // Step 2: LanguageDetector
         let locale: Locale
         do {
-            locale = try await w.languageDetector.start()
+            locale = try await capturedWiring.languageDetector.start()
             Logger.session.info("SessionCoordinator: LanguageDetector detected \(locale.identifier)")
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
             let rollbackStart = Date()
-            w.audioPipeline.stop()
+            capturedWiring.audioPipeline.stop()
             activePipeline = nil
             let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at LanguageDetector.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
@@ -429,16 +433,16 @@ final class SessionCoordinator: ObservableObject {
         do {
             engine = try await TranscriptionEngine(
                 locale: locale,
-                audioBufferProvider: AudioPipelineBufferProvider(pipeline: w.audioPipeline),
-                appleBackendFactory: w.appleBackendFactory,
-                parakeetBackendFactory: w.parakeetBackendFactory,
-                supportedLocalesProvider: w.supportedLocalesProvider
+                audioBufferProvider: AudioPipelineBufferProvider(pipeline: capturedWiring.audioPipeline),
+                appleBackendFactory: capturedWiring.appleBackendFactory,
+                parakeetBackendFactory: capturedWiring.parakeetBackendFactory,
+                supportedLocalesProvider: capturedWiring.supportedLocalesProvider
             )
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
             let rollbackStart = Date()
-            await w.languageDetector.stop()
-            w.audioPipeline.stop()
+            await capturedWiring.languageDetector.stop()
+            capturedWiring.audioPipeline.stop()
             activePipeline = nil
             let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.init after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
@@ -454,8 +458,8 @@ final class SessionCoordinator: ObservableObject {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
             let rollbackStart = Date()
             await engine.stop()
-            await w.languageDetector.stop()
-            w.audioPipeline.stop()
+            await capturedWiring.languageDetector.stop()
+            capturedWiring.audioPipeline.stop()
             activePipeline = nil
             let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
@@ -473,8 +477,8 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private func monitorLocaleChanges() async {
-        guard let w = wiring else { return }
-        for await newLocale in w.languageDetector.localeChange {
+        guard let capturedWiring = wiring else { return }
+        for await newLocale in capturedWiring.languageDetector.localeChange {
             let prevIdentifier = currentLocale?.identifier ?? "none"
             let elapsedMs = sessionStartTime.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
             Logger.session.info("SessionCoordinator: locale change \(prevIdentifier)→\(newLocale.identifier) at \(elapsedMs)ms session time — deferred to M3.8")
@@ -532,8 +536,8 @@ final class SessionCoordinator: ObservableObject {
         sessionWiringTask = nil
         probeCycleTask = nil
 
-        if let w = wiring {
-            await w.languageDetector.stop()
+        if let capturedWiring = wiring {
+            await capturedWiring.languageDetector.stop()
         }
         activePipeline?.stop()
         activePipeline = nil

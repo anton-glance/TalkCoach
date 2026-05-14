@@ -39,6 +39,7 @@ private final class WidgetTestHideScheduler: HideScheduler, @unchecked Sendable 
 @MainActor
 final class WidgetDecouplingTests: XCTestCase {
 
+    // swiftlint:disable:next large_tuple
     private func makeComponents(
         inactivityTimer: any InactivityTimer = FakeInactivityTimer(),
         widgetHideDelay: TimeInterval? = nil
