@@ -324,15 +324,21 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     }
 
     // MARK: - T8: No micProber → inactivity directly finalizes (backward compat)
+    // Wiring must be set for the timer to be scheduled (timer arms inside runSession).
+    // With wiring but no micProber, timer fires → direct finalize (no probe).
 
-    func testNoProber_InactivityTimer_DirectlyFinalizesSession() {
+    func testNoProber_InactivityTimer_DirectlyFinalizesSession() async throws {
         let fakeTimer = FakeInactivityTimer()
         let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: nil)
 
         var endedCount = 0
         sut.onSessionEnded { _ in endedCount += 1 }
 
+        let (wiring, _, _, _) = makeWiringWithResume()
+        sut.wiring = wiring
         sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
         fakeTimer.fireNow()
 
         XCTAssertEqual(endedCount, 1,

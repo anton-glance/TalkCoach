@@ -27,6 +27,7 @@ final class FloatingPanelController {
 
     private var panel: CoachingPanel?
     private var stateSubscription: AnyCancellable?
+    private var tokenArrivalSubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
     private var dragDebounceToken: HideSchedulerToken?
     private var moveObserver: (any NSObjectProtocol)?
@@ -61,6 +62,14 @@ final class FloatingPanelController {
                 guard let self else { return }
                 self.handleStateChange(newState)
             }
+
+        // Token-silence decoupling: hide is driven by token arrival gaps, not session-end.
+        // Each token resets the hide timer. Absence of tokens for widgetHideDelaySeconds hides the panel.
+        tokenArrivalSubscription = sessionCoordinator.$lastTokenArrival
+            .sink { [weak self] arrival in
+                guard let self, arrival != nil else { return }
+                self.handleTokenArrival()
+            }
     }
 
     func stop() {
@@ -69,6 +78,7 @@ final class FloatingPanelController {
         Logger.floatingPanel.info("FloatingPanelController stopping")
 
         stateSubscription = nil
+        tokenArrivalSubscription = nil
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
             moveObserver = nil
@@ -130,18 +140,37 @@ final class FloatingPanelController {
         viewModel.sessionStartedAt = nil
 
         switch panelState {
-        case .visible:
-            panelState = .fadingOut
-            scheduleHide()
-            Logger.floatingPanel.info("Session ended — fading out (5s)")
+        case .visible, .fadingOut:
+            // M3.7.3: session-end hides immediately. The fade timer is driven by token-silence
+            // (handleTokenArrival), which fires before the session ends in normal usage.
+            // A hard session-end (coaching disabled, sleep, shutdown) hides immediately.
+            cancelPendingHide()
+            hidePanel(reason: "session-ended")
+            Logger.floatingPanel.info("Session ended — panel hidden immediately (M3.7.3)")
 
         case .dismissed:
             panelState = .hidden
             Logger.floatingPanel.info("Session ended while dismissed — hidden")
 
-        case .fadingOut, .hidden:
+        case .hidden:
             break
         }
+    }
+
+    private func handleTokenArrival() {
+        // A token arrived — reset the token-silence hide timer.
+        // This is the primary mechanism that drives widget visibility in M3.7.3.
+        cancelPendingHide()
+        guard panelState == .visible else { return }
+        let delay = settingsStore.widgetHideDelaySeconds
+        hideToken = hideScheduler.schedule(delay: delay) { [weak self] in
+            guard let self, self.panelState == .visible else { return }
+            self.panelState = .fadingOut
+            self.hidePanel(reason: "token-silence-fade")
+            self.panelState = .hidden
+            Logger.floatingPanel.info("Token-silence timer fired — panel hidden after \(delay)s of silence")
+        }
+        Logger.floatingPanel.debug("Token arrived — hide timer rearmed for \(delay)s")
     }
 
     // MARK: - Panel Management
@@ -294,14 +323,6 @@ final class FloatingPanelController {
     }
 
     // MARK: - Hide Timer
-
-    private func scheduleHide() {
-        hideToken = hideScheduler.schedule(delay: 5.0) { [weak self] in
-            guard let self, self.panelState == .fadingOut else { return }
-            self.hidePanel(reason: "mic-off-fade")
-            self.panelState = .hidden
-        }
-    }
 
     private func cancelPendingHide() {
         if let token = hideToken {

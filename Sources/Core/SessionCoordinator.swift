@@ -19,27 +19,63 @@ struct EndedSession: Equatable {
 
 // MARK: - SessionWiring
 
-/// Bundles the five injectable dependencies for the audio → transcription pipeline.
-/// Nil by default; set before start() for sessions that require token delivery.
+/// Bundles the injectable dependencies for the audio → transcription pipeline.
+/// `resumePipelineProvider` is optional: nil means the initial pipeline instance
+/// is used for the whole session (no probe-resume support). Pass a provider to
+/// enable the disconnect-probe-reconnect algorithm — on IRS=true resume, a NEW
+/// AudioPipeline is created from this provider because `stop()` closes the stream
+/// and the same instance cannot be restarted.
 struct SessionWiring {
     let audioPipeline: AudioPipeline
     let languageDetector: any LanguageDetecting
     let appleBackendFactory: any AppleBackendFactory
     let parakeetBackendFactory: any ParakeetBackendFactory
     let supportedLocalesProvider: any SupportedLocalesProvider
+    let resumePipelineProvider: (any AudioEngineProvider)?
+
+    init(
+        audioPipeline: AudioPipeline,
+        languageDetector: any LanguageDetecting,
+        appleBackendFactory: any AppleBackendFactory,
+        parakeetBackendFactory: any ParakeetBackendFactory,
+        supportedLocalesProvider: any SupportedLocalesProvider,
+        resumePipelineProvider: (any AudioEngineProvider)? = nil
+    ) {
+        self.audioPipeline = audioPipeline
+        self.languageDetector = languageDetector
+        self.appleBackendFactory = appleBackendFactory
+        self.parakeetBackendFactory = parakeetBackendFactory
+        self.supportedLocalesProvider = supportedLocalesProvider
+        self.resumePipelineProvider = resumePipelineProvider
+    }
+}
+
+// MARK: - CaptureState
+
+private enum CaptureState {
+    case capturing
+    case probing
 }
 
 // MARK: - SessionCoordinator
 
-/// Orchestrates session lifecycle: receives `MicMonitor` activation events,
-/// gates session creation on `coachingEnabled`, and exposes session state
-/// for SwiftUI consumers and one-shot end-of-session subscribers.
+/// Orchestrates session lifecycle using the disconnect-probe-reconnect algorithm:
 ///
-/// When `wiring` is set, `micActivated()` also launches the four-step pipeline:
-///   AudioPipeline → LanguageDetector → TranscriptionEngine → TokenConsumer fan-out.
+///   1. Tokens arrive → inactivity timer resets.
+///   2. Silence for `inactivityThresholdSeconds` → probe begins (`captureState = .probing`):
+///      a. AudioPipeline torn down (partial teardown — no consumer notification yet).
+///      b. 100ms HAL settling wait (Spike #13.5: max observed 38–45ms).
+///      c. `MicAvailabilityProbing.probe()` reads `kAudioDevicePropertyDeviceIsRunningSomewhere`.
+///      d. IRS=false → no other app using mic → `finalizeSession()`.
+///      e. IRS=true  → another app IS using mic → resume with new AudioPipeline + TE.
+///
+///   `probeInFlight` gates `micDeactivated()` during step c: AudioPipeline teardown drops
+///   IRS after ~45ms, which fires MicMonitor's listener and calls `micDeactivated()`. Without
+///   this guard, the probe would race against a duplicate finalization.
 @MainActor
 final class SessionCoordinator: ObservableObject {
     @Published private(set) var state: SessionState = .idle
+    @Published private(set) var lastTokenArrival: Date?
     private(set) var isRunning: Bool = false
 
     private let micMonitor: MicMonitor
@@ -58,15 +94,24 @@ final class SessionCoordinator: ObservableObject {
     private var localeMonitorTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
     private var activeEngine: TranscriptionEngine?
-
-    // v1.x: constant; future versions may expose this in Settings.
-    private static let inactivityTimeout: TimeInterval = 30
+    private var activePipeline: AudioPipeline?
 
     // Per-session measurement state — reset at start/end of each wiring cycle.
     private var sessionStartTime: Date?
     private var currentLocale: Locale?
     private var sessionTokenCount = 0
     private let inactivityTimer: any InactivityTimer
+
+    // MARK: Probe algorithm state
+
+    private let micProber: (any MicAvailabilityProbing)?
+    private var probeInFlight = false
+    private var captureState: CaptureState = .capturing
+    private var probeCycleTask: Task<Void, Never>?
+
+    // MARK: System events
+
+    private let systemEventObserver: (any SystemEventObserving)?
 
     // MARK: Init
 
@@ -77,11 +122,15 @@ final class SessionCoordinator: ObservableObject {
     init(
         micMonitor: MicMonitor,
         settingsStore: SettingsStore,
-        inactivityTimer: any InactivityTimer = DispatchInactivityTimer()
+        inactivityTimer: any InactivityTimer = DispatchInactivityTimer(),
+        micProber: (any MicAvailabilityProbing)? = nil,
+        systemEventObserver: (any SystemEventObserving)? = nil
     ) {
         self.micMonitor = micMonitor
         self.settingsStore = settingsStore
         self.inactivityTimer = inactivityTimer
+        self.micProber = micProber
+        self.systemEventObserver = systemEventObserver
     }
 
     // MARK: Coordinator lifecycle
@@ -103,6 +152,19 @@ final class SessionCoordinator: ObservableObject {
                     self.endCurrentSession()
                 }
             }
+
+        systemEventObserver?.start(
+            onSleep: { [weak self] in
+                guard let self else { return }
+                Logger.session.info("SessionCoordinator: system sleep — ending active session")
+                self.endCurrentSession()
+            },
+            onShutdown: { [weak self] in
+                guard let self else { return }
+                Logger.session.info("SessionCoordinator: system shutdown — ending active session")
+                self.endCurrentSession()
+            }
+        )
     }
 
     func stop() {
@@ -112,6 +174,7 @@ final class SessionCoordinator: ObservableObject {
         Logger.session.info("SessionCoordinator stopping")
 
         coachingEnabledCancellable = nil
+        systemEventObserver?.stop()
 
         if case .active = state {
             endCurrentSession()
@@ -129,18 +192,183 @@ final class SessionCoordinator: ObservableObject {
         consumers.append(consumer)
     }
 
-    // MARK: Private — session lifecycle
-
-    private func handleInactivityTimeout() {
-        Logger.session.info("SessionCoordinator: inactivity timeout — ending session")
+    /// Ends the current session immediately. Called from the widget X-button (AC-13).
+    func requestFinalize() {
+        guard case .active = state else { return }
+        Logger.session.info("SessionCoordinator: requestFinalize() — ending session on user request")
         endCurrentSession()
     }
+
+    // MARK: Private — inactivity and probe
+
+    private func handleInactivityTimeout() {
+        Logger.session.info("SessionCoordinator: inactivity timeout fired")
+
+        guard let prober = micProber, wiring != nil else {
+            // No prober or no wiring → direct finalize (backward compat / no-wiring sessions)
+            Logger.session.info("SessionCoordinator: no prober/wiring — finalizing immediately")
+            endCurrentSession()
+            return
+        }
+
+        guard case .active = state else { return }
+        guard !probeInFlight else {
+            Logger.session.info("SessionCoordinator: inactivity fired but probe already in flight — ignoring")
+            return
+        }
+
+        probeInFlight = true
+        captureState = .probing
+
+        probeCycleTask = Task { [weak self] in
+            await self?.runProbeCycle(prober: prober)
+        }
+    }
+
+    private func runProbeCycle(prober: any MicAvailabilityProbing) async {
+        guard let w = wiring else {
+            probeInFlight = false
+            captureState = .capturing
+            return
+        }
+
+        Logger.session.info("SessionCoordinator: probe cycle — partial teardown starting")
+
+        // Partial teardown: stop pipeline so IRS drops, but do NOT notify consumers yet.
+        sessionWiringTask?.cancel()
+        localeMonitorTask?.cancel()
+        relayTask?.cancel()
+
+        await activeEngine?.stop()
+        activeEngine = nil
+
+        await relayTask?.value
+        relayTask = nil
+        localeMonitorTask = nil
+        sessionWiringTask = nil
+
+        activePipeline?.stop()
+        activePipeline = nil
+
+        // HAL settling wait: 100ms (Spike #13.5: max observed 38–45ms; 100ms is safe margin).
+        // After AudioPipeline.stop(), IRS needs ~45ms to reflect the true value.
+        try? await Task.sleep(for: .milliseconds(100))
+
+        if Task.isCancelled {
+            probeInFlight = false
+            captureState = .capturing
+            return
+        }
+
+        let irsTrue = await prober.probe()
+        Logger.session.info("SessionCoordinator: probe result IRS=\(irsTrue) (true=another app using mic)")
+
+        if Task.isCancelled {
+            probeInFlight = false
+            captureState = .capturing
+            return
+        }
+
+        if irsTrue {
+            // IRS=true → another app IS using the mic → resume into same session
+            Logger.session.info("SessionCoordinator: IRS=true — resuming session (mic in use by another app)")
+            await resumeSession(wiring: w)
+        } else {
+            // IRS=false → no other app using mic → finalize session
+            Logger.session.info("SessionCoordinator: IRS=false — finalizing session (mic is free)")
+            finalizeAfterProbe(wiring: w)
+        }
+
+        probeInFlight = false
+        captureState = .capturing
+    }
+
+    private func resumeSession(wiring: SessionWiring) async {
+        guard case .active = state else { return }
+
+        // Resume requires a NEW AudioPipeline — stop() closes the AsyncStream continuation
+        // and sets isStopped=true; the same instance cannot be restarted.
+        let newPipeline: AudioPipeline
+        if let provider = wiring.resumePipelineProvider {
+            newPipeline = AudioPipeline(provider: provider)
+        } else {
+            newPipeline = AudioPipeline()
+        }
+        activePipeline = newPipeline
+
+        // Resume wiring: use cached locale (skip LD.start() — deferred to M3.8)
+        guard let locale = currentLocale else {
+            Logger.session.error("SessionCoordinator: resume failed — no cached locale")
+            finalizeAfterProbe(wiring: wiring)
+            return
+        }
+
+        do {
+            try newPipeline.start()
+            Logger.session.info("SessionCoordinator: resume — new AudioPipeline started")
+        } catch {
+            Logger.session.error("SessionCoordinator: resume — AudioPipeline.start() failed: \(error)")
+            finalizeAfterProbe(wiring: wiring)
+            return
+        }
+
+        let engine: TranscriptionEngine
+        do {
+            engine = try await TranscriptionEngine(
+                locale: locale,
+                audioBufferProvider: AudioPipelineBufferProvider(pipeline: newPipeline),
+                appleBackendFactory: wiring.appleBackendFactory,
+                parakeetBackendFactory: wiring.parakeetBackendFactory,
+                supportedLocalesProvider: wiring.supportedLocalesProvider
+            )
+        } catch {
+            Logger.session.error("SessionCoordinator: resume — TranscriptionEngine.init failed: \(error)")
+            newPipeline.stop()
+            finalizeAfterProbe(wiring: wiring)
+            return
+        }
+
+        do {
+            try await engine.start()
+            Logger.session.info("SessionCoordinator: resume — TranscriptionEngine started [\(locale.identifier)]")
+        } catch {
+            Logger.session.error("SessionCoordinator: resume — TranscriptionEngine.start() failed: \(error)")
+            await engine.stop()
+            newPipeline.stop()
+            finalizeAfterProbe(wiring: wiring)
+            return
+        }
+
+        activeEngine = engine
+        localeMonitorTask = Task { [weak self] in await self?.monitorLocaleChanges() }
+        relayTask = Task { [weak self] in await self?.relayTokens(from: engine) }
+
+        let threshold = settingsStore.inactivityThresholdSeconds
+        inactivityTimer.schedule(after: threshold) { [weak self] in
+            self?.handleInactivityTimeout()
+        }
+        Logger.session.info("SessionCoordinator: resume complete [\(locale.identifier)] — inactivity timer rearmed for \(threshold)s")
+    }
+
+    private func finalizeAfterProbe(wiring: SessionWiring) {
+        guard case .active(let ctx) = state else { return }
+        let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
+        state = .idle
+        lastTokenArrival = nil
+        Logger.session.info("Session ended (probe-finalize): \(ended.id) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
+        for handler in endedSessionHandlers { handler(ended) }
+
+        Task { [weak self] in await self?.completeTeardown(wiring: wiring) }
+    }
+
+    // MARK: Private — session lifecycle
 
     private func endCurrentSession() {
         inactivityTimer.cancel()
         guard case .active(let ctx) = state else { return }
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
+        lastTokenArrival = nil
         Logger.session.info("Session ended: \(ended.id) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
         for handler in endedSessionHandlers {
             handler(ended)
@@ -159,13 +387,15 @@ final class SessionCoordinator: ObservableObject {
         sessionStartTime = wiringStart
         sessionTokenCount = 0
 
-        inactivityTimer.schedule(after: Self.inactivityTimeout) { [weak self] in
+        let threshold = settingsStore.inactivityThresholdSeconds
+        inactivityTimer.schedule(after: threshold) { [weak self] in
             self?.handleInactivityTimeout()
         }
 
         // Step 1: AudioPipeline
         do {
             try w.audioPipeline.start()
+            activePipeline = w.audioPipeline
             Logger.session.info("SessionCoordinator: AudioPipeline started")
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
@@ -183,6 +413,7 @@ final class SessionCoordinator: ObservableObject {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
             let rollbackStart = Date()
             w.audioPipeline.stop()
+            activePipeline = nil
             let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at LanguageDetector.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
             sessionStartTime = nil
@@ -208,6 +439,7 @@ final class SessionCoordinator: ObservableObject {
             let rollbackStart = Date()
             await w.languageDetector.stop()
             w.audioPipeline.stop()
+            activePipeline = nil
             let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.init after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
             sessionStartTime = nil
@@ -224,6 +456,7 @@ final class SessionCoordinator: ObservableObject {
             await engine.stop()
             await w.languageDetector.stop()
             w.audioPipeline.stop()
+            activePipeline = nil
             let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
             Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
             sessionStartTime = nil
@@ -258,7 +491,10 @@ final class SessionCoordinator: ObservableObject {
             Logger.session.debug("SessionCoordinator: token '\(token.token)' t=[\(token.startTime, format: .fixed(precision: 2))–\(token.endTime, format: .fixed(precision: 2))] final=\(token.isFinal)")
             sessionTokenCount += 1
             tokensInWindow += 1
-            inactivityTimer.schedule(after: Self.inactivityTimeout) { [weak self] in
+            lastTokenArrival = Date()
+
+            let threshold = settingsStore.inactivityThresholdSeconds
+            inactivityTimer.schedule(after: threshold) { [weak self] in
                 self?.handleInactivityTimeout()
             }
             for consumer in consumers {
@@ -280,6 +516,7 @@ final class SessionCoordinator: ObservableObject {
         let teardownStart = Date()
         let sessionMs = sessionStartTime.map { Int(teardownStart.timeIntervalSince($0) * 1000) } ?? 0
 
+        probeCycleTask?.cancel()
         sessionWiringTask?.cancel()
         localeMonitorTask?.cancel()
         relayTask?.cancel()
@@ -293,11 +530,13 @@ final class SessionCoordinator: ObservableObject {
         relayTask = nil
         localeMonitorTask = nil
         sessionWiringTask = nil
+        probeCycleTask = nil
 
         if let w = wiring {
             await w.languageDetector.stop()
-            w.audioPipeline.stop()
         }
+        activePipeline?.stop()
+        activePipeline = nil
 
         for consumer in consumers {
             await consumer.sessionEnded()
@@ -313,6 +552,19 @@ final class SessionCoordinator: ObservableObject {
         sessionTokenCount = 0
 
         Logger.session.info("SessionCoordinator: session teardown complete")
+    }
+
+    private func completeTeardown(wiring: SessionWiring) async {
+        // Called after probe-finalize: engine already stopped by probe cycle.
+        // Only LD and consumer notification remain.
+        await wiring.languageDetector.stop()
+        for consumer in consumers {
+            await consumer.sessionEnded()
+        }
+        sessionStartTime = nil
+        currentLocale = nil
+        sessionTokenCount = 0
+        Logger.session.info("SessionCoordinator: probe-finalize teardown complete")
     }
 }
 
@@ -340,6 +592,10 @@ extension SessionCoordinator: MicMonitorDelegate {
     }
 
     func micDeactivated() {
+        guard !probeInFlight else {
+            Logger.session.info("SessionCoordinator: micDeactivated suppressed — probe in flight (IRS settling after pipeline stop)")
+            return
+        }
         guard case .active = state else { return }
         endCurrentSession()
     }

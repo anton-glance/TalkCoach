@@ -14,6 +14,8 @@ final class SettingsStore: ObservableObject {
         static let fillerDict = "fillerDict"
         static let widgetPositionByDisplay = "widgetPositionByDisplay"
         static let widgetLastUsedDisplay = "widgetLastUsedDisplay"
+        static let inactivityThresholdSeconds = "inactivityThresholdSeconds"
+        static let widgetHideDelaySeconds = "widgetHideDelaySeconds"
     }
 
     private let userDefaults: UserDefaults
@@ -78,6 +80,24 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var inactivityThresholdSeconds: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(5, min(120, inactivityThresholdSeconds))
+            if clamped != inactivityThresholdSeconds { inactivityThresholdSeconds = clamped; return }
+            userDefaults.set(inactivityThresholdSeconds, forKey: Keys.inactivityThresholdSeconds)
+        }
+    }
+
+    @Published var widgetHideDelaySeconds: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(1, min(30, widgetHideDelaySeconds))
+            if clamped != widgetHideDelaySeconds { widgetHideDelaySeconds = clamped; return }
+            userDefaults.set(widgetHideDelaySeconds, forKey: Keys.widgetHideDelaySeconds)
+        }
+    }
+
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
 
@@ -100,6 +120,11 @@ final class SettingsStore: ObservableObject {
         }
 
         self.widgetLastUsedDisplay = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
+
+        let rawThreshold = userDefaults.object(forKey: Keys.inactivityThresholdSeconds) as? Double ?? 15.0
+        self.inactivityThresholdSeconds = max(5, min(120, rawThreshold))
+        let rawHideDelay = userDefaults.object(forKey: Keys.widgetHideDelaySeconds) as? Double ?? 4.0
+        self.widgetHideDelaySeconds = max(1, min(30, rawHideDelay))
 
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -183,6 +208,12 @@ final class SettingsStore: ObservableObject {
 
         let newLastUsed = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
         if newLastUsed != widgetLastUsedDisplay { widgetLastUsedDisplay = newLastUsed }
+
+        let newThreshold = max(5, min(120, userDefaults.object(forKey: Keys.inactivityThresholdSeconds) as? Double ?? 15.0))
+        if newThreshold != inactivityThresholdSeconds { inactivityThresholdSeconds = newThreshold }
+
+        let newHideDelay = max(1, min(30, userDefaults.object(forKey: Keys.widgetHideDelaySeconds) as? Double ?? 4.0))
+        if newHideDelay != widgetHideDelaySeconds { widgetHideDelaySeconds = newHideDelay }
 
         syncPositionsFromDefaults()
     }
