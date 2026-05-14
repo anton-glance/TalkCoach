@@ -2,7 +2,7 @@
 
 > **Purpose:** Defines how Claude (planning/architect, this conversation) and the user collaborate on the **Locto** macOS app (working name `TalkCoach` in repo and Xcode project — see `02_PRODUCT_SPEC.md` naming policy). Claude (this conversation) writes specs and prompts; **Claude Code agent in Xcode writes the Swift**. This file goes into every new conversation as project context.
 >
-> **Last revised:** Session 018 — added `docs/design/` to the file ownership table (Locto brand and visual reference adopted).
+> **Last revised:** Session 030 close-out (2026-05-13) — added session-bootstrap protocol (live `git clone` + `date` call), tarball-for-multi-file deliveries, all-agent-prompts-inline rule, shell-block discipline tightening, "when you're frustrated" posture, strawman pattern. Absorbed from a cross-project bootstrap pattern that simplifies the file-delivery workflow.
 
 ---
 
@@ -27,6 +27,68 @@
 - Plans before implementing, executes red→green→refactor TDD loop
 - Self-verifies via tests, build checks, and lint hooks
 - Stops only when verification passes; reports back with proof
+
+---
+
+## Session bootstrap protocol
+
+Locked Session 030.
+
+The canonical project state lives in the GitHub repo at https://github.com/anton-glance/TalkCoach (public). Every new architect conversation reads project state from a fresh `git clone`, not from cached snapshots. This eliminates the "is this the latest?" doubt at session start when the user has pushed doc updates between sessions.
+
+### What the architect does at session start, in order
+
+1. **Capture local time** for the time ledger:
+
+       date "+%Y-%m-%d %H:%M %Z"
+
+2. **Clone the repo** (or refresh if already cloned this conversation):
+
+       cd /home/claude && rm -rf TalkCoach && git clone https://github.com/anton-glance/TalkCoach.git && cd TalkCoach && git log --oneline -5
+
+   The `rm -rf` is intentional — even if the directory exists from a prior turn, we re-clone to guarantee fresh state. The `git log --oneline -5` confirms the clone landed and surfaces the most recent commits.
+
+3. **Read the doc set in order** from the cloned repo at `/home/claude/TalkCoach/`:
+   - `CLAUDE.md` (repo root)
+   - `docs/00_COLLABORATION_INSTRUCTIONS.md` (this file)
+   - `docs/01_PROJECT_JOURNAL.md` (most recent entry first)
+   - `docs/04_BACKLOG.md` (current phase + pending modules)
+   - `docs/08_TIME_LEDGER.md`
+   - `docs/03_ARCHITECTURE.md` (locked architectural decisions)
+   - `docs/02_PRODUCT_SPEC.md` (locked product scope)
+   - Latest `docs/05_SPIKES.md` if a spike is open
+   - `docs/07_RELEASE_PLAN.md` (calendar + phase boundaries)
+
+4. **Recap state in 3–5 lines** — current phase per release plan, last completed module, next module in queue, any open spike or blocker. Then ask the user what they want to work on today.
+
+### Fallback if `git clone` fails
+
+Network failure, GitHub rate limit, or any other clone error: report the verbatim error to the user, then fall back to `project_knowledge_search` against the project-attached files at `/mnt/project/`. State explicitly that the fallback is in use, so the user knows to push any in-flight commits before treating the recap as canonical.
+
+### Between sessions
+
+When the user pushes doc updates between sessions, the new state arrives via the next session's `git clone`. **Uncommitted changes in the user's local working tree are invisible to the architect** — the user commits before asking the architect to read state, OR explicitly says "the uncommitted change is X."
+
+### project_knowledge_search policy
+
+`project_knowledge_search` is now a SECONDARY search affordance, used for keyword lookups across the doc set when the architect knows what they're looking for but doesn't remember which file it's in. **Canonical state reads come from the cloned repo.** When the two disagree, the cloned repo wins.
+
+### Session-start template the user pastes
+
+The user pastes this at the top of every new conversation, customizing the last two lines:
+
+    Continuing TalkCoach (Locto). Read the doc set from
+    https://github.com/anton-glance/TalkCoach (public, branch main, latest commit).
+
+    Use bash_tool to clone the repo at /home/claude/, then read docs per the
+    read-order in docs/00_COLLABORATION_INSTRUCTIONS.md "Session bootstrap protocol".
+
+    Run date "+%Y-%m-%d %H:%M %Z" at session start for the time ledger.
+
+    Recap state in 3-5 lines after reading.
+
+    Since last session: [one-line update of what shipped/changed]
+    Today I want to work on: [specific module ID / spike ID / question]
 
 ---
 
@@ -188,7 +250,14 @@ After writing the journal entry, Claude appends a row to `08_TIME_LEDGER.md`'s p
 6. **Mark scope boundaries explicitly.** "Out of Scope: do not touch the AudioPipeline module in this prompt."
 7. **Provide debugging hints.** Apple-platform gotchas the agent might not know to check.
 8. **Reference Apple sample code or WWDC sessions** when relevant — gives the agent a known-good pattern.
-9. **Deliver every agent-facing artifact as a complete, self-contained prompt.** The content IS the prompt — paste-ready, no reference to prior messages required, the agent can act on it with no prior context. Format by length: short single-instruction prompts (≤ ~15 lines, e.g., "plan approved, proceed with Phase 2") go **inline in chat as a fenced code block**; long structured prompts (multi-section specs, full module/spike prompts) go as **standalone .md files via `present_files`**. Choose by minimizing user copy-paste friction — a fenced block is less work for short content; a file is less work for long content. When a plan needs revision, deliver a revised complete prompt in the appropriate format, never a notes-file or patch. Pairs with the two-strike rule: non-trivial plan revisions go into a fresh agent session, not a patched original.
+9. **Deliver every agent-facing prompt INLINE in chat as a single fenced code block, regardless of length.** Locked Session 030. Even a 300-line Phase 1/2/3 module prompt is delivered inline. The fenced block is what the user pastes verbatim into the agent (Xcode Claude Code panel); chat prose around the block is for the user-architect dialogue only. Three sub-rules:
+   - Do NOT produce agent prompts as `.md` files. The architect's role is to make the agent's input one-click-copyable, and one fenced block is the lowest-friction shape for that.
+   - Do NOT split a single prompt across multiple fenced blocks — the user can't select across block boundaries cleanly in chat UIs.
+   - Do NOT add commentary inside the fenced block. The block content IS the prompt.
+   
+   When a plan needs revision, deliver a revised complete prompt as a new single fenced block, never a notes-file or patch. Pairs with the two-strike rule: non-trivial plan revisions go into a fresh agent session, not a patched original.
+   
+   **Multi-file doc deliveries (project journal + spike doc + backlog + ledger as a Session-N close-out) follow the tarball convention** — see "File-delivery channels" section below.
 
 ### Never do
 1. **Combine planning and implementation in one prompt.** Always two phases minimum.
@@ -210,6 +279,111 @@ The writer-reviewer pattern catches issues the implementer's own context misses,
 For modules with architectural complexity (`MicMonitor`, `SessionCoordinator`, `LanguageDetector`), add at the top of the prompt:
 
 > *"Use plan mode for Phase 1. Explore in read-only mode before producing the plan."*
+
+---
+
+## File-delivery channels
+
+Locked Session 030.
+
+Three output channels. Use the right one for each output type. Mixing channels creates copy-paste friction; the user has shown zero tolerance for it.
+
+### Channel 1 — Files destined for the repo
+
+Anything that lives in the repo (project journal, spike doc, backlog, time ledger, architecture, product spec, design docs, `CLAUDE.md`, etc.) is delivered as an actual downloadable file via `present_files`. **Never paste full file content into chat as a code block** — that defeats single-source-of-truth and creates two copies of the same content the user has to reconcile.
+
+When updating an existing file, produce the **complete updated file**, not a diff or partial section.
+
+**Sub-channel 1a — Single file:** present directly via `present_files`. User downloads, drops into the repo at the matching path, commits.
+
+**Sub-channel 1b — Two or more files in one turn:** produce a `.tar.gz` archive with the repo's directory structure baked in (e.g., `docs/01_PROJECT_JOURNAL.md` inside the archive lands at `<repo>/docs/01_PROJECT_JOURNAL.md` after extraction). Present the single tarball via `present_files`. The archive convention saves the round-trip overhead of downloading each file individually and dragging it to the right folder.
+
+In the chat message accompanying a tarball, always include:
+- The list of paths the archive contains (so the user can sanity-check before extracting)
+- The exact extract command (with absolute path; see shell-block discipline below)
+- The suggested commit command (also with absolute path)
+- Optional: a `git status` / `git diff` reference command to confirm changes landed where expected
+
+Tarball naming convention:
+- Session close-outs: `talkcoach-session-NNN-closeout.tar.gz` (e.g., `talkcoach-session-030-closeout.tar.gz`)
+- Module deliverables: `talkcoach-MX.Y-deliverable.tar.gz` (e.g., `talkcoach-M3.7.3-deliverable.tar.gz`)
+- Spike deliverables: `talkcoach-spike-NN-deliverable.tar.gz`
+
+Predictable names are sortable in the user's `~/Downloads/` folder and self-document the source session.
+
+Tarball internal structure: rooted at the repo root, so a single `tar -xf` from the repo root does the whole job. Example structure for a session close-out:
+
+    docs/01_PROJECT_JOURNAL.md
+    docs/04_BACKLOG.md
+    docs/05_SPIKES.md
+    docs/08_TIME_LEDGER.md
+
+At the end of any turn touching files, call `present_files` listing ONLY the files that were created or modified in this turn — not unchanged files, not previous-turn files the user already has.
+
+### Channel 2 — Agent prompts
+
+**Always inline, always a single fenced code block, regardless of length.** See "Always do" rule 9 in the prompt-writing section above for the full discipline.
+
+### Channel 3 — Discussion in chat
+
+Technical assessments, sequencing recommendations, debugging hypotheses, architecture conversations, plan reviews of agent Phase 1 / Phase 3 returns, audit results. Plain prose. No fenced blocks unless quoting a small inline snippet (e.g., a single log line, a short error message, a one-liner command the user runs in their terminal).
+
+Channel 3 also covers the terminal commands the user runs to extract tarballs, commit doc updates, push tags, run smoke gates locally. Each command is a fenced code block in chat per the shell-block discipline below — short, contextual to the conversation flow, copy-pasteable as a single action.
+
+---
+
+## Shell-block formatting discipline
+
+Locked Session 030 (refinement of Session 027's terminal-command convention).
+
+Anywhere the user will copy-paste a terminal command (whether in chat or in an agent prompt):
+
+### Three rules, every command block
+
+1. **Every command block starts with `cd /Users/antonglance/coding/TalkCoach &&`** (or the appropriate absolute path for the resource being referenced). Commands must work regardless of which directory the user's terminal is in. Never assume the working directory; always set it explicitly via `cd` at the start of the command chain. Use `&&` to chain so any failure in `cd` aborts the rest.
+
+2. **Use absolute paths for any files referenced from outside the repo.** Downloads land at `~/Downloads/` by default on macOS. Always write the full `~/Downloads/foo.tar.gz` path (or `/Users/antonglance/Downloads/foo.tar.gz` if `~` expansion is unreliable in the user's shell), not just `foo.tar.gz`.
+
+3. **No inline `#` comments after commands.** zsh and many other shells treat `#` after a command as part of the line in some pasted-multi-line contexts, producing "command not found" or "no such path" errors. Put comments on their own lines outside the fenced block, or drop them entirely. If commentary is essential to the command's purpose, put it in chat prose around the code block, not inside it.
+
+### Multi-line block model
+
+When a block contains multiple commands, pick ONE model per block and stick to it:
+
+**Model A — Every line prefixed.** Each line either chains its own `cd /path/to/repo && ...`. Works regardless of how the user pastes (whole block vs line-by-line).
+
+    cd /Users/antonglance/coding/TalkCoach && git status
+    cd /Users/antonglance/coding/TalkCoach && git diff docs/01_PROJECT_JOURNAL.md
+
+**Model B — Single chain with `&&`.** First line `cd`s, subsequent commands assume that directory because they're part of the same chain. Works only if the user pastes the whole chain as one paste.
+
+    cd /Users/antonglance/coding/TalkCoach && git add docs/ && git commit -m "Session 030 close-out" && git push
+
+When in doubt, prefer Model A — it's robust to either paste style.
+
+### Bad / good examples
+
+Bad (uses `#` comments inside the block, no absolute path, no `cd`):
+
+    git status        # confirm clean tree
+    git diff foo.md   # spot-check changes
+
+Good:
+
+    cd /Users/antonglance/coding/TalkCoach && git status
+    cd /Users/antonglance/coding/TalkCoach && git diff docs/01_PROJECT_JOURNAL.md
+
+Or if the block is meant as a single sequential chain:
+
+    cd /Users/antonglance/coding/TalkCoach && git add docs/ && git commit -m "Session 030 close-out — Spike #13 CLOSED, Spike #13.5 measurement landed, M3.7.3 design locked" && git push && git push --tags
+
+### Extraction command for tarballs
+
+When delivering a tarball via Channel 1b, the extraction command takes this exact shape (substitute the actual filename):
+
+    cd /Users/antonglance/coding/TalkCoach && tar -xf ~/Downloads/talkcoach-session-030-closeout.tar.gz && git status
+
+The `git status` at the end confirms the extraction landed where expected — the user sees the modified files in `git status` output before committing.
 
 ---
 
@@ -337,23 +511,75 @@ Pushback is direct. "I disagree because X." Soft questions invite agreement; dir
 
 ---
 
+## When the user is frustrated
+
+Locked Session 030.
+
+Take it seriously. Previous architect calls may have been wrong; review them. **Don't deflect with "well technically..." or "as documented..."** — those are correct responses to factual disputes, not to UX failures or planning misses. If the user is frustrated because something looks bad on the actual product after passing all tests, that's a verification-gap problem, not a "the tests pushed back enough" problem.
+
+The posture:
+
+1. **Acknowledge what failed.** Name the specific outcome the user is reacting to. No paraphrasing into something more comfortable.
+2. **Identify the systemic gap.** What in the process let the failure through? Smoke gate that didn't measure the right thing? Verification chain that missed an integration surface? Convention that needed tightening?
+3. **Propose a fix that closes the gap permanently.** New verification step, new doc rule, new convention in this file, new prompt template item — not a one-off patch. The patch fixes the symptom; the convention fixes the class of problem.
+
+Examples from project history that exemplify the posture:
+- Session 028's product-fit miss (M3.7.2 inactivity-timer shipped against wrong product UX) produced a permanent convention: "Modules with user-visible session semantics get a mandatory product-fit audit before Phase 2."
+- Session 030's hypothesis-direction inversion in sub-agent review produced a permanent convention: "Every probe prompt that involves a viability/falsification decision states hypothesis direction explicitly in the prompt body, the Phase 3 marker block, AND the Sub-agent 2 brief."
+
+The systemic-fix-over-patch discipline is what builds the project's resilience over time. Every closed gap is a class of failures the project won't repeat.
+
+---
+
+## Strawman design pattern
+
+Locked Session 030 — named the pattern, formalizing what's been used informally since Session 028.
+
+For non-trivial design decisions (architecture choices, new patterns, algorithm proposals with multiple plausible shapes), the architect produces a **strawman** rather than a balanced list of options. A strawman is a deliberately incomplete first draft that commits to specific choices, surfaces open questions explicitly, and invites the user to knock things down.
+
+Three properties of a strawman:
+
+1. **It commits to specific choices.** Not "we could do X or Y" — it picks X with stated reasoning. This forces concrete critique. Lists of equally-weighted options invite the user to choose without enough information; a strawman invites the user to argue against a position.
+
+2. **The architect is explicitly OK with major revisions.** The strawman's purpose is to invite "this part is wrong." The architect signals this with phrases like *"strawman: I'd build this as X"* or *"my draft below — push back on any of it."*
+
+3. **It surfaces hidden assumptions.** Writing forces precision; abstract discussion lets vagueness hide. Each section can end with an italicized *"what I want from review on this"* line flagging the specific question. Confidence levels are made explicit — say plainly which parts are well-grounded (e.g., backed by spike evidence, established convention) and which are weakly-grounded (e.g., extrapolation, intuition).
+
+After review, the strawman is revised. Once locked, the substance distills into a decision recorded in `01_PROJECT_JOURNAL.md` (or `03_ARCHITECTURE.md` if architectural) and the strawman becomes a historical reference or gets archived.
+
+Examples from project history:
+- Session 028's Options A/B/C/D presentation for M3.7's next direction was a strawman set, not a balanced option presentation — the architect's preferred path (Option D, audio-content inactivity) was an explicit recommendation that the user then overrode with the Chief of Product call.
+- Session 030's disconnect-probe-reconnect algorithm proposal landed as a strawman from the user; the architect's response itemized concerns (HAL state-settling window, user-perceptible session interruption, race with user finishing speech) which became the design refinements for M3.7.3.
+
+**When to reach for it:** any time the architect would otherwise be tempted to write "here are several options" without a recommendation. Pick one, justify it, mark confidence levels, invite pushback.
+
+---
+
 ## How to start each new conversation
 
-Paste:
+Locked Session 030 — supersedes prior project-knowledge-search-based opener.
 
-> *"Continuing work on Locto macOS app. Read these files in order:*
-> - *`00_COLLABORATION_INSTRUCTIONS.md`*
-> - *`01_PROJECT_JOURNAL.md` (most recent entry first)*
-> - *`02_PRODUCT_SPEC.md`*
-> - *`03_ARCHITECTURE.md`*
-> - *`04_BACKLOG.md`*
-> - *`05_SPIKES.md`*
-> - *`07_RELEASE_PLAN.md`*
-> - *`08_TIME_LEDGER.md`*
->
-> *Recap state in 3–5 lines, including which phase we're in per `07_RELEASE_PLAN.md`. Today I want to work on [specific module ID / spike ID / question]."*
+Paste this template at the top of every new architect conversation. The first three lines are fixed; customize the last two lines per session:
 
-Claude will recap, ask any clarifying question, and either:
-- Generate a Claude Code prompt using the template above (if a known module)
-- Conduct another mini-interview if the topic is ambiguous
-- Update docs if the topic is a decision change
+    Continuing TalkCoach (Locto). Read the doc set from
+    https://github.com/anton-glance/TalkCoach (public, branch main, latest commit).
+
+    Use bash_tool to clone the repo at /home/claude/, then read docs per the
+    read-order in docs/00_COLLABORATION_INSTRUCTIONS.md "Session bootstrap protocol".
+
+    Run date "+%Y-%m-%d %H:%M %Z" at session start for the time ledger.
+
+    Recap state in 3-5 lines after reading.
+
+    Since last session: [one-line update of what shipped/changed]
+    Today I want to work on: [specific module ID / spike ID / question]
+
+Claude will:
+- Capture session start time via `date` bash call
+- Clone the repo at `/home/claude/TalkCoach/` (or report the clone error and fall back to `project_knowledge_search` against `/mnt/project/`)
+- Read the doc set in the order specified by the "Session bootstrap protocol" section above
+- Recap state in 3–5 lines including which phase per `07_RELEASE_PLAN.md`
+- Either generate a Claude Code prompt using the template above (if a known module), conduct another mini-interview if the topic is ambiguous, or update docs if the topic is a decision change
+
+The "Since last session" line is what tells Claude whether any uncommitted change exists that the clone won't have caught.
+

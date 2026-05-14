@@ -929,14 +929,144 @@ Each probe is a self-contained Swift package in `Spike/Spike13_ExternalMicDetect
 
 ### Outcome
 
-TBD — fill in after probes run.
+**Spike #13 — CLOSED Session 030, 2026-05-13. All three formal probes (A, B, C) plus Probe D cascade FAILED. Architect pivots to disconnect-probe-reconnect algorithm; Spike #13.5 measures the algorithm parameter.**
+
+The full sequence of probes across Sessions 029 + 030, every one of which produced locked Apple-framework runtime-discovery findings:
+
+**Probe A — FAILED (Session 029, 2026-05-13).**
+
+Executed as standalone Swift package at `Spike/Spike13_ExternalMicDetection/probe-a/` on branches `spike/13-probe-a` (KVO-only, commit `279152f`) and `spike/13-probe-a-prime` (KVO + 1Hz polling alongside, commit `4ada2c7`). Six manual choreography runs total across the two binaries.
+
+- **Run-1** (Voice Memos recording twice on built-in mic, no AirPods, Locto not running): 0 KVO state-change callbacks, 0 polled-read transitions across 62 reads spanning all four record/stop events.
+- **Run-2** (Locto launched in parallel, no Voice Memos, no AirPods): 0 KVO state-change callbacks, 0 polled-read transitions. NOTE: this run did NOT empirically test HR2 (signal goes false when only we are recording) — Locto-on-launch does NOT arm the mic. Run-2 was effectively a second idle baseline. Moot in the failure case because the property is inert in all conditions.
+- **Run-3** (AirPods device switch + Voice Memos recording on AirPods): 0 KVO state-change callbacks, 0 polled-read transitions. Default-device-change listener (`kAudioHardwarePropertyDefaultInputDevice`) DID fire correctly both switches with sub-100ms latency, and KVO observer re-attached cleanly to the new device — these mechanisms are sound and reusable in any future probe.
+
+The polling extension (Probe A-prime) disambiguated the two interpretations of Probe A's failure: it is NOT "KVO infrastructure is inert for this property while the property is live"; it is **"the property itself does not update at runtime from a sandboxed app context."** 186 polled reads across the three Probe A-prime runs combined, none transitioning off `false`, on both built-in mic AND AirPods, regardless of who was actively recording.
+
+**Fifth Apple-framework runtime-discovery finding locked (tighter wording than this spec's fail-mode prediction at line 824):** `AVCaptureDevice.isInUseByAnotherApplication` is inert at runtime from a sandboxed app context — the underlying property does not reflect "another application is using this device," not merely that KVO event delivery is broken. The whole `AVCaptureDevice` surface for external-mic detection is closed for TalkCoach v1 and will not be re-investigated absent a major OS-level behavior change.
+
+**Probe B — FAILED (Session 030, 2026-05-13).**
+
+Aggregate device wrapping the physical mic as a sub-device, AVAudioEngine reading the aggregate's input stream. Standalone Swift package at `Spike/Spike13_ExternalMicDetection/probe-b/` on branch `spike/13-probe-b` (commit `f52a7cc`) and additive-only extension on `spike/13-probe-b-prime`. Agent's Phase 1 plan correctly flagged that `CATapDescription` is for process OUTPUT audio only and the original spec's process-tap-on-our-own-process approach would deliver silence; pivoted to aggregate-device-only architecture as the feasible interpretation.
+
+Probe B alone: `AVAudioEngine.start()` on an aggregate device fires `AVAudioEngineConfigurationChange` immediately at startup, and Probe B's `configChangeObserver` logged the DROP but had no restart logic, so the tap never entered steady state (`Tap total buffers: 0` in summary). The hypothesis was unanswered because no buffers ever flowed.
+
+Probe B-prime (additive-only startup-restart observer): registered a NEW one-shot observer AFTER the existing `configChangeObserver` (FIFO delivery: existing logs DROP, new fires restart), self-deregisters after first fire, executes `stop → removeTap → installTap → start`. Boot smoke produced clean steady-state evidence: `RESTART[1] outcome=success` at t=2.18s, `TAP[1] FIRST_BUFFER` at t=2.29s, 628 buffers over 62.71s at 10 buf/s. **Critical diagnostic: at t=2.19s, exactly 0.01s after restart success, `IRS[2] LISTENER t=2.19 old=false new=true`. IRS stayed true through the remaining 62 seconds of steady-state capture. Zero subsequent listener events, zero polled transitions across 62 reads.**
+
+**Sixth Apple-framework runtime-discovery finding locked:** aggregate device wrapping a physical input as a sub-device, with AVAudioEngine reading the aggregate's input stream, trips `kAudioDevicePropertyDeviceIsRunningSomewhere` on the physical sub-device exactly as if AVAudioEngine read the physical device directly. The aggregate abstraction is NOT HAL-invisible from IsRunningSomewhere's accounting view.
+
+**Probe C — FAILED (Session 030, 2026-05-13).**
+
+AVCaptureSession via CMIO (CoreMedia I/O) framework. Standalone Swift package at `Spike/Spike13_ExternalMicDetection/probe-c/` on branch `spike/13-probe-c` (commit `52ba826`) and additive-only extension on `spike/13-probe-c-prime` (two commits `4908310` and `33498b2`). Agent's Phase 1.1 finding: AVCaptureSession on macOS uses CMIO as its capture abstraction, but CMIO ultimately calls into CoreAudio HAL; whether CMIO→HAL registers as a primary HAL reader is empirically unknown without runtime measurement.
+
+Probe C alone: `Cap total buffers: 0` across two runs, blocked by TCC and then by a second issue. NO-SKIPPING triggered — no verdict locked on incomplete data.
+
+Probe C-prime first commit (`4908310`) added `IRS_BEFORE_START` pre-session baseline, `TCC_AUTH status=authorized` confirmation logging, and two new summary lines. First post-amendment run still showed zero buffers despite TCC=authorized. Agent diagnosed root cause: `AVCaptureAudioDataOutput.sampleBufferDelegate` is declared `weak` in Apple's API. The local-let `BufferDelegate` inside `configureSession` was ARC-deallocated as soon as the function returned, so the session was delivering buffers to a nil weak delegate. Probe C-prime second commit on the same branch (`33498b2`) added two more `+` lines: file-scope `var captureDelegate: BufferDelegate?` and `captureDelegate = delegate` inside `configureSession`. **Post-fix boot smoke produced the clean diagnostic pair:** `IRS_BEFORE_START value=false` at t=1.24s, `SESSION STARTED` at t=2.65s, `IRS_AFTER_START value=true` at t=2.66s, `CAP[1] FIRST_BUFFER` at t=2.69s, 5627 buffers over 62.76s at 89.7 buf/s. **`startRunning()` caused the IRS transition false→true; active capture sustained IRS=true for the full 60 seconds with zero subsequent listener events and zero polled transitions.**
+
+**Seventh Apple-framework runtime-discovery finding locked:** AVCaptureSession via CMIO trips IRS on the physical mic during active capture. No abstraction layer change (AUHAL vs CMIO) bypasses the underlying HAL accounting.
+
+**Probe D — FAILED / INCONCLUSIVE-DISQUALIFIED (Session 030, 2026-05-13).**
+
+Cascading multi-candidate probe at `Spike/Spike13_ExternalMicDetection/probe-d/` on branch `spike/13-probe-d`. Three sequential cascade phases in one binary:
+
+- **Candidate 1 — ScreenCaptureKit.** Agent's Phase 1.1 corrected the original prompt: `capturesAudio = true` with output type `.audio` is a SYSTEM AUDIO OUTPUT tap (captures what plays through speakers, doesn't touch input mic). The load-bearing test is macOS 15's `SCStreamConfiguration.captureMicrophone = true` + `microphoneCaptureDeviceID` + output type `.microphone`. Sub-test A (system-output tap, control) and Sub-test B (mic-tap, hypothesis test) implemented.
+  - Sub-test B IRS verdict: **INCONCLUSIVE / DISQUALIFIED.** First run TCC-blocked with verbatim macOS dialog text "The user declined TCCs for application, window, display capture" — Terminal did not have Screen Recording TCC granted. The 5-second completion-deadline mechanism (architect-prescribed) prevented the probe from hanging on the dialog. Second run had two STOP-triggering structural problems: HAL-reference-capture (Candidate 2's apparatus) was running concurrently with SCK sub-tests, so SCK IRS readings were CONFOUNDED — IRS=true could come from HAL-ref alone; and the synchronous Bash tool prevented architect participation in CHOREO_PROMPT real-time actions. NO-SKIPPING applied; no verdict locked.
+  - **Eighth Apple-framework runtime-discovery finding locked:** `SCStreamConfiguration.captureMicrophone = true` on macOS 15+ requires Screen Recording TCC even when capturing ONLY microphone audio with no display content captured. This is an architectural disqualifier for SCK mic-tap as TalkCoach v1's external-detection mechanism independent of IRS behavior — Screen Recording is a permission users associate with surveillance, not microphone capture, and the UX cost exceeds the UX benefit for v1 even if Sub-test B were to pass IRS.
+- **Candidate 2 — HAL property scan.** Six candidate selectors (`IsRunningSomewhere`, `IsRunning` (without Somewhere), `HogMode`, `ControlList`, `ClockDomain`, `ProcessorOverload`) plus two extras (`Latency`, `SafetyOffset`) read at three observation points (NO_CAPTURE, OUR_CAPTURE, EXTERNAL_CAPTURE) via the comparison table. **Inconclusive in the executed run — architect was unable to act on CHOREO_PROMPT due to Bash-tool sync invocation, so all three observation points collapsed to identical readings. The probe-design issue blocks the comparison table's value.** Not re-run because the architectural pivot (algorithm path) made the search unnecessary.
+- **Candidate 3 — CMIO Extensions.** Agent's Phase 1.3 finding: `CMIOExtension*` API is provider-side only. `connectClient:` / `disconnectClient:` are callbacks for the PROVIDER receiving connections; no "monitor", "observe", or "subscribe" symbols exist client-side. Legacy `CMIOHardware.h` is a DAL-level C API for device control with no monitoring surface. **Ninth Apple-framework runtime-discovery finding locked:** `CMIOExtension*` provides no client-side observation API; the framework is intended for implementing virtual camera/device providers, not for client-side monitoring of other providers' streams.
+
+**Architectural pivot at Probe D STOP:** instead of fixing Probe D's cascade ordering and re-running, architect surfaced to product owner that every standard Apple capture API trips IRS, SCK's mic-tap is disqualified by Screen Recording permission cost regardless of empirical IRS outcome, and CMIO Extensions provides no client-side observation API. Anton (product owner) proposed the **disconnect-probe-reconnect algorithm**: when inactivity timer fires, save session to SwiftData, tear down AudioPipeline, wait briefly for HAL state to settle, read IRS in our absence (now an unambiguous "anyone else?" question), then either finalize the session or rebuild AudioPipeline and resume capture. Algorithm sidesteps every locked Spike #13 finding by changing the problem framing. No new APIs, no new permissions, no new framework dependencies, all composing primitives shipped in M2.1 / M2.7 / M3.7.2. Only empirical unknown was the HAL stop-settling time — measured by Spike #13.5.
+
+### Summary of locked findings (six total)
+
+The six Apple-framework runtime-discovery findings established across Sessions 029 + 030 for the external-mic-detection problem domain:
+
+1. (Session 026/027, finding #4 in project sequence) `kAudioProcessPropertyIsRunningInput` listeners silently never fire from sandbox; direct reads asymmetric across the process boundary; HAL filters external processes from our `kAudioHardwarePropertyProcessObjectList` enumeration view.
+2. (Session 029, finding #5) `AVCaptureDevice.isInUseByAnotherApplication` property is inert at runtime from sandbox — the property value itself does not update when external apps record on the device, not merely that KVO event delivery is broken.
+3. (Session 030, finding #6) Aggregate device wrapping the physical mic as a sub-device, with AVAudioEngine reading the aggregate's input stream, trips IRS on the physical sub-device exactly as if AVAudioEngine read the device directly. The aggregate abstraction is NOT HAL-invisible from IsRunningSomewhere's accounting view.
+4. (Session 030, finding #7) AVCaptureSession on macOS uses CMIO (CoreMedia I/O) framework as its capture abstraction, and the CMIO→HAL path trips IRS on the physical mic during active capture. No abstraction layer change (AUHAL vs CMIO) bypasses the HAL accounting.
+5. (Session 030, finding #8) `SCStreamConfiguration.captureMicrophone = true` on macOS 15+ requires Screen Recording TCC even when capturing ONLY microphone audio with no display content. Architectural disqualifier for SCK as v1 mechanism regardless of empirical IRS behavior.
+6. (Session 030, finding #9) `CMIOExtension*` provides no client-side observation surface. The framework is intended for implementing virtual camera/device providers; client-side monitoring of other providers' streams is not supported by the API.
+
+### Architectural conclusion
+
+**No standard Apple API distinguishes "our capture" from "external capture" at the HAL level when our capture is active.** Every capture path that registers as a HAL reader trips `kAudioDevicePropertyDeviceIsRunningSomewhere` on the underlying physical device. The HAL does not expose per-client visibility at the read-accessible property level. Six probes' worth of empirical evidence support this conclusion across three different framework surfaces (AVAudioEngine direct, AVAudioEngine via aggregate, AVCaptureSession via CMIO) plus a fourth surface disqualified by entitlement cost (ScreenCaptureKit mic-tap).
+
+The disconnect-probe-reconnect algorithm bypasses the distinguishability problem by removing Locto from the set of HAL readers during the probe step. The IRS property read in our absence is unambiguous: "anyone else?" — and if no one else, we finalize cleanly; if someone else, we rebuild AudioPipeline and resume capture into the same session record.
+
+### Re-usable patterns proven across the spike's probes
+
+- The default-device-change listener (`kAudioHardwarePropertyDefaultInputDevice` on `kAudioObjectSystemObject`) DOES fire correctly within ~100ms of switch. AirPods scenario mechanism is solid; M3.7.3 reuses this pattern for HR3 (AirPods) coverage.
+- The 1Hz `Timer.scheduledTimer` polling pattern on top-level `RunLoop.main` is drift-free across 60s windows.
+- The additive-only probe-extension pattern (new branch off prior probe's tagged commit; every diff hunk is `+` lines between unchanged context lines; sub-agent code review verifies via `grep '^-' | grep -v '^---' | wc -l` returns 0) operated across four uses in one session at scale.
+- The weak-property gotcha defense: any Apple framework delegate property declared `weak` (`AVCaptureAudioDataOutput.sampleBufferDelegate`, `SCStream.delegate`, etc.) MUST have its delegate retained by a file-scope strong reference. Probe C-prime's fix is the canonical example.
+- The hypothesis-direction-explicit pattern: every probe prompt involving a viability/falsification decision states the direction in the prompt body, the Phase 3 self-review marker block, AND the Sub-agent 2 brief.
+- The NO-SKIPPING rule (Session 030 lock): if data is incomplete or ambiguous, STOP and report rather than locking a verdict on bad data. Six probes in this spike applied the rule across four substantive STOP-and-report cycles.
+
+### Decision tree status
+
+- **Probe A:** ❌ Failed Session 029
+- **Probe B:** ❌ Failed Session 030
+- **Probe C:** ❌ Failed Session 030
+- **Probe D (cascade):** ❌ Failed Session 030 (Candidate 1 disqualified by TCC, Candidate 2 inconclusive due to Bash-tool sync limitation, Candidate 3 API_MISMATCH_DEAD)
+- **Decision tree line 906 ("Accept inactivity-timeout as v1 mechanism, document UX limitation"):** SUPERSEDED by the NO-SKIPPING rule and the disconnect-probe-reconnect algorithm. Spike #13 closes with a working architectural path, not a documented limitation.
+
+**Spike status: CLOSED.** M3.7.3 implements the disconnect-probe-reconnect algorithm in Session 031. M3.7.2 inactivity threshold migrates to user settings as part of M3.7.3.
 
 ---
 
-## Spike status summary (Session 028)
+## Spike #13.5 — HAL stop-settling time measurement (Session 030, single-session)
+
+**Goal:** measure the time delta between `AudioPipeline.stop()` returning and `kAudioDevicePropertyDeviceIsRunningSomewhere` transitioning to false on the physical mic. This delta is the M3.7.3 algorithm's "wait-after-teardown-before-IRS-read" parameter.
+
+**Why this matters:** the disconnect-probe-reconnect algorithm tears down Locto's capture, waits for HAL state to settle, then reads IRS in our absence. If the settling time is ~10ms, the wait is imperceptible. If the settling time is ~2 seconds, the algorithm has a user-perceptible audio gap cost during every probe cycle and the algorithm parameters need to be tuned accordingly. Probe B-prime had given us start-side settling (~0.01s); the stop side was unmeasured.
+
+**Method:** standalone Swift package at `Spike/Spike13_5_HALStopSettling/probe/` on branch `spike/13.5-hal-stop-settling`. Single-mechanism measurement probe — not a hypothesis pass/fail probe. Ten capture-then-stop cycles with plain `AVAudioEngine` against the default input (matching M3.7 production AudioPipeline mechanism exactly).
+
+Each cycle:
+1. Build AVAudioEngine, install input-node tap with empty closure, prepare.
+2. `engine.start()`. Wait 2 seconds (HAL state firmly establishes IRS=true).
+3. Capture `cycleStopRequestedAt = DispatchTime.now().uptimeNanoseconds`.
+4. `engine.inputNode.removeTap(onBus: 0)`. `engine.stop()`.
+5. Capture `cycleStopReturnedAt = DispatchTime.now().uptimeNanoseconds`.
+6. Wait up to 1s for IRS listener (on dedicated background queue, NOT main) to fire `true → false`.
+7. In parallel: 50ms backup polling timer reads IRS property directly as belt-and-suspenders measurement.
+8. Compute settling deltas in nanoseconds. Rest 1s. Next cycle.
+
+The dedicated background queue for the IRS listener is load-bearing — `DispatchTime.now().uptimeNanoseconds` is captured as the very FIRST line in the listener callback before any dispatch to main, eliminating main-queue-drain latency from the measurement.
+
+**Outcome (Session 030):**
+
+All 10 cycles settled via listener within the 1-second wait window. Zero missed settles. Zero NO-SKIPPING trigger. Zero IRS carry-over between cycles (1-second rest is sufficient). Zero unexpected `AVAudioEngineConfigurationChange` notifications during cycles. All 10 backup-poll entries showed "—" (listener fired and cancelled the backup timer before any 50ms poll tick caught the transition), confirming listener latency is consistently sub-50ms across the run.
+
+**Distribution (ns from `engine.stop()` return to listener fire):**
+
+- cycle 1: ~41 ms
+- cycle 2: ~38 ms (min)
+- cycles 3–10: 39–45 ms
+- **Min: 38.331 ms**
+- **Max: 44.854 ms**
+- **Mean: 41.451 ms**
+- **P95 (= max for n=10): 44.854 ms**
+
+Distribution is tight and deterministic — 6.5 ms spread across 10 cycles, no outliers, no bimodal split.
+
+**Production parameter locked: ~100ms wait after `AudioPipeline.stop()` returns before reading IRS.** Derivation: measured max 45ms + safety margin for cross-hardware variance, system load, AirPods vs built-in mic, and possible OS-version variation = round up to 100ms. The total disconnect-probe-reconnect cycle cost is estimated at 500–800ms (stop + wait 100ms + IRS read + AudioPipeline.start() + engine warmup), at the edge of user-perceivable but acceptable for an event that fires at most once per inactivity-threshold window.
+
+**Outputs:**
+
+- `Spike/Spike13_5_HALStopSettling/probe/Sources/probe/main.swift` (probe code)
+- `/tmp/spike13.5-bootsmoke.txt` (boot smoke output with AGGREGATE block)
+- This spec section as the locked measurement artifact for M3.7.3
+
+**Status:** CLOSED. Measurement landed. M3.7.3 uses the parameter.
+
+---
+
+## Spike status summary (Session 030)
 
 All architecture-blocking spikes from earlier project phases are resolved. Seven spikes completed (S2, S4, S6, S7, S8, S9, S10), one superseded (S3). Two spikes deferred with their features: S1 (blocklist → v2), S11 (MonologueDetector → v1.x). S12 remains parked for v2 (trail-off detector). S5 deferred to v1.x.
 
-**Spike #13 (external-mic-detection signal) opened Session 028.** Blocks M3.7 close. Three gated probes, 4–6h budget. First probe (Probe A — `AVCaptureDevice.isInUseByAnotherApplication`) runs next session.
+**Spike #13 (external-mic-detection signal) — CLOSED Session 030.** All four formal probe paths (A, B, C, D) FAILED across nine total executions including additive-only extensions. Six locked Apple-framework runtime-discovery findings establish that no standard Apple API distinguishes our capture from external capture at the HAL level when our capture is active. Architect pivoted to disconnect-probe-reconnect algorithm proposed by product owner; algorithm sidesteps the distinguishability problem by temporarily removing Locto from the set of HAL readers during the probe step. **Spike #13.5 (HAL stop-settling time measurement)** measured the algorithm parameter empirically: max 45 ms with tight distribution, production parameter 100ms with safety margin. M3.7.3 implements the algorithm Session 031.
 
-Phase 1 module work is fully unblocked. Phase 3 token pipeline is functional pending Spike #13's deactivation-signal resolution.
+Phase 1 module work is fully unblocked. Phase 3 token pipeline is functional pending M3.7.3 implementation.

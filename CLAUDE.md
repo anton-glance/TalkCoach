@@ -13,6 +13,39 @@ Architecture: `@docs/03_ARCHITECTURE.md`
 
 ---
 
+## Reply formatting — copy-pasteable as a single block (mandatory)
+
+Every text reply you produce in the Xcode chat panel — plans, self-reviews, status reports, diagnostic outputs, AC dispositions, sub-agent reviews, anything that is NOT a code edit to a file — must be copy-pasteable by the user as a single action. Xcode's chat panel does not allow selecting text across fenced-code-block boundaries. If your reply mixes prose paragraphs with separate fenced code blocks for snippets / file paths / commands, the user cannot Cmd+A → Cmd+C → paste the whole reply to the architect. This breaks the audit and smoke-gate evidence workflow.
+
+Pick ONE of these two formats for the entire reply:
+
+(a) Entirely plain prose and indented text. No fenced code blocks anywhere. Inline code uses single backticks only. Multi-line code snippets use 4-space indentation, not fences. File paths and commands in single backticks.
+
+(b) Entirely inside ONE fenced code block. The whole reply, including any prose, lives inside one triple-backtick pair. User can click inside, Cmd+A, Cmd+C in one action.
+
+Never mix. Do not produce a reply that contains prose AND separate fenced blocks. That's the failure mode that breaks the workflow.
+
+Default choice:
+- Plans, reviews, status reports, AC dispositions, prose-heavy outputs → format (a)
+- Replies that are mostly code, command sequences, or diff output → format (b)
+- When unsure, prefer (a) — prose with backtick-quoted code is more readable and still single-selectable.
+
+This rule applies to:
+- Text replies in the Xcode chat panel
+- Phase 1 plan outputs
+- Phase 3 self-review marker block reproductions
+- Sub-agent review reports
+- Diagnostic outputs the user is expected to paste back to architect
+- Any status update the user might need to forward
+
+This rule does NOT apply to:
+- Actual code edits you make to files in the repo (those use whatever Swift/Markdown/etc. format the file requires)
+- Tool calls you make (those use the tool's required structured format)
+
+If you find yourself instinctively reaching for a fenced block in the middle of a prose reply, stop. Re-read this section. Convert the snippet to an indented block within the prose, OR convert the entire reply into format (b). Never both formats in one reply.
+
+---
+
 ## Hard requirements (failure modes — uninstall triggers)
 
 These are not negotiable. Every change is evaluated against them.
