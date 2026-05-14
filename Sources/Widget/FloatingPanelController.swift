@@ -159,10 +159,26 @@ final class FloatingPanelController {
     }
 
     private func handleTokenArrival() {
-        // A token arrived — reset the token-silence hide timer.
-        // This is the primary mechanism that drives widget visibility in M3.7.3.
+        // A token arrived — reset the token-silence hide timer, and re-show if hidden.
         cancelPendingHide()
-        guard panelState == .visible else { return }
+        switch panelState {
+        case .hidden, .fadingOut:
+            // Re-show only when a session is actually active; ignore stale token signals while idle.
+            guard case .active(let ctx) = sessionCoordinator.state else { return }
+            viewModel.sessionStartedAt = ctx.startedAt
+            viewModel.isSessionActive = true
+            panelState = .visible
+            showPanel()
+            Logger.floatingPanel.info("Panel re-shown on token arrival after silence-hide")
+            armHideTimer()
+        case .visible:
+            armHideTimer()
+        case .dismissed:
+            return
+        }
+    }
+
+    private func armHideTimer() {
         let delay = settingsStore.widgetHideDelaySeconds
         hideToken = hideScheduler.schedule(delay: delay) { [weak self] in
             guard let self, self.panelState == .visible else { return }

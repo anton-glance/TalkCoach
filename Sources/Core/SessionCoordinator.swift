@@ -167,7 +167,7 @@ final class SessionCoordinator: ObservableObject {
                 guard let self else { return }
                 if !newValue, case .active = self.state {
                     Logger.session.info("Coaching disabled mid-session — ending active session")
-                    self.endCurrentSession()
+                    self.endCurrentSession(reason: .coachingDisabled)
                 }
             }
 
@@ -175,12 +175,12 @@ final class SessionCoordinator: ObservableObject {
             onSleep: { [weak self] in
                 guard let self else { return }
                 Logger.session.info("SessionCoordinator: system sleep — ending active session")
-                self.endCurrentSession()
+                self.endCurrentSession(reason: .sleep)
             },
             onShutdown: { [weak self] in
                 guard let self else { return }
                 Logger.session.info("SessionCoordinator: system shutdown — ending active session")
-                self.endCurrentSession()
+                self.endCurrentSession(reason: .shutdown)
             }
         )
     }
@@ -195,7 +195,7 @@ final class SessionCoordinator: ObservableObject {
         systemEventObserver?.stop()
 
         if case .active = state {
-            endCurrentSession()
+            endCurrentSession(reason: .quit)
         }
 
         micMonitor.stop()
@@ -214,7 +214,7 @@ final class SessionCoordinator: ObservableObject {
     func requestFinalize() {
         guard case .active = state else { return }
         Logger.session.info("SessionCoordinator: requestFinalize() — ending session on user request")
-        endCurrentSession()
+        endCurrentSession(reason: .xButton)
     }
 
     // MARK: Private — inactivity and probe
@@ -225,7 +225,7 @@ final class SessionCoordinator: ObservableObject {
         guard let prober = micProber, wiring != nil else {
             // No prober or no wiring → direct finalize (backward compat / no-wiring sessions)
             Logger.session.info("SessionCoordinator: no prober/wiring — finalizing immediately")
-            endCurrentSession()
+            endCurrentSession(reason: .silenceAndMicOff)
             return
         }
 
@@ -318,7 +318,7 @@ final class SessionCoordinator: ObservableObject {
         // Resume wiring: use cached locale (skip LD.start() — deferred to M3.8)
         guard let locale = currentLocale else {
             Logger.session.error("SessionCoordinator: resume failed — no cached locale")
-            finalizeAfterProbe(wiring: wiring)
+            finalizeAfterProbe(wiring: wiring, reason: .pipelineRestartFailed)
             return
         }
 
@@ -327,7 +327,7 @@ final class SessionCoordinator: ObservableObject {
             Logger.session.info("SessionCoordinator: resume — new AudioPipeline started")
         } catch {
             Logger.session.error("SessionCoordinator: resume — AudioPipeline.start() failed: \(error)")
-            finalizeAfterProbe(wiring: wiring)
+            finalizeAfterProbe(wiring: wiring, reason: .pipelineRestartFailed)
             return
         }
 
@@ -343,7 +343,7 @@ final class SessionCoordinator: ObservableObject {
         } catch {
             Logger.session.error("SessionCoordinator: resume — TranscriptionEngine.init failed: \(error)")
             newPipeline.stop()
-            finalizeAfterProbe(wiring: wiring)
+            finalizeAfterProbe(wiring: wiring, reason: .pipelineRestartFailed)
             return
         }
 
@@ -354,7 +354,7 @@ final class SessionCoordinator: ObservableObject {
             Logger.session.error("SessionCoordinator: resume — TranscriptionEngine.start() failed: \(error)")
             await engine.stop()
             newPipeline.stop()
-            finalizeAfterProbe(wiring: wiring)
+            finalizeAfterProbe(wiring: wiring, reason: .pipelineRestartFailed)
             return
         }
 
@@ -369,12 +369,13 @@ final class SessionCoordinator: ObservableObject {
         Logger.session.info("SessionCoordinator: resume complete [\(locale.identifier)] — inactivity timer rearmed for \(threshold)s")
     }
 
-    private func finalizeAfterProbe(wiring: SessionWiring) {
+    private func finalizeAfterProbe(wiring: SessionWiring, reason: SessionEndReason = .silenceAndMicOff) {
         guard case .active(let ctx) = state else { return }
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
         lastTokenArrival = nil
-        Logger.session.info("Session ended (probe-finalize): \(ended.id) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
+        lastEndReason = reason
+        Logger.session.info("Session ended (probe-finalize): \(ended.id) reason=\(reason.rawValue) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
         for handler in endedSessionHandlers { handler(ended) }
 
         Task { [weak self] in await self?.completeTeardown(wiring: wiring) }
@@ -382,19 +383,19 @@ final class SessionCoordinator: ObservableObject {
 
     // MARK: Private — session lifecycle
 
-    private func endCurrentSession() {
+    private func endCurrentSession(reason: SessionEndReason = .micOffListener) {
         inactivityTimer.cancel()
         guard case .active(let ctx) = state else { return }
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
         lastTokenArrival = nil
-        Logger.session.info("Session ended: \(ended.id) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
+        lastEndReason = reason
+        Logger.session.info("Session ended: \(ended.id) reason=\(reason.rawValue) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
         for handler in endedSessionHandlers {
             handler(ended)
         }
 
         guard wiring != nil else { return }
-        Logger.session.info("SessionCoordinator: micDeactivated — tearing down session")
         Task { [weak self] in await self?.teardownWiring() }
     }
 
@@ -617,6 +618,6 @@ extension SessionCoordinator: MicMonitorDelegate {
             return
         }
         guard case .active = state else { return }
-        endCurrentSession()
+        endCurrentSession(reason: .micOffListener)
     }
 }
