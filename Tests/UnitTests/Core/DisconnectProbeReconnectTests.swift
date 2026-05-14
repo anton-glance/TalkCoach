@@ -573,4 +573,59 @@ final class DisconnectProbeReconnectTests: XCTestCase {
                                  "Session must not be finalized more than once (stop + probe race)")
         XCTAssertEqual(sut.state, .idle)
     }
+
+    // MARK: - T-FIX-4: Session-end reason is structured and correct per trigger source (AC-FIX-5)
+
+    func testSessionEndReason_XButton() {
+        let (sut, _) = makeSUT()
+        sut.start()
+        sut.micActivated()
+        sut.requestFinalize()
+        XCTAssertEqual(sut.lastEndReason, .xButton, "requestFinalize must record reason .xButton")
+    }
+
+    func testSessionEndReason_Quit() {
+        let (sut, _) = makeSUT()
+        sut.start()
+        sut.micActivated()
+        sut.stop()
+        XCTAssertEqual(sut.lastEndReason, .quit, "stop() must record reason .quit")
+    }
+
+    func testSessionEndReason_Sleep() {
+        let fakeObserver = FakeSystemEventObserver()
+        let sut = makeSUTWithObserver(systemEventObserver: fakeObserver)
+        sut.start()
+        sut.micActivated()
+        fakeObserver.simulateSleep()
+        XCTAssertEqual(sut.lastEndReason, .sleep, "System sleep must record reason .sleep")
+    }
+
+    func testSessionEndReason_Shutdown() {
+        let fakeObserver = FakeSystemEventObserver()
+        let sut = makeSUTWithObserver(systemEventObserver: fakeObserver)
+        sut.start()
+        sut.micActivated()
+        fakeObserver.simulateShutdown()
+        XCTAssertEqual(sut.lastEndReason, .shutdown, "System shutdown must record reason .shutdown")
+    }
+
+    func testSessionEndReason_CoachingDisabled() async {
+        let (sut, defaults) = makeSUT()
+        sut.start()
+        sut.micActivated()
+        defaults.set(false, forKey: "coachingEnabled")
+        await Task.yield()
+        XCTAssertEqual(sut.lastEndReason, .coachingDisabled,
+                       "Coaching disabled mid-session must record reason .coachingDisabled")
+    }
+
+    func testSessionEndReason_MicOffListener() {
+        let (sut, _) = makeSUT()
+        sut.start()
+        sut.micActivated()
+        sut.micDeactivated()
+        XCTAssertEqual(sut.lastEndReason, .micOffListener,
+                       "micDeactivated must record reason .micOffListener")
+    }
 }

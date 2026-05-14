@@ -51,6 +51,19 @@ struct SessionWiring {
     }
 }
 
+// MARK: - SessionEndReason
+
+enum SessionEndReason: String {
+    case silenceAndMicOff = "silence-and-mic-off"
+    case xButton = "x-button"
+    case quit = "quit"
+    case sleep = "sleep"
+    case shutdown = "shutdown"
+    case micOffListener = "mic-off-listener"
+    case coachingDisabled = "coaching-disabled"
+    case pipelineRestartFailed = "pipeline-restart-failed"
+}
+
 // MARK: - CaptureState
 
 private enum CaptureState {
@@ -77,7 +90,10 @@ private enum CaptureState {
 // swiftlint:disable:next type_body_length
 final class SessionCoordinator: ObservableObject {
     @Published private(set) var state: SessionState = .idle
-    @Published private(set) var lastTokenArrival: Date?
+    // Intentionally non-private setter: tests set this directly to verify the idle guard.
+    // Production code: only SessionCoordinator sets this property.
+    @Published var lastTokenArrival: Date?
+    private(set) var lastEndReason: SessionEndReason?
     private(set) var isRunning: Bool = false
 
     private let micMonitor: MicMonitor

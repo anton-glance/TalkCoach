@@ -7,6 +7,10 @@ private final class WidgetTestAlertPresenter: AlertPresenter, @unchecked Sendabl
     @MainActor func presentDismissConfirmation() -> Bool { false }
 }
 
+private final class ConfirmingWidgetAlertPresenter: AlertPresenter, @unchecked Sendable {
+    @MainActor func presentDismissConfirmation() -> Bool { true }
+}
+
 private final class WidgetTestHideScheduler: HideScheduler, @unchecked Sendable {
     nonisolated(unsafe) private(set) var scheduledActions: [(@MainActor @Sendable () -> Void)] = []
     nonisolated(unsafe) private(set) var scheduledDelays: [TimeInterval] = []
@@ -42,7 +46,8 @@ final class WidgetDecouplingTests: XCTestCase {
     // swiftlint:disable:next large_tuple
     private func makeComponents(
         inactivityTimer: any InactivityTimer = FakeInactivityTimer(),
-        widgetHideDelay: TimeInterval? = nil
+        widgetHideDelay: TimeInterval? = nil,
+        alertPresenter: (any AlertPresenter)? = nil
     ) -> (
         coordinator: SessionCoordinator,
         settingsStore: SettingsStore,
@@ -64,9 +69,10 @@ final class WidgetDecouplingTests: XCTestCase {
             inactivityTimer: inactivityTimer
         )
         let scheduler = WidgetTestHideScheduler()
+        let resolvedPresenter = alertPresenter ?? WidgetTestAlertPresenter()
         let fpc = FloatingPanelController(
             sessionCoordinator: coordinator,
-            alertPresenter: WidgetTestAlertPresenter(),
+            alertPresenter: resolvedPresenter,
             hideScheduler: scheduler,
             settingsStore: settingsStore
         )
@@ -168,6 +174,139 @@ final class WidgetDecouplingTests: XCTestCase {
         // since token-silence timer is the primary hide mechanism
         XCTAssertEqual(scheduler.scheduledDelays.count, 0,
                        "Session end without tokens must hide immediately, not schedule a fade")
+    }
+
+    // MARK: - T-FIX-1: Widget reshows on token arrival after silence-hide (AC-FIX-1)
+
+    func testWidgetReshowsOnTokenArrival_AfterSilenceHide() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let (coordinator, _, scheduler, fpc) = makeComponents(
+            inactivityTimer: fakeTimer,
+            widgetHideDelay: 4.0
+        )
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let engineProvider = ProbeTestEngineProvider()
+        let pipeline = AudioPipeline(provider: engineProvider)
+        let fakeLD = FakeLanguageDetector()
+        let locales = FakeSupportedLocalesProvider()
+        locales.locales = [Locale(identifier: "en-US")]
+
+        coordinator.wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: yieldingFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: locales
+        )
+
+        fpc.start()
+        coordinator.start()
+
+        let consumer = FakeTokenConsumer()
+        coordinator.addConsumer(consumer)
+        coordinator.micActivated()
+        if let task = coordinator.sessionWiringTask { await task.value }
+        XCTAssertEqual(fpc.panelState, .visible)
+
+        // First token → hide timer armed
+        let tokenExp1 = XCTestExpectation(description: "first token")
+        consumer.onReceiveToken = { tokenExp1.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp1], timeout: 2.0)
+
+        // Silence timer fires → panel hides
+        scheduler.fireLast()
+        XCTAssertEqual(fpc.panelState, .hidden, "Panel must hide after silence timer fires")
+
+        let countBeforeReshow = scheduler.scheduledDelays.count
+
+        // Second token while session still active → panel must reappear
+        let tokenExp2 = XCTestExpectation(description: "second token")
+        consumer.onReceiveToken = { tokenExp2.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "world", startTime: 0.5, endTime: 0.9, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp2], timeout: 2.0)
+        await Task.yield()
+
+        XCTAssertEqual(fpc.panelState, .visible,
+                       "Widget must reappear on token while session is still active (AC-FIX-1)")
+        XCTAssertGreaterThan(scheduler.scheduledDelays.count, countBeforeReshow,
+                             "New hide timer must be scheduled after reshow")
+    }
+
+    // MARK: - T-FIX-2: Widget does not reshow after X-button dismiss (AC-FIX-2)
+
+    func testWidgetDoesNotReshow_AfterDismiss() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let (coordinator, _, _, fpc) = makeComponents(
+            inactivityTimer: fakeTimer,
+            widgetHideDelay: 4.0,
+            alertPresenter: ConfirmingWidgetAlertPresenter()
+        )
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let engineProvider = ProbeTestEngineProvider()
+        let pipeline = AudioPipeline(provider: engineProvider)
+        let fakeLD = FakeLanguageDetector()
+        let locales = FakeSupportedLocalesProvider()
+        locales.locales = [Locale(identifier: "en-US")]
+
+        coordinator.wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: yieldingFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: locales
+        )
+
+        fpc.start()
+        coordinator.start()
+
+        let consumer = FakeTokenConsumer()
+        coordinator.addConsumer(consumer)
+        coordinator.micActivated()
+        if let task = coordinator.sessionWiringTask { await task.value }
+        XCTAssertEqual(fpc.panelState, .visible)
+
+        // User dismisses via X-button
+        fpc.requestDismiss()
+        XCTAssertEqual(fpc.panelState, .dismissed, "Panel must be .dismissed after confirmed dismiss")
+
+        // Token arrives — FPC must NOT reshow
+        let tokenExp = XCTestExpectation(description: "token consumed")
+        consumer.onReceiveToken = { tokenExp.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp], timeout: 2.0)
+        await Task.yield()
+
+        XCTAssertEqual(fpc.panelState, .dismissed,
+                       "Widget must NOT reshow after user-dismissed (X-button intent respected) (AC-FIX-2)")
+    }
+
+    // MARK: - T-FIX-3: Widget does not reshow when session is idle (AC-FIX-3)
+
+    func testWidgetDoesNotReshow_WhenSessionIdle() async {
+        let (coordinator, _, scheduler, fpc) = makeComponents()
+        fpc.start()
+        coordinator.start()
+
+        // Session is idle — never activated; panelState starts .hidden
+        XCTAssertEqual(fpc.panelState, .hidden)
+
+        // Simulate stale lastTokenArrival while session is idle (tests the idle-state guard in handleTokenArrival)
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.panelState, .hidden,
+                       "Widget must not reshow when session is idle — no active session (AC-FIX-3)")
+        XCTAssertEqual(scheduler.scheduledDelays.count, 0,
+                       "No hide timer must be scheduled when session is idle")
     }
 
     // MARK: - T21: FPC subscribes to sessionCoordinator.$lastTokenArrival
