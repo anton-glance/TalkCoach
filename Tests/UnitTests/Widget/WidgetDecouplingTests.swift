@@ -266,27 +266,72 @@ final class WidgetDecouplingTests: XCTestCase {
         fpc.start()
         coordinator.start()
 
-        let consumer = FakeTokenConsumer()
-        coordinator.addConsumer(consumer)
         coordinator.micActivated()
         if let task = coordinator.sessionWiringTask { await task.value }
         XCTAssertEqual(fpc.panelState, .visible)
 
         // User dismisses via X-button
         fpc.requestDismiss()
-        XCTAssertEqual(fpc.panelState, .dismissed, "Panel must be .dismissed after confirmed dismiss")
+        XCTAssertNotEqual(fpc.panelState, .visible, "Panel must not be visible after confirmed dismiss")
 
-        // Token arrives — FPC must NOT reshow
-        let tokenExp = XCTestExpectation(description: "token consumed")
-        consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
-            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
-        )
-        await fulfillment(of: [tokenExp], timeout: 2.0)
+        // Simulate a stale lastTokenArrival signal arriving AFTER dismiss
+        coordinator.lastTokenArrival = Date()
         await Task.yield()
 
-        XCTAssertEqual(fpc.panelState, .dismissed,
-                       "Widget must NOT reshow after user-dismissed (X-button intent respected) (AC-FIX-2)")
+        XCTAssertNotEqual(fpc.panelState, .visible,
+                          "Widget must NOT reshow after dismiss, even on stale token signals (AC-FIX-2)")
+    }
+
+    // MARK: - T-FIX2-1: X-button dismiss finalizes session immediately (AC-FIX2-1)
+
+    func testRequestDismiss_FinalizesSession_OnConfirmedDismiss() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let (coordinator, _, _, fpc) = makeComponents(
+            inactivityTimer: fakeTimer,
+            widgetHideDelay: 4.0,
+            alertPresenter: ConfirmingWidgetAlertPresenter()
+        )
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let engineProvider = ProbeTestEngineProvider()
+        let pipeline = AudioPipeline(provider: engineProvider)
+        let fakeLD = FakeLanguageDetector()
+        let locales = FakeSupportedLocalesProvider()
+        locales.locales = [Locale(identifier: "en-US")]
+
+        coordinator.wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: yieldingFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: locales
+        )
+
+        fpc.start()
+        coordinator.start()
+        coordinator.micActivated()
+        if let task = coordinator.sessionWiringTask { await task.value }
+        XCTAssertEqual(fpc.panelState, .visible, "Panel must be visible after session start")
+
+        var endedSessions: [EndedSession] = []
+        coordinator.onSessionEnded { session in
+            endedSessions.append(session)
+        }
+
+        fpc.requestDismiss()
+
+        XCTAssertEqual(endedSessions.count, 1,
+                       "Session must be finalized synchronously on confirmed dismiss (AC-FIX2-1)")
+        XCTAssertEqual(coordinator.lastEndReason, .xButton,
+                       "Session end reason must be .xButton (AC-FIX2-2)")
+        XCTAssertEqual(coordinator.state, .idle,
+                       "Coordinator must be idle after X-button dismiss (AC-FIX2-1)")
+
+        // AC-FIX2-3: stale token signal must not trigger reshow after dismiss
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+        XCTAssertNotEqual(fpc.panelState, .visible,
+                          "Widget must not reshow after X-button dismiss (AC-FIX2-3)")
     }
 
     // MARK: - T-FIX-3: Widget does not reshow when session is idle (AC-FIX-3)
