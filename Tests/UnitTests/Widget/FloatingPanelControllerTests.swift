@@ -176,9 +176,9 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.requestDismiss()
 
         XCTAssertEqual(fakeAlert.presentCallCount, 1)
-        XCTAssertEqual(sut.panelState, .dismissed)
+        XCTAssertEqual(sut.panelState, .hidden)
         XCTAssertFalse(sut.isShowingPanel)
-        XCTAssertNotEqual(coordinator.state, .idle, "Coordinator state must remain active")
+        XCTAssertEqual(coordinator.state, .idle, "Coordinator must finalize session on X-button dismiss (B1 fix)")
     }
 
     func testDismissConfirmNoKeepsVisible() async {
@@ -204,7 +204,7 @@ final class FloatingPanelControllerTests: XCTestCase {
         await activateMic()
         fakeAlert.stubbedResult = true
         sut.requestDismiss()
-        XCTAssertEqual(sut.panelState, .dismissed)
+        XCTAssertEqual(sut.panelState, .hidden)
 
         await deactivateMic()
         XCTAssertEqual(sut.panelState, .hidden)

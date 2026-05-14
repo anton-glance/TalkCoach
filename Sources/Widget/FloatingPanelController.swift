@@ -34,6 +34,7 @@ final class FloatingPanelController {
     private var moveObserver: (any NSObjectProtocol)?
     private var isProgrammaticMove = false
     private var isStarted = false
+    private var lastTokenObservedAtNs: UInt64 = 0
 
     var isShowingPanel: Bool { panel?.isVisible ?? false }
     var currentPanelFrame: NSRect? { panel?.frame }
@@ -68,7 +69,9 @@ final class FloatingPanelController {
         // Each token resets the hide timer. Absence of tokens for widgetHideDelaySeconds hides the panel.
         tokenArrivalSubscription = sessionCoordinator.$lastTokenArrival
             .sink { [weak self] arrival in
+                let t1Ns = DispatchTime.now().uptimeNanoseconds
                 guard let self, arrival != nil else { return }
+                self.lastTokenObservedAtNs = t1Ns
                 self.handleTokenArrival()
             }
     }
@@ -97,7 +100,8 @@ final class FloatingPanelController {
         if confirmed {
             panelState = .dismissed
             hidePanel(reason: "dismissed")
-            Logger.floatingPanel.info("Dismiss confirmed — panel hidden")
+            sessionCoordinator.requestFinalize()
+            Logger.floatingPanel.info("Dismiss confirmed — panel hidden, session finalized")
         } else {
             Logger.floatingPanel.info("Dismiss canceled — panel stays visible")
         }
@@ -159,6 +163,7 @@ final class FloatingPanelController {
     }
 
     private func handleTokenArrival() {
+        let t2Ns = DispatchTime.now().uptimeNanoseconds
         // A token arrived — reset the token-silence hide timer, and re-show if hidden.
         cancelPendingHide()
         switch panelState {
@@ -169,10 +174,20 @@ final class FloatingPanelController {
             viewModel.isSessionActive = true
             panelState = .visible
             showPanel()
-            Logger.floatingPanel.info("Panel re-shown on token arrival after silence-hide")
+            let t3Ns = DispatchTime.now().uptimeNanoseconds
+            let t1Ns = lastTokenObservedAtNs
+            let sinkLatencyMs = Double(t2Ns - t1Ns) / 1_000_000.0
+            let showLatencyMs = Double(t3Ns - t2Ns) / 1_000_000.0
+            let totalLatencyMs = Double(t3Ns - t1Ns) / 1_000_000.0
+            Logger.floatingPanel.info("widget-reshow-timing: trigger=reshow sink→handler=\(sinkLatencyMs)ms handler→visible=\(showLatencyMs)ms total=\(totalLatencyMs)ms")
             armHideTimer()
         case .visible:
             armHideTimer()
+            let t3Ns = DispatchTime.now().uptimeNanoseconds
+            let t1Ns = lastTokenObservedAtNs
+            let sinkLatencyMs = Double(t2Ns - t1Ns) / 1_000_000.0
+            let totalLatencyMs = Double(t3Ns - t1Ns) / 1_000_000.0
+            Logger.floatingPanel.info("widget-reshow-timing: trigger=reschedule sink→handler=\(sinkLatencyMs)ms total=\(totalLatencyMs)ms")
         case .dismissed:
             return
         }
