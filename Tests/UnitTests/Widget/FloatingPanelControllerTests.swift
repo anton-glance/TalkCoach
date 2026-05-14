@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Combine
 import CoreAudio
 import XCTest
@@ -49,6 +50,7 @@ private final class FakeHideScheduler: HideScheduler, @unchecked Sendable {
 // MARK: - Tests
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class FloatingPanelControllerTests: XCTestCase {
 
     private var fake: FakeCoreAudioDeviceProvider!
@@ -101,13 +103,20 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertFalse(sut.isShowingPanel)
     }
 
-    // MARK: - Show on activation
+    // MARK: - Hidden on mic-on, visible on first token (AC-FIX3-A1)
 
-    func testShowOnMicActivation() async {
+    func testMicActivation_KeepsHidden_VisibleOnFirstToken() async {
         makeSUT()
         sut.start()
         coordinator.start()
         await activateMic()
+
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "Widget must stay hidden on mic-on — token arrival triggers show (AC-FIX3-A1)")
+        XCTAssertFalse(sut.isShowingPanel)
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         XCTAssertEqual(sut.panelState, .visible)
         XCTAssertTrue(sut.isShowingPanel)
@@ -120,6 +129,9 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         fake.simulateIsRunningChange()
@@ -157,11 +169,13 @@ final class FloatingPanelControllerTests: XCTestCase {
                        "M3.7.3: session end must hide immediately; fade is driven by token-silence")
 
         await activateMic()
-        XCTAssertEqual(sut.panelState, .visible)
+        // AC-FIX3-A1: no token yet — panel stays hidden
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "Widget must stay hidden on reactivation until a token arrives (AC-FIX3-A1)")
 
         fakeScheduler.fire()
-        XCTAssertEqual(sut.panelState, .visible, "Firing empty scheduler must not hide the panel")
-        XCTAssertTrue(sut.isShowingPanel)
+        XCTAssertEqual(sut.panelState, .hidden, "Firing empty scheduler must not change hidden state")
+        XCTAssertFalse(sut.isShowingPanel)
     }
 
     // MARK: - Dismiss confirmation
@@ -171,6 +185,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         fakeAlert.stubbedResult = true
 
         sut.requestDismiss()
@@ -186,6 +202,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         fakeAlert.stubbedResult = false
 
         sut.requestDismiss()
@@ -202,6 +220,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         fakeAlert.stubbedResult = true
         sut.requestDismiss()
         XCTAssertEqual(sut.panelState, .hidden)
@@ -210,6 +230,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertEqual(sut.panelState, .hidden)
 
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
         XCTAssertTrue(sut.isShowingPanel, "Panel must re-appear after dismissal scope clears")
     }
@@ -221,6 +243,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         settingsStore.coachingEnabled = false
@@ -239,12 +263,16 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
         fakeScheduler.fire()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         XCTAssertEqual(sut.panelState, .visible, "Only one observation path — no double show")
     }
@@ -254,6 +282,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         XCTAssertTrue(sut.isShowingPanel)
 
         sut.stop()
@@ -299,6 +329,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         coordinator.start()
 
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
@@ -307,6 +339,8 @@ final class FloatingPanelControllerTests: XCTestCase {
                        "M3.7.3: session end must hide immediately")
 
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
@@ -367,6 +401,8 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         await deactivateMic()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
     }
 }

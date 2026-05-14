@@ -252,6 +252,7 @@ final class SessionCoordinator: ObservableObject {
 
         probeInFlight = true
         captureState = .probing
+        captureActivityState = .probing
 
         probeCycleTask = Task { [weak self] in
             await self?.runProbeCycle(prober: prober)
@@ -306,6 +307,9 @@ final class SessionCoordinator: ObservableObject {
             // IRS=true → another app IS using the mic → resume into same session
             Logger.session.info("SessionCoordinator: IRS=true — resuming session (mic in use by another app)")
             await resumeSession(wiring: capturedWiring)
+            captureActivityState = .resuming
+            try? await Task.sleep(for: .seconds(resumingHoldDuration))
+            captureActivityState = .waiting
         } else {
             // IRS=false → no other app using mic → finalize session
             Logger.session.info("SessionCoordinator: IRS=false — finalizing session (mic is free)")
@@ -389,6 +393,7 @@ final class SessionCoordinator: ObservableObject {
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
         lastTokenArrival = nil
+        captureActivityState = .waiting
         lastEndReason = reason
         Logger.session.info("Session ended (probe-finalize): \(ended.id) reason=\(reason.rawValue) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
         for handler in endedSessionHandlers { handler(ended) }
@@ -404,6 +409,7 @@ final class SessionCoordinator: ObservableObject {
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
         lastTokenArrival = nil
+        captureActivityState = .waiting
         lastEndReason = reason
         Logger.session.info("Session ended: \(ended.id) reason=\(reason.rawValue) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
         for handler in endedSessionHandlers {

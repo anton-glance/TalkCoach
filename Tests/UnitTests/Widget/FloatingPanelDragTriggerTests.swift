@@ -110,6 +110,8 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         XCTAssertNil(
             settingsStore.position(for: "Built-in Display"),
@@ -127,9 +129,11 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         guard let panel = sut.panelWindow else {
-            return XCTFail("Panel must exist after mic activation")
+            return XCTFail("Panel must exist after first token")
         }
         panel.setFrameOrigin(CGPoint(x: 200, y: 300))
 
@@ -150,9 +154,11 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         guard let panel = sut.panelWindow else {
-            return XCTFail("Panel must exist after mic activation")
+            return XCTFail("Panel must exist after first token")
         }
 
         let initialCancelCount = fakeScheduler.cancelCallCount
@@ -187,9 +193,11 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         guard let panel = sut.panelWindow else {
-            return XCTFail("Panel must exist after mic activation")
+            return XCTFail("Panel must exist after first token")
         }
 
         sut.stop()

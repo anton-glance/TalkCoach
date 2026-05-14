@@ -21,9 +21,14 @@ struct PlaceholderWidgetView: View {
                         .monospacedDigit()
                         .foregroundStyle(.primary)
                 }
-                Text("Listening\u{2026}")
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(.secondary)
+                VStack(spacing: 2) {
+                    Text(Self.label(for: viewModel.activityState))
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(.secondary)
+                    Text("\(viewModel.totalTokens) tokens")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.tertiary)
+                }
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -42,6 +47,15 @@ struct PlaceholderWidgetView: View {
         .frame(width: 144, height: 144)
         .background(.regularMaterial) // REMOVE-IN-M5.7: replace with Liquid Glass material
         .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+    }
+
+    private static func label(for state: WidgetActivityState) -> String {
+        switch state {
+        case .waiting: return "Listening\u{2026}"
+        case .counting: return "Counting\u{2026}"
+        case .probing: return "Checking mic\u{2026}"
+        case .resuming: return "Resuming\u{2026}"
+        }
     }
 
     private static func formatElapsed(from start: Date, to now: Date) -> String {

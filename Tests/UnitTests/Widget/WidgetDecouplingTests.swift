@@ -145,7 +145,9 @@ final class WidgetDecouplingTests: XCTestCase {
         coordinator.micActivated()
         if let task = coordinator.sessionWiringTask { await task.value }
 
-        XCTAssertEqual(fpc.panelState, .visible)
+        // AC-FIX3-A1: widget stays hidden until first token
+        XCTAssertEqual(fpc.panelState, .hidden,
+                       "Widget must stay hidden on mic-on — token arrival triggers show (AC-FIX3-A1)")
 
         let tokenExp = XCTestExpectation(description: "token consumed")
         consumer.onReceiveToken = { tokenExp.fulfill() }
@@ -172,7 +174,9 @@ final class WidgetDecouplingTests: XCTestCase {
 
         coordinator.micActivated()
         await Task.yield()
-        XCTAssertEqual(fpc.panelState, .visible)
+        // AC-FIX3-A1: widget stays hidden until first token
+        XCTAssertEqual(fpc.panelState, .hidden,
+                       "Widget must stay hidden on mic-on — no token in this test (AC-FIX3-A1)")
 
         coordinator.micDeactivated()
         await Task.yield()
@@ -217,9 +221,11 @@ final class WidgetDecouplingTests: XCTestCase {
         coordinator.addConsumer(consumer)
         coordinator.micActivated()
         if let task = coordinator.sessionWiringTask { await task.value }
-        XCTAssertEqual(fpc.panelState, .visible)
+        // AC-FIX3-A1: widget stays hidden until first token
+        XCTAssertEqual(fpc.panelState, .hidden,
+                       "Widget must stay hidden on mic-on — first token triggers show (AC-FIX3-A1)")
 
-        // First token → hide timer armed
+        // First token → widget shows and hide timer armed
         let tokenExp1 = XCTestExpectation(description: "first token")
         consumer.onReceiveToken = { tokenExp1.fulfill() }
         yieldingFactory.stubbedBackend.yield(
@@ -278,7 +284,12 @@ final class WidgetDecouplingTests: XCTestCase {
 
         coordinator.micActivated()
         if let task = coordinator.sessionWiringTask { await task.value }
-        XCTAssertEqual(fpc.panelState, .visible)
+
+        // Inject token so panel becomes visible (AC-FIX3-A1: widget shows on token, not mic-on)
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.panelState, .visible,
+                       "Panel must be visible after token before dismiss test begins")
 
         // User dismisses via X-button
         fpc.requestDismiss()
@@ -321,7 +332,11 @@ final class WidgetDecouplingTests: XCTestCase {
         coordinator.start()
         coordinator.micActivated()
         if let task = coordinator.sessionWiringTask { await task.value }
-        XCTAssertEqual(fpc.panelState, .visible, "Panel must be visible after session start")
+
+        // Inject token so panel becomes visible (AC-FIX3-A1: widget shows on token, not mic-on)
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.panelState, .visible, "Panel must be visible after token before dismiss test begins")
 
         var endedSessions: [EndedSession] = []
         coordinator.onSessionEnded { session in

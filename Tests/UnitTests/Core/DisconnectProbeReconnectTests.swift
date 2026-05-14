@@ -1,4 +1,4 @@
-// swiftlint:disable file_length type_body_length
+// swiftlint:disable file_length
 import AVFAudio
 import XCTest
 @testable import TalkCoach
@@ -70,6 +70,7 @@ final class ProbeTestEngineProvider: AudioEngineProvider {
 // MARK: - DisconnectProbeReconnectTests
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class DisconnectProbeReconnectTests: XCTestCase {
 
     private func makeSUT(
@@ -112,11 +113,11 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         )
     }
 
-    // swiftlint:disable:next large_tuple
     private func makeWiringWithResume(
         stubbedLocale: String = "en-US",
         appleLocales: [String] = ["en-US"],
         resumeProvider: ProbeTestEngineProvider? = nil
+    // swiftlint:disable:next large_tuple
     ) -> (
         wiring: SessionWiring,
         engineProvider: ProbeTestEngineProvider,

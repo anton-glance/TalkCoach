@@ -130,6 +130,8 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         XCTAssertEqual(sut.panelState, .visible)
         XCTAssertTrue(sut.isShowingPanel)
@@ -146,6 +148,8 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
         let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
@@ -157,6 +161,8 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
         let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
@@ -230,6 +236,8 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         let frame = sut.currentPanelFrame!
         let clampedX = Self.builtIn.visibleFrame.maxX - 144
@@ -257,6 +265,8 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
         let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
@@ -285,6 +295,8 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
         let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
