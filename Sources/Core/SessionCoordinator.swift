@@ -512,8 +512,8 @@ final class SessionCoordinator: ObservableObject {
             Logger.session.debug("SessionCoordinator: token '\(token.token)' t=[\(token.startTime, format: .fixed(precision: 2))–\(token.endTime, format: .fixed(precision: 2))] final=\(token.isFinal)")
             sessionTokenCount += 1
             tokensInWindow += 1
-            lastTokenArrival = Date()
             let t0Ns = DispatchTime.now().uptimeNanoseconds
+            lastTokenArrival = Date()
             Logger.session.info("Token observed at coordinator: t0=\(t0Ns)ns token='\(token.token)' isFinal=\(token.isFinal)")
 
             let threshold = settingsStore.inactivityThresholdSeconds

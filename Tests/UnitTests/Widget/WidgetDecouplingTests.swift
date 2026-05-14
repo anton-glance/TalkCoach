@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import XCTest
 @testable import TalkCoach
 
@@ -41,9 +42,10 @@ private final class WidgetTestHideScheduler: HideScheduler, @unchecked Sendable 
 // MARK: - WidgetDecouplingTests
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class WidgetDecouplingTests: XCTestCase {
 
-    // swiftlint:disable:next large_tuple
+    // swiftlint:disable large_tuple
     private func makeComponents(
         inactivityTimer: any InactivityTimer = FakeInactivityTimer(),
         widgetHideDelay: TimeInterval? = nil,
@@ -78,6 +80,7 @@ final class WidgetDecouplingTests: XCTestCase {
         )
         return (coordinator, settingsStore, scheduler, fpc)
     }
+    // swiftlint:enable large_tuple
 
     // MARK: - T17: widgetHideDelaySeconds default is 4
 
