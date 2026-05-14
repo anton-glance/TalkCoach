@@ -490,8 +490,8 @@ final class SessionCoordinatorWiringTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(fakeTimer.scheduleCallCount, 1,
                                     "Timer must be armed after runSession() enters")
-        XCTAssertEqual(fakeTimer.lastScheduledTimeout, 30,
-                       "Timer must use the 30s inactivity constant (AC5 regression guard)")
+        XCTAssertEqual(fakeTimer.lastScheduledTimeout, 15,
+                       "Timer must use inactivityThresholdSeconds=15 from settings (M3.7.3 behavioral change)")
 
         fakeTimer.fireNow()
 

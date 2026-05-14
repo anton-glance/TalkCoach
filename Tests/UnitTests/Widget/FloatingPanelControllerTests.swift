@@ -138,12 +138,9 @@ final class FloatingPanelControllerTests: XCTestCase {
         await activateMic()
         await deactivateMic()
 
-        XCTAssertEqual(sut.panelState, .fadingOut)
-        XCTAssertEqual(fakeScheduler.scheduledDelay, 5.0)
-
-        fakeScheduler.fire()
-
-        XCTAssertEqual(sut.panelState, .hidden)
+        // M3.7.3: session-end now hides immediately via token-silence path; no fade timer scheduled
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "M3.7.3: session end must hide immediately — fade is driven by token-silence, not session state")
         XCTAssertFalse(sut.isShowingPanel)
     }
 
@@ -155,14 +152,15 @@ final class FloatingPanelControllerTests: XCTestCase {
         coordinator.start()
         await activateMic()
         await deactivateMic()
-        XCTAssertEqual(sut.panelState, .fadingOut)
+        // M3.7.3: session-end hides immediately — no fade timer scheduled
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "M3.7.3: session end must hide immediately; fade is driven by token-silence")
 
         await activateMic()
         XCTAssertEqual(sut.panelState, .visible)
-        XCTAssertEqual(fakeScheduler.cancelCallCount, 1)
 
         fakeScheduler.fire()
-        XCTAssertEqual(sut.panelState, .visible, "Canceled timer must not hide the panel")
+        XCTAssertEqual(sut.panelState, .visible, "Firing empty scheduler must not hide the panel")
         XCTAssertTrue(sut.isShowingPanel)
     }
 
@@ -228,11 +226,9 @@ final class FloatingPanelControllerTests: XCTestCase {
         settingsStore.coachingEnabled = false
         await Task.yield()
 
-        XCTAssertEqual(sut.panelState, .fadingOut)
-        XCTAssertEqual(fakeScheduler.scheduledDelay, 5.0)
-
-        fakeScheduler.fire()
-        XCTAssertEqual(sut.panelState, .hidden)
+        // M3.7.3: session-end (coaching disabled) now hides immediately; no fade timer
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "M3.7.3: coaching-disabled session end must hide immediately — fade is driven by token-silence")
     }
 
     // MARK: - Lifecycle idempotency
@@ -284,7 +280,9 @@ final class FloatingPanelControllerTests: XCTestCase {
         coordinator.start()
         await activateMic()
         await deactivateMic()
-        XCTAssertEqual(sut.panelState, .fadingOut)
+        // M3.7.3: session-end hides immediately
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "M3.7.3: session end must hide immediately")
 
         sut.stop()
         XCTAssertEqual(sut.panelState, .hidden)
@@ -304,33 +302,39 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
-        XCTAssertEqual(sut.panelState, .fadingOut)
+        // M3.7.3: session-end hides immediately
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "M3.7.3: session end must hide immediately")
 
         await activateMic()
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
-        XCTAssertEqual(sut.panelState, .fadingOut)
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "M3.7.3: second session end must also hide immediately")
 
+        // fire() is a no-op: nothing was scheduled by session-end
         fakeScheduler.fire()
         XCTAssertEqual(sut.panelState, .hidden)
     }
 
     // MARK: - Dismiss while fading out is no-op
 
-    func testDismissWhileFadingOutIsNoOp() async {
+    func testDismissWhileHiddenIsNoOp() async {
         makeSUT()
         sut.start()
         coordinator.start()
         await activateMic()
         await deactivateMic()
-        XCTAssertEqual(sut.panelState, .fadingOut)
+        // M3.7.3: session-end hides immediately
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "M3.7.3: session end must hide immediately")
 
         fakeAlert.stubbedResult = true
         sut.requestDismiss()
 
-        XCTAssertEqual(fakeAlert.presentCallCount, 0, "Alert must not present during fade-out")
-        XCTAssertEqual(sut.panelState, .fadingOut)
+        XCTAssertEqual(fakeAlert.presentCallCount, 0, "Alert must not present when hidden")
+        XCTAssertEqual(sut.panelState, .hidden)
     }
 
     // MARK: - Deallocation

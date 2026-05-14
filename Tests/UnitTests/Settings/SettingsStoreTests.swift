@@ -133,4 +133,48 @@ final class SettingsStoreTests: XCTestCase {
             "Value must survive across SettingsStore instances"
         )
     }
+
+    // MARK: - M3.7.3: inactivityThresholdSeconds bounds clamp (AC-1)
+
+    func testInactivityThresholdSeconds_DefaultIs15() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.inactivityThresholdSeconds, 15.0, accuracy: 0.001,
+                       "inactivityThresholdSeconds must default to 15")
+    }
+
+    func testInactivityThresholdSeconds_ClampsBelowMin() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.inactivityThresholdSeconds = 4  // below minimum of 5
+        XCTAssertEqual(store.inactivityThresholdSeconds, 5.0, accuracy: 0.001,
+                       "inactivityThresholdSeconds below 5 must be clamped to 5 (BC-1)")
+    }
+
+    func testInactivityThresholdSeconds_ClampsAboveMax() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.inactivityThresholdSeconds = 121  // above maximum of 120
+        XCTAssertEqual(store.inactivityThresholdSeconds, 120.0, accuracy: 0.001,
+                       "inactivityThresholdSeconds above 120 must be clamped to 120 (BC-2)")
+    }
+
+    // MARK: - M3.7.3: widgetHideDelaySeconds bounds clamp (AC-2)
+
+    func testWidgetHideDelaySeconds_DefaultIs4() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.widgetHideDelaySeconds, 4.0, accuracy: 0.001,
+                       "widgetHideDelaySeconds must default to 4")
+    }
+
+    func testWidgetHideDelaySeconds_ClampsBelowMin() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.widgetHideDelaySeconds = 0  // below minimum of 1
+        XCTAssertEqual(store.widgetHideDelaySeconds, 1.0, accuracy: 0.001,
+                       "widgetHideDelaySeconds below 1 must be clamped to 1 (BC-3)")
+    }
+
+    func testWidgetHideDelaySeconds_ClampsAboveMax() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.widgetHideDelaySeconds = 31  // above maximum of 30
+        XCTAssertEqual(store.widgetHideDelaySeconds, 30.0, accuracy: 0.001,
+                       "widgetHideDelaySeconds above 30 must be clamped to 30 (BC-4)")
+    }
 }

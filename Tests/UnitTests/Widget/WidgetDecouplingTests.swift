@@ -1,0 +1,217 @@
+import XCTest
+@testable import TalkCoach
+
+// MARK: - Test doubles (private to this file — distinct from FloatingPanelControllerTests versions)
+
+private final class WidgetTestAlertPresenter: AlertPresenter, @unchecked Sendable {
+    @MainActor func presentDismissConfirmation() -> Bool { false }
+}
+
+private final class WidgetTestHideScheduler: HideScheduler, @unchecked Sendable {
+    nonisolated(unsafe) private(set) var scheduledActions: [(@MainActor @Sendable () -> Void)] = []
+    nonisolated(unsafe) private(set) var scheduledDelays: [TimeInterval] = []
+    nonisolated(unsafe) private(set) var cancelCallCount = 0
+
+    var lastScheduledDelay: TimeInterval? { scheduledDelays.last }
+
+    @MainActor func schedule(
+        delay: TimeInterval,
+        action: @escaping @MainActor @Sendable () -> Void
+    ) -> HideSchedulerToken {
+        scheduledDelays.append(delay)
+        scheduledActions.append(action)
+        return HideSchedulerToken()
+    }
+
+    @MainActor func cancel(_ token: HideSchedulerToken) {
+        cancelCallCount += 1
+    }
+
+    @MainActor func fireLast() {
+        guard let action = scheduledActions.last else { return }
+        scheduledActions.removeLast()
+        action()
+    }
+}
+
+// MARK: - WidgetDecouplingTests
+
+@MainActor
+final class WidgetDecouplingTests: XCTestCase {
+
+    private func makeComponents(
+        inactivityTimer: any InactivityTimer = FakeInactivityTimer(),
+        widgetHideDelay: TimeInterval? = nil
+    ) -> (
+        coordinator: SessionCoordinator,
+        settingsStore: SettingsStore,
+        scheduler: WidgetTestHideScheduler,
+        fpc: FloatingPanelController
+    ) {
+        let suiteName = "WidgetDecouple.\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(true, forKey: "coachingEnabled")
+        let settingsStore = SettingsStore(userDefaults: defaults)
+        if let delay = widgetHideDelay {
+            settingsStore.widgetHideDelaySeconds = delay
+        }
+        let micMonitor = MicMonitor(provider: MinimalCoreAudioProvider())
+        let coordinator = SessionCoordinator(
+            micMonitor: micMonitor,
+            settingsStore: settingsStore,
+            inactivityTimer: inactivityTimer
+        )
+        let scheduler = WidgetTestHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coordinator,
+            alertPresenter: WidgetTestAlertPresenter(),
+            hideScheduler: scheduler,
+            settingsStore: settingsStore
+        )
+        return (coordinator, settingsStore, scheduler, fpc)
+    }
+
+    // MARK: - T17: widgetHideDelaySeconds default is 4
+
+    func testWidgetHideDelaySeconds_DefaultIs4() {
+        let suiteName = "WD-default.\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = SettingsStore(userDefaults: defaults)
+        XCTAssertEqual(store.widgetHideDelaySeconds, 4.0, accuracy: 0.001,
+                       "widgetHideDelaySeconds must default to 4.0 seconds (AC-2)")
+    }
+
+    // MARK: - T18: inactivityThresholdSeconds default is 15
+
+    func testInactivityThresholdSeconds_DefaultIs15() {
+        let suiteName = "IT-default.\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let store = SettingsStore(userDefaults: defaults)
+        XCTAssertEqual(store.inactivityThresholdSeconds, 15.0, accuracy: 0.001,
+                       "inactivityThresholdSeconds must default to 15.0 seconds (AC-1)")
+    }
+
+    // MARK: - T19: Token arrival → hide scheduler armed with widgetHideDelaySeconds
+
+    func testTokenArrival_ArmsHideScheduler_WithWidgetHideDelaySetting() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let (coordinator, _, scheduler, fpc) = makeComponents(
+            inactivityTimer: fakeTimer,
+            widgetHideDelay: 7.0
+        )
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let engineProvider = ProbeTestEngineProvider()
+        let pipeline = AudioPipeline(provider: engineProvider)
+        let fakeLD = FakeLanguageDetector()
+        let locales = FakeSupportedLocalesProvider()
+        locales.locales = [Locale(identifier: "en-US")]
+
+        let wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: yieldingFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: locales,
+            resumePipelineProvider: nil
+        )
+        coordinator.wiring = wiring
+
+        fpc.start()
+        coordinator.start()
+
+        let consumer = FakeTokenConsumer()
+        coordinator.addConsumer(consumer)
+        coordinator.micActivated()
+        if let task = coordinator.sessionWiringTask { await task.value }
+
+        XCTAssertEqual(fpc.panelState, .visible)
+
+        let tokenExp = XCTestExpectation(description: "token consumed")
+        consumer.onReceiveToken = { tokenExp.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp], timeout: 2.0)
+
+        // FPC must have scheduled a hide via lastTokenArrival subscription
+        XCTAssertNotNil(scheduler.lastScheduledDelay,
+                        "Hide scheduler must be armed on token arrival (token-silence decoupling)")
+        if let delay = scheduler.lastScheduledDelay {
+            XCTAssertEqual(delay, 7.0, accuracy: 0.001,
+                           "Hide delay must use widgetHideDelaySeconds=7.0, not hardcoded 5.0 (AC-5)")
+        }
+    }
+
+    // MARK: - T20: Session end without tokens → widget hides immediately (no fade)
+
+    func testSessionEnd_WithoutPriorTokens_HidesWidget_Immediately() async {
+        let (coordinator, _, scheduler, fpc) = makeComponents()
+        fpc.start()
+        coordinator.start()
+
+        coordinator.micActivated()
+        await Task.yield()
+        XCTAssertEqual(fpc.panelState, .visible)
+
+        coordinator.micDeactivated()
+        await Task.yield()
+
+        // Widget must not remain visible after session ends
+        XCTAssertNotEqual(fpc.panelState, .visible,
+                          "Panel must not remain visible after session ends with no tokens (AC-5)")
+        // And no fade timer should have been scheduled (session-end is now immediate hide)
+        // since token-silence timer is the primary hide mechanism
+        XCTAssertEqual(scheduler.scheduledDelays.count, 0,
+                       "Session end without tokens must hide immediately, not schedule a fade")
+    }
+
+    // MARK: - T21: FPC subscribes to sessionCoordinator.$lastTokenArrival
+
+    func testFPC_Subscribes_ToLastTokenArrival_OnStart() async throws {
+        let fakeTimer = FakeInactivityTimer()
+        let (coordinator, _, scheduler, fpc) = makeComponents(
+            inactivityTimer: fakeTimer,
+            widgetHideDelay: 6.0
+        )
+
+        let yieldingFactory = YieldingAppleBackendFactory()
+        let engineProvider = ProbeTestEngineProvider()
+        let pipeline = AudioPipeline(provider: engineProvider)
+        let fakeLD = FakeLanguageDetector()
+        let locales = FakeSupportedLocalesProvider()
+        locales.locales = [Locale(identifier: "en-US")]
+
+        let wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: yieldingFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: locales,
+            resumePipelineProvider: nil
+        )
+        coordinator.wiring = wiring
+
+        fpc.start()
+
+        let consumer = FakeTokenConsumer()
+        coordinator.addConsumer(consumer)
+        coordinator.micActivated()
+        if let task = coordinator.sessionWiringTask { await task.value }
+
+        let countBefore = scheduler.scheduledDelays.count
+
+        let tokenExp = XCTestExpectation(description: "token consumed")
+        consumer.onReceiveToken = { tokenExp.fulfill() }
+        yieldingFactory.stubbedBackend.yield(
+            TranscribedToken(token: "test", startTime: 0, endTime: 0.3, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp], timeout: 2.0)
+
+        XCTAssertGreaterThan(scheduler.scheduledDelays.count, countBefore,
+                             "FPC must react to lastTokenArrival changes and schedule the hide timer (Combine subscription)")
+    }
+}
