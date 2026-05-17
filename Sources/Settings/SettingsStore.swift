@@ -16,6 +16,7 @@ final class SettingsStore: ObservableObject {
         static let widgetLastUsedDisplay = "widgetLastUsedDisplay"
         static let inactivityThresholdSeconds = "inactivityThresholdSeconds"
         static let widgetHideDelaySeconds = "widgetHideDelaySeconds"
+        static let probePollIntervalSeconds = "probePollIntervalSeconds"
     }
 
     private let userDefaults: UserDefaults
@@ -98,6 +99,15 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var probePollIntervalSeconds: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(0.5, min(5.0, probePollIntervalSeconds))
+            if clamped != probePollIntervalSeconds { probePollIntervalSeconds = clamped; return }
+            userDefaults.set(probePollIntervalSeconds, forKey: Keys.probePollIntervalSeconds)
+        }
+    }
+
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
 
@@ -125,6 +135,8 @@ final class SettingsStore: ObservableObject {
         self.inactivityThresholdSeconds = max(5, min(120, rawThreshold))
         let rawHideDelay = userDefaults.object(forKey: Keys.widgetHideDelaySeconds) as? Double ?? 4.0
         self.widgetHideDelaySeconds = max(1, min(30, rawHideDelay))
+        let rawPollInterval = userDefaults.object(forKey: Keys.probePollIntervalSeconds) as? Double ?? 1.0
+        self.probePollIntervalSeconds = max(0.5, min(5.0, rawPollInterval))
 
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -214,6 +226,9 @@ final class SettingsStore: ObservableObject {
 
         let newHideDelay = max(1, min(30, userDefaults.object(forKey: Keys.widgetHideDelaySeconds) as? Double ?? 4.0))
         if newHideDelay != widgetHideDelaySeconds { widgetHideDelaySeconds = newHideDelay }
+
+        let newPollInterval = max(0.5, min(5.0, userDefaults.object(forKey: Keys.probePollIntervalSeconds) as? Double ?? 1.0))
+        if newPollInterval != probePollIntervalSeconds { probePollIntervalSeconds = newPollInterval }
 
         syncPositionsFromDefaults()
     }

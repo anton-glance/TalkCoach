@@ -25,10 +25,10 @@ struct SettingsView: View {
 
             Section {
                 Stepper(
-                    "Inactivity timeout: \(Int(settingsStore.inactivityThresholdSeconds))s",
-                    value: $settingsStore.inactivityThresholdSeconds,
-                    in: 5...120,
-                    step: 1
+                    "Mic poll interval: \(String(format: "%.1f", settingsStore.probePollIntervalSeconds))s",
+                    value: $settingsStore.probePollIntervalSeconds,
+                    in: 0.5...5.0,
+                    step: 0.5
                 )
                 Stepper(
                     "Widget hide delay: \(Int(settingsStore.widgetHideDelaySeconds))s",
@@ -39,7 +39,7 @@ struct SettingsView: View {
             } header: {
                 Text("Session Behavior")
             } footer: {
-                Text("Inactivity timeout: how long Locto waits in silence before checking if another app is using the mic. Default 15s.\nWidget hide delay: how long the widget stays visible after the last word before fading out. Default 4s.")
+                Text("Mic poll interval: how often Locto checks whether another app has claimed the mic. Default 1s.\nWidget hide delay: how long the widget stays visible after the last word before fading out. Default 4s.")
             }
 
             Section("Filler Words") {

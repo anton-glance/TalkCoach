@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionCoordinator = SessionCoordinator(
             micMonitor: micMonitor,
             settingsStore: settingsStore,
-            micProber: SystemMicAvailabilityProber(),
+            audioProcessProber: SystemAudioProcessProber(),
             systemEventObserver: SystemEventObserver()
         )
         floatingPanelController = FloatingPanelController(
@@ -78,8 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             languageDetector: languageDetector,
             appleBackendFactory: SystemAppleBackendFactory(),
             parakeetBackendFactory: PlaceholderParakeetBackendFactory(supportedLocaleIdentifiers: []),
-            supportedLocalesProvider: SystemSupportedLocalesProvider(),
-            resumePipelineProvider: SystemAudioEngineProvider()
+            supportedLocalesProvider: SystemSupportedLocalesProvider()
         )
 
         floatingPanelController.start()

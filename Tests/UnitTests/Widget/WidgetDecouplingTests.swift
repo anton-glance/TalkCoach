@@ -54,7 +54,6 @@ final class WidgetDecouplingTests: XCTestCase {
 
     // swiftlint:disable large_tuple
     private func makeComponents(
-        inactivityTimer: any InactivityTimer = FakeInactivityTimer(),
         widgetHideDelay: TimeInterval? = nil,
         alertPresenter: (any AlertPresenter)? = nil
     ) -> (
@@ -74,8 +73,7 @@ final class WidgetDecouplingTests: XCTestCase {
         let micMonitor = MicMonitor(provider: MinimalCoreAudioProvider())
         let coordinator = SessionCoordinator(
             micMonitor: micMonitor,
-            settingsStore: settingsStore,
-            inactivityTimer: inactivityTimer
+            settingsStore: settingsStore
         )
         let scheduler = WidgetTestHideScheduler()
         let resolvedPresenter = alertPresenter ?? WidgetTestAlertPresenter()
@@ -114,11 +112,7 @@ final class WidgetDecouplingTests: XCTestCase {
     // MARK: - T19: Token arrival → hide scheduler armed with widgetHideDelaySeconds
 
     func testTokenArrival_ArmsHideScheduler_WithWidgetHideDelaySetting() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (coordinator, _, scheduler, fpc) = makeComponents(
-            inactivityTimer: fakeTimer,
-            widgetHideDelay: 7.0
-        )
+        let (coordinator, _, scheduler, fpc) = makeComponents(widgetHideDelay: 7.0)
 
         let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
@@ -132,8 +126,7 @@ final class WidgetDecouplingTests: XCTestCase {
             languageDetector: fakeLD,
             appleBackendFactory: yieldingFactory,
             parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales,
-            resumePipelineProvider: nil
+            supportedLocalesProvider: locales
         )
         coordinator.wiring = wiring
 
@@ -193,11 +186,7 @@ final class WidgetDecouplingTests: XCTestCase {
     // MARK: - T-FIX-1: Widget reshows on token arrival after silence-hide (AC-FIX-1)
 
     func testWidgetReshowsOnTokenArrival_AfterSilenceHide() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (coordinator, _, scheduler, fpc) = makeComponents(
-            inactivityTimer: fakeTimer,
-            widgetHideDelay: 4.0
-        )
+        let (coordinator, _, scheduler, fpc) = makeComponents(widgetHideDelay: 4.0)
 
         let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
@@ -257,9 +246,7 @@ final class WidgetDecouplingTests: XCTestCase {
     // MARK: - T-FIX-2: Widget does not reshow after X-button dismiss (AC-FIX-2)
 
     func testWidgetDoesNotReshow_AfterDismiss() async throws {
-        let fakeTimer = FakeInactivityTimer()
         let (coordinator, _, _, fpc) = makeComponents(
-            inactivityTimer: fakeTimer,
             widgetHideDelay: 4.0,
             alertPresenter: ConfirmingWidgetAlertPresenter()
         )
@@ -306,9 +293,7 @@ final class WidgetDecouplingTests: XCTestCase {
     // MARK: - T-FIX2-1: X-button dismiss finalizes session immediately (AC-FIX2-1)
 
     func testRequestDismiss_FinalizesSession_OnConfirmedDismiss() async throws {
-        let fakeTimer = FakeInactivityTimer()
         let (coordinator, _, _, fpc) = makeComponents(
-            inactivityTimer: fakeTimer,
             widgetHideDelay: 4.0,
             alertPresenter: ConfirmingWidgetAlertPresenter()
         )
@@ -435,11 +420,7 @@ final class WidgetDecouplingTests: XCTestCase {
     // MARK: - T-FIX3-B1: activityState .waiting → .counting on token, reverts after 1.5s (AC-FIX3-B1)
 
     func testActivityState_TransitionsToCountingOnToken_AndWaitingAfter1500ms() async {
-        let fakeTimer = FakeInactivityTimer()
-        let (coordinator, _, scheduler, fpc) = makeComponents(
-            inactivityTimer: fakeTimer,
-            widgetHideDelay: 4.0
-        )
+        let (coordinator, _, scheduler, fpc) = makeComponents(widgetHideDelay: 4.0)
 
         fpc.start()
         coordinator.start()
@@ -465,8 +446,7 @@ final class WidgetDecouplingTests: XCTestCase {
     // MARK: - T-FIX3-B3: totalTokens increments per token, resets on session end (AC-FIX3-B3)
 
     func testTotalTokens_IncrementsPerToken_ResetsOnSessionEnd() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (coordinator, _, _, fpc) = makeComponents(inactivityTimer: fakeTimer)
+        let (coordinator, _, _, fpc) = makeComponents()
 
         let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
@@ -523,11 +503,7 @@ final class WidgetDecouplingTests: XCTestCase {
     // MARK: - T21: FPC subscribes to sessionCoordinator.$lastTokenArrival
 
     func testFPC_Subscribes_ToLastTokenArrival_OnStart() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (coordinator, _, scheduler, fpc) = makeComponents(
-            inactivityTimer: fakeTimer,
-            widgetHideDelay: 6.0
-        )
+        let (coordinator, _, scheduler, fpc) = makeComponents(widgetHideDelay: 6.0)
 
         let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
@@ -541,8 +517,7 @@ final class WidgetDecouplingTests: XCTestCase {
             languageDetector: fakeLD,
             appleBackendFactory: yieldingFactory,
             parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales,
-            resumePipelineProvider: nil
+            supportedLocalesProvider: locales
         )
         coordinator.wiring = wiring
 

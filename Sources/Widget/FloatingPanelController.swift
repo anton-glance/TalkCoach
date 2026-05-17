@@ -383,19 +383,13 @@ final class FloatingPanelController {
     // MARK: - Capture Activity State
 
     private func handleCaptureActivityStateChange(_ newState: CaptureActivityState) {
+        // CaptureActivityState has only .waiting in the M3.7.3-fix5 redesign;
+        // the probe/resume cycle is replaced by the 1Hz HAL process-list poll.
         switch newState {
-        case .probing:
-            viewModel.activityState = .probing
-            Logger.floatingPanel.info("activity state: probing (capture state change)")
-        case .resuming:
-            viewModel.activityState = .resuming
-            Logger.floatingPanel.info("activity state: resuming (capture state change)")
         case .waiting:
-            // .waiting from coordinator means probe/resume cycle ended; revert to .waiting
-            // only if we're not actively counting tokens.
             if viewModel.activityState == .probing || viewModel.activityState == .resuming {
                 viewModel.activityState = .waiting
-                Logger.floatingPanel.info("activity state: waiting (probe/resume cycle ended)")
+                Logger.floatingPanel.info("activity state: waiting")
             }
         }
     }

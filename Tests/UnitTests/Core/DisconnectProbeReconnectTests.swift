@@ -1,21 +1,6 @@
-// swiftlint:disable file_length
 import AVFAudio
 import XCTest
 @testable import TalkCoach
-
-// MARK: - FakeMicAvailabilityProber
-
-final class FakeMicAvailabilityProber: MicAvailabilityProbing, @unchecked Sendable {
-    nonisolated(unsafe) var stubbedResult: Bool = false
-    nonisolated(unsafe) var probeCallCount = 0
-    nonisolated(unsafe) var onProbe: (() -> Void)?
-
-    func probe() async -> Bool {
-        probeCallCount += 1
-        onProbe?()
-        return stubbedResult
-    }
-}
 
 // MARK: - FakeSystemEventObserver
 
@@ -70,13 +55,11 @@ final class ProbeTestEngineProvider: AudioEngineProvider {
 // MARK: - DisconnectProbeReconnectTests
 
 @MainActor
-// swiftlint:disable:next type_body_length
 final class DisconnectProbeReconnectTests: XCTestCase {
 
     private func makeSUT(
         coachingEnabled: Bool = true,
-        inactivityTimer: any InactivityTimer = FakeInactivityTimer(),
-        micProber: (any MicAvailabilityProbing)? = nil
+        audioProcessProber: (any AudioProcessProber)? = nil
     ) -> (sut: SessionCoordinator, defaults: UserDefaults) {
         let suiteName = "ProbeTests.\(UUID())"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -87,15 +70,12 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         let sut = SessionCoordinator(
             micMonitor: micMonitor,
             settingsStore: settingsStore,
-            inactivityTimer: inactivityTimer,
-            micProber: micProber
+            audioProcessProber: audioProcessProber
         )
         return (sut, defaults)
     }
 
     private func makeSUTWithObserver(
-        inactivityTimer: any InactivityTimer = FakeInactivityTimer(),
-        micProber: (any MicAvailabilityProbing)? = nil,
         systemEventObserver: any SystemEventObserving
     ) -> SessionCoordinator {
         let suiteName = "ObserverTests.\(UUID())"
@@ -107,246 +87,28 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         return SessionCoordinator(
             micMonitor: micMonitor,
             settingsStore: settingsStore,
-            inactivityTimer: inactivityTimer,
-            micProber: micProber,
             systemEventObserver: systemEventObserver
         )
     }
 
-    private func makeWiringWithResume(
+    private func makeWiring(
         stubbedLocale: String = "en-US",
-        appleLocales: [String] = ["en-US"],
-        resumeProvider: ProbeTestEngineProvider? = nil
-    // swiftlint:disable:next large_tuple
-    ) -> (
-        wiring: SessionWiring,
-        engineProvider: ProbeTestEngineProvider,
-        fakeLD: FakeLanguageDetector,
-        resumeProvider: ProbeTestEngineProvider
-    ) {
+        appleLocales: [String] = ["en-US"]
+    ) -> (wiring: SessionWiring, engineProvider: ProbeTestEngineProvider, fakeLD: FakeLanguageDetector) {
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
         fakeLD.stubbedLocale = Locale(identifier: stubbedLocale)
-
         let localesProvider = FakeSupportedLocalesProvider()
         localesProvider.locales = appleLocales.map { Locale(identifier: $0) }
-
-        let resolvedResumeProvider = resumeProvider ?? ProbeTestEngineProvider()
-
         let wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
             appleBackendFactory: TestAppleBackendFactory(),
             parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: localesProvider,
-            resumePipelineProvider: resolvedResumeProvider
+            supportedLocalesProvider: localesProvider
         )
-        return (wiring, engineProvider, fakeLD, resolvedResumeProvider)
-    }
-
-    // MARK: - T1: inactivityThresholdSeconds from settings (not hardcoded 30)
-
-    func testInactivityThreshold_UsesSetting_NotHardcoded30() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer)
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        XCTAssertEqual(fakeTimer.lastScheduledTimeout, 15,
-                       "Timer must use inactivityThresholdSeconds=15 from settings, not hardcoded 30")
-    }
-
-    // MARK: - T2: IRS=false → session finalized after probe
-
-    func testProbe_IRSFalse_FinalizesSession() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = false // IRS=false → no other app using mic → finalize
-
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: prober)
-
-        var endedSessions: [EndedSession] = []
-        sut.onSessionEnded { endedSessions.append($0) }
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        let probeExp = XCTestExpectation(description: "session finalized after IRS=false probe")
-        sut.onSessionEnded { _ in probeExp.fulfill() }
-        fakeTimer.fireNow()
-        await fulfillment(of: [probeExp], timeout: 3.0)
-
-        XCTAssertGreaterThanOrEqual(prober.probeCallCount, 1, "Probe must be invoked")
-        XCTAssertEqual(sut.state, .idle,
-                       "Session must finalize when IRS=false (no other app is using the mic)")
-    }
-
-    // MARK: - T3: IRS=true → session resumed, state still .active, same session ID
-
-    func testProbe_IRSTrue_ResumesSession_StateRemainsActive() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = true // IRS=true → another app IS using mic → resume
-
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: prober)
-
-        var endedCount = 0
-        sut.onSessionEnded { _ in endedCount += 1 }
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        let originalID: UUID
-        if case .active(let ctx) = sut.state {
-            originalID = ctx.id
-        } else {
-            XCTFail("Must be active before probe"); return
-        }
-
-        fakeTimer.fireNow()
-        try await Task.sleep(for: .milliseconds(500))
-
-        if case .active(let ctx) = sut.state {
-            XCTAssertEqual(ctx.id, originalID,
-                           "Session ID must be preserved across probe+resume (AC-9)")
-        } else {
-            XCTFail("Session must remain .active when IRS=true (another app is using the mic)")
-        }
-        XCTAssertEqual(endedCount, 0, "onSessionEnded must NOT fire when IRS=true")
-    }
-
-    // MARK: - T4: probeInFlight guard — micDeactivated() is no-op during probe
-
-    func testMicDeactivated_IsNoOp_WhileProbeInFlight() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = true // probe resolves to resume
-
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: prober)
-
-        var endedCount = 0
-        sut.onSessionEnded { _ in endedCount += 1 }
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        fakeTimer.fireNow()
-        // Immediately call micDeactivated() while probe is logically in flight.
-        // probeInFlight guard must suppress this call.
-        sut.micDeactivated()
-        try await Task.sleep(for: .milliseconds(500))
-
-        // Probe resolved IRS=true → resume. micDeactivated() was no-op.
-        XCTAssertEqual(endedCount, 0,
-                       "micDeactivated() during probe must be a no-op — probeInFlight guard must engage (AC-10)")
-    }
-
-    // MARK: - T5: Resume creates new AudioPipeline via resumePipelineProvider
-
-    func testResume_CreatesNewPipeline_ViaResumePipelineProvider() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = true
-
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: prober)
-
-        let resumeProvider = ProbeTestEngineProvider()
-        let (wiring, _, _, _) = makeWiringWithResume(resumeProvider: resumeProvider)
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        fakeTimer.fireNow()
-        try await Task.sleep(for: .milliseconds(600))
-
-        XCTAssertTrue(resumeProvider.callLog.contains("start"),
-                      "Resume must use resumePipelineProvider to create new AudioPipeline; log=\(resumeProvider.callLog)")
-    }
-
-    // MARK: - T6: Resume skips LD.start(), uses cached locale
-
-    func testResume_SkipsLanguageDetector_UsesCachedLocale() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = true
-
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: prober)
-
-        let (wiring, _, fakeLD, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        let ldCallsAfterInit = fakeLD.startCallCount
-
-        fakeTimer.fireNow()
-        try await Task.sleep(for: .milliseconds(500))
-
-        XCTAssertEqual(fakeLD.startCallCount, ldCallsAfterInit,
-                       "LD.start() must NOT be called on resume — cached locale must be reused (AC-11)")
-    }
-
-    // MARK: - T7: HAL settling wait ≥100ms before probe() is called
-
-    func testHALSettlingWait_AtLeast100ms_BeforeProbe() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = false
-
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: prober)
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        let fireTime = Date()
-        let probeCalledExp = XCTestExpectation(description: "probe() called")
-        var probeCallTime: Date?
-        prober.onProbe = {
-            probeCallTime = Date()
-            probeCalledExp.fulfill()
-        }
-
-        fakeTimer.fireNow()
-        await fulfillment(of: [probeCalledExp], timeout: 3.0)
-
-        let elapsedMs = probeCallTime!.timeIntervalSince(fireTime) * 1000
-        XCTAssertGreaterThanOrEqual(elapsedMs, 100.0,
-                                    "probe() must not be called until ≥100ms after timer fires (HAL settling, Spike #13.5); elapsed=\(Int(elapsedMs))ms")
-    }
-
-    // MARK: - T8: No micProber → inactivity directly finalizes (backward compat)
-    // Wiring must be set for the timer to be scheduled (timer arms inside runSession).
-    // With wiring but no micProber, timer fires → direct finalize (no probe).
-
-    func testNoProber_InactivityTimer_DirectlyFinalizesSession() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: nil)
-
-        var endedCount = 0
-        sut.onSessionEnded { _ in endedCount += 1 }
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        fakeTimer.fireNow()
-
-        XCTAssertEqual(endedCount, 1,
-                       "Without a micProber, inactivity must directly finalize the session (backward compat)")
-        XCTAssertEqual(sut.state, .idle)
+        return (wiring, engineProvider, fakeLD)
     }
 
     // MARK: - T9: requestFinalize() ends active session
@@ -382,18 +144,13 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     // MARK: - T10: System sleep finalizes active session
 
     func testSystemSleep_FinalizesActiveSession() async throws {
-        let fakeTimer = FakeInactivityTimer()
         let fakeObserver = FakeSystemEventObserver()
-        let sut = makeSUTWithObserver(
-            inactivityTimer: fakeTimer,
-            micProber: nil,
-            systemEventObserver: fakeObserver
-        )
+        let sut = makeSUTWithObserver(systemEventObserver: fakeObserver)
 
         var endedSessions: [EndedSession] = []
         sut.onSessionEnded { endedSessions.append($0) }
 
-        let (wiring, _, _, _) = makeWiringWithResume()
+        let (wiring, _, _) = makeWiring()
         sut.wiring = wiring
         sut.start()
         sut.micActivated()
@@ -410,18 +167,13 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     // MARK: - T11: System shutdown finalizes active session
 
     func testSystemShutdown_FinalizesActiveSession() async throws {
-        let fakeTimer = FakeInactivityTimer()
         let fakeObserver = FakeSystemEventObserver()
-        let sut = makeSUTWithObserver(
-            inactivityTimer: fakeTimer,
-            micProber: nil,
-            systemEventObserver: fakeObserver
-        )
+        let sut = makeSUTWithObserver(systemEventObserver: fakeObserver)
 
         var endedSessions: [EndedSession] = []
         sut.onSessionEnded { endedSessions.append($0) }
 
-        let (wiring, _, _, _) = makeWiringWithResume()
+        let (wiring, _, _) = makeWiring()
         sut.wiring = wiring
         sut.start()
         sut.micActivated()
@@ -451,8 +203,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     // MARK: - T13: lastTokenArrival is nil initially, set after first token
 
     func testLastTokenArrival_NilInitially_ThenSetsOnToken() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer)
+        let (sut, _) = makeSUT()
 
         let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
@@ -466,8 +217,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
             languageDetector: fakeLD,
             appleBackendFactory: yieldingFactory,
             parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales,
-            resumePipelineProvider: nil
+            supportedLocalesProvider: locales
         )
         sut.wiring = wiring
 
@@ -493,8 +243,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     // MARK: - T14: lastTokenArrival resets to nil after session ends
 
     func testLastTokenArrival_ResetsToNil_AfterSessionEnds() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer)
+        let (sut, _) = makeSUT()
 
         let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
@@ -508,8 +257,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
             languageDetector: fakeLD,
             appleBackendFactory: yieldingFactory,
             parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales,
-            resumePipelineProvider: nil
+            supportedLocalesProvider: locales
         )
         sut.wiring = wiring
 
@@ -546,33 +294,6 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         record.effectiveSpeakingDuration = 42.5
         XCTAssertEqual(record.effectiveSpeakingDuration, 42.5, accuracy: 0.001,
                        "effectiveSpeakingDuration must exist and be mutable on SessionRecord (AC-16)")
-    }
-
-    // MARK: - T16: stop() during probe does not double-finalize session
-
-    func testStop_DuringProbe_DoesNotDoubleFinalizeSession() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = false
-
-        let (sut, _) = makeSUT(inactivityTimer: fakeTimer, micProber: prober)
-
-        var endedCount = 0
-        sut.onSessionEnded { _ in endedCount += 1 }
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.start()
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        fakeTimer.fireNow()
-        sut.stop()
-        try await Task.sleep(for: .milliseconds(500))
-
-        XCTAssertLessThanOrEqual(endedCount, 1,
-                                 "Session must not be finalized more than once (stop + probe race)")
-        XCTAssertEqual(sut.state, .idle)
     }
 
     // MARK: - T-FIX-4: Session-end reason is structured and correct per trigger source (AC-FIX-5)
@@ -628,46 +349,5 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         sut.micDeactivated()
         XCTAssertEqual(sut.lastEndReason, .micOffListener,
                        "micDeactivated must record reason .micOffListener")
-    }
-
-    // MARK: - T-FIX3-B2: captureActivityState transitions probing → resuming → waiting (AC-FIX3-B2)
-
-    func testActivityState_TransitionsToProbingThenResuming() async throws {
-        let fakeTimer = FakeInactivityTimer()
-        let prober = FakeMicAvailabilityProber()
-        prober.stubbedResult = true // IRS=true → resume
-
-        let suiteName = "CaptureActivity.\(UUID())"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults.set(true, forKey: "coachingEnabled")
-        let settingsStore = SettingsStore(userDefaults: defaults)
-        let micMonitor = MicMonitor(provider: MinimalCoreAudioProvider())
-        let sut = SessionCoordinator(
-            micMonitor: micMonitor,
-            settingsStore: settingsStore,
-            inactivityTimer: fakeTimer,
-            micProber: prober,
-            resumingHoldDuration: 0.1
-        )
-
-        let (wiring, _, _, _) = makeWiringWithResume()
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        XCTAssertEqual(sut.captureActivityState, .waiting,
-                       "captureActivityState must start as .waiting (AC-FIX3-B2)")
-
-        fakeTimer.fireNow()
-        // handleInactivityTimeout sets captureActivityState = .probing synchronously before async task
-        XCTAssertEqual(sut.captureActivityState, .probing,
-                       "captureActivityState must be .probing immediately after inactivity fires (AC-FIX3-B2)")
-
-        // Wait past HAL settling (100ms) + probe + resumeSession + resumingHoldDuration (100ms)
-        try await Task.sleep(for: .milliseconds(800))
-
-        XCTAssertEqual(sut.captureActivityState, .waiting,
-                       "captureActivityState must return to .waiting after resume hold completes (AC-FIX3-B2)")
     }
 }
