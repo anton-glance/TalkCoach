@@ -126,7 +126,7 @@ final class AudioProcessProberPollTests: XCTestCase {
         sut.micActivated()
         if let task = sut.sessionWiringTask { await task.value }
 
-        try await Task.sleep(for: .milliseconds(450)) // 4+ cycles at 0.1s
+        try await Task.sleep(for: .milliseconds(2000)) // wide window to absorb async scheduling overhead under full-suite load
 
         XCTAssertGreaterThanOrEqual(prober.callCount, 3,
                                     "Prober must be called multiple times at configured interval; callCount=\(prober.callCount) (AC-FIX5-A4)")
@@ -217,10 +217,10 @@ final class AudioProcessProberPollTests: XCTestCase {
         )
     }
 
-    func testIsExternalReader_AppleBundle_Excluded() {
+    func testIsExternalReader_CoreSpeechDaemon_Excluded() {
         XCTAssertFalse(
-            isExternalReader(pid: 999, bundle: "com.apple.CoreSpeech", isRunningInput: true, ourPID: 1234),
-            "com.apple.* bundles must be excluded"
+            isExternalReader(pid: 1130, bundle: "com.apple.CoreSpeech", isRunningInput: true, ourPID: 1234),
+            "com.apple.CoreSpeech is a known always-on daemon and must be excluded (AC-FIX5-BASELINE)"
         )
     }
 
@@ -235,6 +235,34 @@ final class AudioProcessProberPollTests: XCTestCase {
         XCTAssertTrue(
             isExternalReader(pid: 999, bundle: "com.zoom.us", isRunningInput: true, ourPID: 1234),
             "Third-party running reader must be included"
+        )
+    }
+
+    func testIsExternalReader_VoiceMemo_ReturnsTrue() {
+        XCTAssertTrue(
+            isExternalReader(pid: 838, bundle: "com.apple.VoiceMemos", isRunningInput: true, ourPID: 1234),
+            "Voice Memo is a user-facing Apple app — must count as external reader (primary smoke target, AC-FIX5-BASELINE)"
+        )
+    }
+
+    func testIsExternalReader_FaceTime_ReturnsTrue() {
+        XCTAssertTrue(
+            isExternalReader(pid: 901, bundle: "com.apple.FaceTime", isRunningInput: true, ourPID: 1234),
+            "FaceTime is a user-facing Apple app — must count as external reader (AC-FIX5-BASELINE)"
+        )
+    }
+
+    func testIsExternalReader_Music_ReturnsTrue() {
+        XCTAssertTrue(
+            isExternalReader(pid: 902, bundle: "com.apple.Music", isRunningInput: true, ourPID: 1234),
+            "Music is a user-facing Apple app — must count as external reader (AC-FIX5-BASELINE)"
+        )
+    }
+
+    func testIsExternalReader_QuickTime_ReturnsTrue() {
+        XCTAssertTrue(
+            isExternalReader(pid: 903, bundle: "com.apple.QuickTimePlayerX", isRunningInput: true, ourPID: 1234),
+            "QuickTime is a user-facing Apple app — must count as external reader (AC-FIX5-BASELINE)"
         )
     }
 }

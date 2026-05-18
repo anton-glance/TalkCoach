@@ -2,17 +2,36 @@ import CoreAudio
 import Foundation
 import OSLog
 
+// Filter design: Locto excludes only its own PID and a hardcoded Set of known always-on
+// Apple system daemons (currently just `com.apple.CoreSpeech`). User-facing Apple apps
+// under the `com.apple.*` prefix (Voice Memo, FaceTime, Music, QuickTime) are deliberately
+// NOT filtered — they are the apps Locto is designed to coach the user during. Future macOS
+// daemons added to the always-on set should be appended to `baselineBundleIDs` as smoke
+// surfaces them.
+
 protocol AudioProcessProber: Sendable {
-    /// Returns PIDs of processes (other than `ourPID` and system daemons) that currently
-    /// have the default audio input device running.
+    /// Returns PIDs of processes (other than `ourPID` and baseline system daemons) that
+    /// currently have the default audio input device running.
     func externalReaders(excluding ourPID: pid_t) async -> [pid_t]
 }
 
 // MARK: - Filter helper
 
-/// Returns true when the given audio process should count as an external reader competing
-/// for the mic. Excludes the calling process itself and all com.apple.* system daemons
-/// (CoreSpeech is permanently `IsRunningInput=true` on macOS 26).
+/// Bundle identifiers of always-on Apple system daemons that hold IsRunningInput=true
+/// permanently. Spike #15 identified com.apple.CoreSpeech (system dictation, PID stable).
+/// Add additional bundles here as future smoke testing surfaces them.
+///
+/// IMPORTANT: This is intentionally a hardcoded Set, not a prefix match. Many user-facing
+/// Apple apps share the com.apple.* prefix (Voice Memos, FaceTime, Music, QuickTime),
+/// and those MUST count as external readers — they are exactly the apps Locto is
+/// designed to coach the user during.
+nonisolated let baselineBundleIDs: Set<String> = [
+    "com.apple.CoreSpeech"
+]
+
+/// Returns true when the given audio process should count as an external reader.
+/// Excludes the calling process itself and known always-on system daemons in `baselineBundleIDs`.
+/// User-facing Apple apps (Voice Memo, FaceTime, Music, QuickTime) are NOT excluded.
 nonisolated func isExternalReader(
     pid: pid_t,
     bundle: String,
@@ -21,7 +40,7 @@ nonisolated func isExternalReader(
 ) -> Bool {
     guard isRunningInput else { return false }
     guard pid != ourPID else { return false }
-    guard !bundle.hasPrefix("com.apple.") else { return false }
+    guard !baselineBundleIDs.contains(bundle) else { return false }
     return true
 }
 
