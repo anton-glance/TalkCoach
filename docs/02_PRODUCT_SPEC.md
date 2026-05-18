@@ -69,9 +69,9 @@ Invisible cost during 1hr Zoom calls on battery.
 ## Features (v1 — locked)
 
 ### Auto-activation
-- Widget appears when ANY app activates the system mic
+- Widget appears when ANY app activates the system mic AND the speech engine is ready (see Widget lifecycle below for the precise trigger)
 - Per-app blocklist in settings (Voice Memos, etc.)
-- Widget stays 5 seconds after mic deactivates, then fades out
+- Widget linger pattern on session end: 3s at full opacity, then 2s fade-out, with hover-pause and hover-reset behavior (see Widget lifecycle)
 - Each mic-on → mic-off cycle = one logged session
 
 ### Real-time widget display
@@ -84,11 +84,44 @@ Invisible cost during 1hr Zoom calls on battery.
 - Hover state: alpha shifts more saturated (per `docs/design/01-design-spec.md`) — the only intentional attention-grab in the widget surface
 - Visual specifics (size, palette ink colors, type ramp, motion timings) are in `docs/design/01-design-spec.md` and `docs/design/02-brand-guidelines.html`
 
-### Persistent / no-speech behavior (locked Session 013)
-- Widget stays visible for the entire mic-active session, even when no speech is detected. State shows "Listening…" or equivalent low-attention placeholder; metrics show no values rather than zeroed values (zeros would imply "you're at 0 WPM" — misleading).
-- The user can manually dismiss the widget via an on-widget close affordance. Dismissal triggers a confirmation prompt: "Are you sure you are not going to speak during this session?" with Yes/No.
-- Dismissal is scoped to the **current session only**. The widget re-appears on the next mic activation. There is no per-session "remember dismissal" persistence.
-- Rationale: a widget that disappears on silence creates anxiety (did it crash?); a widget that auto-hides for known no-speech meetings (45-min webinars) is the listen-only edge case M2.4 blocklist already covers via the per-app blocklist for known offenders.
+### Widget lifecycle (locked Session 031)
+
+The widget appears, persists, and disappears according to a strict lifecycle tied to engine readiness and session boundaries, NOT to token arrival or speech activity. This is the canonical rule: **the widget is visible for the entire engine-ready portion of a mic-active session, regardless of whether the user is speaking.** Content inside the widget changes based on speech activity (active vs subtle modes); the widget itself does not appear-disappear-reappear mid-session.
+
+**Phase A — Idle.** No mic-on signal from any external process. Widget not visible. Locto sits silently in the menu bar.
+
+**Phase B — Mic-on detected, engine warming.** External app activates the mic (IRS=true on the default input device). Locto starts a session, starts AudioPipeline + SpeechAnalyzer. **Widget NOT yet visible.** Duration: ~5–7s (Apple SpeechAnalyzer cold-start). Tradeoff explicitly accepted: if the user starts a Zoom call and speaks immediately, there is a perceived ~5–7s delay before the widget appears. We do not show the widget before the engine can produce data; showing earlier would mean displaying placeholder content that goes stale.
+
+**Phase C — Engine ready, widget appears.** Trigger: **first audio buffer flowing into SpeechAnalyzer.** This is the load-bearing system signal that "everything is up and running." Widget appears with initial content: timer at 00:00, token count 0, "Listening…" placeholder for metrics that haven't accumulated yet. Widget stays at full opacity from this point forward through Phase E.
+
+**Phase D — Engine running, widget visible, content reflects activity.** The widget itself stays at full opacity. Internal content state transitions based on token-stream activity:
+- D1 (active): tokens arriving in the last 2 seconds → widget shows current real-time metrics in active state (WPM, monologue timer running, token count incrementing).
+- D2 (subtle): no tokens for ≥2 seconds → widget content shifts to subtle mode (reduced visual emphasis on metrics, monologue timer paused for the silence span). The widget remains visible and at full opacity; the content is subtler to signal "I'm here, waiting." A silence-detection event fires at this transition; future modules (M3.2 SpeakingActivityTracker, M4.1 WPMCalculator monologue reset) subscribe to it.
+- D3 (re-activates): tokens resume → content returns to active state, monologue timer logic resumes per its own rules.
+
+The 2-second silence threshold is a v1 starting value. M4.1 may refine to a WPM-aware threshold later. The widget itself never hides during Phases D1/D2/D3.
+
+**Phase E — Mic-off detected, session ends.** Poll returns empty external readers OR the IRS listener fires false. Session data persists to SwiftData (M2.7 path) immediately, before any UI animation. The widget enters the linger sequence (Phase F).
+
+**Phase F — Linger sequence (3s full opacity + 2s fade).**
+- F1: 3 seconds at full opacity. Widget remains fully visible. If user hovers anywhere on the widget bounds during F1, the 3-second countdown PAUSES (does not reset; resumes from current position when hover ends).
+- F2: 2 seconds fade-out animation. Widget opacity transitions from 100% to 0%. If user hovers during F2, the fade cancels, widget snaps back to 100% opacity, and the countdown returns to the start of F1 (full 3 seconds restart).
+- F3: Widget fully hidden, linger complete.
+
+Throughout F1 and F2, a click handler is wired but is a no-op in v1 (logs the click for telemetry). v2 wires the click to open a session-stats view. The linger UI exists in v1 specifically so v2's click affordance composes cleanly without UX rework.
+
+**Phase G — Session switch during linger.** If a new mic-on signal arrives during F1 or F2 (Zoom B starts before Zoom A's linger completes):
+- Session B starts in background per Phase B (engine warming).
+- Linger animation for session A continues until session B's engine-ready signal fires (or the linger completes naturally, whichever comes first).
+- When session B's engine-ready fires: **linger animation cancels in place, widget snaps to 100% opacity (if mid-fade), content switches from session A's "ended" state to session B's "active" state without disappearing.** User perceives a single continuous widget that changed content, not a disappear-reappear.
+- If linger completes (F3 reached) before session B is ready: standard Phase B → Phase C transition. Widget hidden during session B's warm-up, appears when ready.
+
+**Manual dismissal.** Per M2.5: the user can manually dismiss the widget via an on-widget close affordance during any of Phases C through F. Dismissal triggers a confirmation prompt: "Are you sure you are not going to speak during this session?" with Yes/No. Dismissal is scoped to the current session only — the widget re-appears on the next mic activation.
+
+**What the widget never does:**
+- Never hides automatically due to speech silence within an active session (only content changes)
+- Never appears before the engine is ready (Phase B is a deliberate visual silence)
+- Never flashes/disappears between two adjacent sessions in the linger window (Phase G handles this with in-place content swap)
 
 ### Speaking metrics (real-time + logged)
 - WPM (rolling window + session average)
