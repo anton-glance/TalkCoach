@@ -12,7 +12,6 @@ enum PanelVisibilityState: Equatable {
     case hidden
     case visible
     case dismissed
-    case fadingOut
     case lingerFull
     case lingerFade
 }
@@ -134,6 +133,7 @@ final class FloatingPanelController {
 
     func requestDismiss() {
         guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
+        let sourceState = panelState
         Logger.floatingPanel.info("Dismiss requested")
 
         let confirmed = alertPresenter.presentDismissConfirmation()
@@ -142,8 +142,10 @@ final class FloatingPanelController {
             lingerStartedAt = nil
             panelState = .dismissed
             hidePanel(reason: "dismissed")
-            sessionCoordinator.requestFinalize()
-            Logger.floatingPanel.info("Dismiss confirmed — panel hidden, session finalized")
+            if sourceState == .visible {
+                sessionCoordinator.requestFinalize()
+            }
+            Logger.floatingPanel.info("Dismiss confirmed — panel hidden")
         } else {
             Logger.floatingPanel.info("Dismiss canceled — panel stays in \(String(describing: self.panelState))")
         }
@@ -161,9 +163,9 @@ final class FloatingPanelController {
     }
 
     private func handleSessionActive(_ ctx: SessionContext) {
-        // Cancel pending hide timer only when not in linger — linger timers survive into Phase G.
+        // Linger timers survive into Phase G — cancel pending hide only outside linger.
         switch panelState {
-        case .hidden, .visible, .fadingOut, .dismissed:
+        case .hidden, .visible, .dismissed:
             cancelPendingHide()
         case .lingerFull, .lingerFade:
             break
@@ -174,7 +176,6 @@ final class FloatingPanelController {
             Logger.floatingPanel.info("New session — clearing prior dismiss state for \(ctx.id)")
         }
 
-        viewModel.sessionStartedAt = ctx.startedAt
         viewModel.isSessionActive = true
         Logger.floatingPanel.info("Session active \(ctx.id) — widget will appear on engine-ready")
     }
@@ -185,7 +186,7 @@ final class FloatingPanelController {
         viewModel.sessionStartedAt = nil
 
         switch panelState {
-        case .visible, .fadingOut:
+        case .visible:
             cancelPendingHide()
             startLingerFull()
             Logger.floatingPanel.info("Session ended while visible — starting lingerFull")
@@ -199,22 +200,43 @@ final class FloatingPanelController {
     }
 
     private func handleEngineReady() {
-        viewModel.activityState = .counting
         cancelCountingTimeout()
         switch panelState {
         case .hidden:
-            guard case .active(let ctx) = sessionCoordinator.state else { return }
-            viewModel.sessionStartedAt = ctx.startedAt
+            guard case .active = sessionCoordinator.state else { return }
+            viewModel.sessionStartedAt = now()
             viewModel.isSessionActive = true
+            viewModel.activityState = .waiting
             panelState = .visible
             showPanel()
             armCountingTimeout()
             Logger.floatingPanel.info("Engine ready — panel shown (.visible)")
         case .visible:
             armCountingTimeout()
-        case .lingerFull, .lingerFade:
-            break  // Phase G: in-place content swap, state unchanged
-        case .dismissed, .fadingOut:
+        case .lingerFull:
+            // Phase G: in-place content swap — cancel linger, reset content, stay showing
+            cancelPendingHide()
+            lingerStartedAt = nil
+            resetViewModel()
+            viewModel.sessionStartedAt = now()
+            viewModel.isSessionActive = true
+            viewModel.activityState = .waiting
+            panelState = .visible
+            armCountingTimeout()
+            Logger.floatingPanel.info("Phase G: engine-ready during lingerFull — in-place content swap → .visible")
+        case .lingerFade:
+            // Phase G: cancel fade, snap alpha, reset content, stay showing
+            cancelPendingHide()
+            panel?.alphaValue = 1.0
+            lingerStartedAt = nil
+            resetViewModel()
+            viewModel.sessionStartedAt = now()
+            viewModel.isSessionActive = true
+            viewModel.activityState = .waiting
+            panelState = .visible
+            armCountingTimeout()
+            Logger.floatingPanel.info("Phase G: engine-ready during lingerFade — fade cancelled, in-place content swap → .visible")
+        case .dismissed:
             break
         }
     }
@@ -237,7 +259,7 @@ final class FloatingPanelController {
             viewModel.activityState = .counting
             cancelCountingTimeout()
             armCountingTimeout()
-        case .hidden, .fadingOut, .dismissed:
+        case .hidden, .dismissed:
             break
         }
     }
@@ -319,13 +341,18 @@ final class FloatingPanelController {
     private func createPanel() -> CoachingPanel {
         let frame = frameForShow()
         let coachingPanel = CoachingPanel(contentRect: frame)
+        let trackingView = TrackingContentView()
+        trackingView.frame = NSRect(x: 0, y: 0, width: Self.panelSize, height: Self.panelSize)
+        trackingView.onHoverEntered = { [weak self] in self?.handleHoverEntered() }
+        trackingView.onHoverExited = { [weak self] in self?.handleHoverExited() }
         let hostingView = NSHostingView(
             rootView: PlaceholderWidgetView(viewModel: viewModel) { [weak self] in
                 self?.requestDismiss()
             }
         )
         hostingView.frame = NSRect(x: 0, y: 0, width: Self.panelSize, height: Self.panelSize)
-        coachingPanel.contentView = hostingView
+        trackingView.addSubview(hostingView)
+        coachingPanel.contentView = trackingView
         moveObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didMoveNotification,
             object: coachingPanel,
@@ -492,4 +519,24 @@ final class FloatingPanelController {
             countingTimeoutToken = nil
         }
     }
+}
+
+// MARK: - TrackingContentView
+
+final class TrackingContentView: NSView {
+    var onHoverEntered: (() -> Void)?
+    var onHoverExited: (() -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverEntered?() }
+    override func mouseExited(with event: NSEvent) { onHoverExited?() }
 }

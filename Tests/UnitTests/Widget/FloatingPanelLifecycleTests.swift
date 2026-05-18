@@ -59,7 +59,6 @@ private final class LifecycleHideScheduler: HideScheduler, @unchecked Sendable {
 // MARK: - FloatingPanelLifecycleTests
 
 @MainActor
-// swiftlint:disable:next type_body_length
 final class FloatingPanelLifecycleTests: XCTestCase {
 
     private var coordinator: SessionCoordinator!
@@ -326,25 +325,34 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
     // MARK: - Group 5: Phase G (engine-ready during linger)
 
-    func testEngineReady_DuringLingerFull_StaysInLingerFull() async {
+    func testEngineReady_DuringLingerFull_TransitionsToVisible_InPlace() async {
         makeComponents()
         sut.start()
         await activateSession()
         await showPanel()
         await endSession()
         XCTAssertEqual(sut.panelState, .lingerFull)
+        sut.viewModel.totalTokens = 3  // set to verify Phase G resets this
+        let cancelsBefore = scheduler.cancelCallCount
 
-        // New session engine-ready arrives while lingering
         coordinator.micActivated()
         await Task.yield()
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.panelState, .lingerFull,
-                       "Engine-ready during lingerFull must be an in-place content swap — panel stays .lingerFull")
+        XCTAssertEqual(sut.panelState, .visible,
+                       "Phase G: engine-ready during lingerFull must transition to .visible (in-place content swap)")
+        XCTAssertEqual(sut.viewModel.totalTokens, 0,
+                       "Phase G: viewModel.totalTokens must reset to 0")
+        XCTAssertTrue(sut.viewModel.isSessionActive,
+                      "Phase G: viewModel.isSessionActive must be true")
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+                       "Phase G: activityState must start as .waiting")
+        XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
+                             "Phase G: lingerFull hideToken must be cancelled")
     }
 
-    func testEngineReady_DuringLingerFade_StaysInLingerFade() async {
+    func testEngineReady_DuringLingerFade_CancelsFade_TransitionsToVisible() async {
         makeComponents(reducedMotion: false)
         sut.start()
         await activateSession()
@@ -352,14 +360,22 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         await endSession()
         scheduler.fire(delay: 3.0)
         XCTAssertEqual(sut.panelState, .lingerFade)
+        sut.viewModel.totalTokens = 2  // set to verify Phase G resets this
+        let cancelsBefore = scheduler.cancelCallCount
 
         coordinator.micActivated()
         await Task.yield()
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.panelState, .lingerFade,
-                       "Engine-ready during lingerFade must be an in-place content swap — panel stays .lingerFade")
+        XCTAssertEqual(sut.panelState, .visible,
+                       "Phase G: engine-ready during lingerFade must transition to .visible")
+        XCTAssertEqual(sut.viewModel.totalTokens, 0,
+                       "Phase G: viewModel.totalTokens must reset to 0")
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+                       "Phase G: activityState must start as .waiting")
+        XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
+                             "Phase G: lingerFade hideToken must be cancelled")
     }
 
     // MARK: - Group 6: Dismiss during linger
@@ -424,17 +440,17 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "isInTokenSilence=false must NOT change activityState (only true triggers .waiting)")
     }
 
-    func testLastEngineReadyAt_ChangeSetsActivityState_Counting() async {
+    func testEngineReady_InitialActivityState_IsWaiting() async {
         makeComponents()
         sut.start()
         await activateSession()
-        sut.viewModel.activityState = .waiting
+        sut.viewModel.activityState = .counting  // set to verify engine-ready overrides to .waiting
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "engine-ready must set activityState to .counting")
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+                       "Engine-ready must set initial activityState to .waiting, not .counting")
     }
 
     func testLastTokenArrival_SetsActivityState_Counting() async {
@@ -454,7 +470,56 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Token arrival must set activityState to .counting")
     }
 
-    // MARK: - Group 8: Dismissed state invariants
+    // MARK: - Group 8: TrackingContentView hover callback wiring
+
+    func testTrackingContentView_HoverEnteredCallback_InvokesHandler() {
+        let view = TrackingContentView()
+        var enteredFired = false
+        view.onHoverEntered = { enteredFired = true }
+
+        // .mouseEntered/.mouseExited cannot be synthesised with mouseEvent(with:) — they are
+        // tracking-area events created by the window server. Use .mouseMoved (valid for mouseEvent)
+        // since our override ignores the event parameter entirely.
+        let fakeEvent = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 0,
+            pressure: 0
+        )!
+        view.mouseEntered(with: fakeEvent)
+
+        XCTAssertTrue(enteredFired,
+                      "TrackingContentView.mouseEntered must invoke onHoverEntered callback")
+    }
+
+    func testTrackingContentView_HoverExitedCallback_InvokesHandler() {
+        let view = TrackingContentView()
+        var exitedFired = false
+        view.onHoverExited = { exitedFired = true }
+
+        let fakeEvent = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 0,
+            pressure: 0
+        )!
+        view.mouseExited(with: fakeEvent)
+
+        XCTAssertTrue(exitedFired,
+                      "TrackingContentView.mouseExited must invoke onHoverExited callback")
+    }
+
+    // MARK: - Group 9: Dismissed state invariants
 
     func testDismissed_ClearedAtMicOn_PanelHiddenUntilEngineReady() async {
         makeComponents()

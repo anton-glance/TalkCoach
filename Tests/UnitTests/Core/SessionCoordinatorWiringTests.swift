@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import AVFAudio
 import XCTest
 @testable import TalkCoach
@@ -57,6 +58,7 @@ final class FakeLanguageDetector: LanguageDetecting, @unchecked Sendable {
     nonisolated let localeChange: AsyncStream<Locale>
 
     init() {
+        // swiftlint:disable:next identifier_name
         var c: AsyncStream<Locale>.Continuation!
         localeChange = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { c = $0 }
         cont = c
@@ -64,6 +66,7 @@ final class FakeLanguageDetector: LanguageDetecting, @unchecked Sendable {
 
     func start() async throws -> Locale {
         startCallCount += 1
+        // swiftlint:disable:next identifier_name
         if let e = stubbedError { throw e }
         return stubbedLocale
     }
@@ -105,6 +108,7 @@ final class YieldingStubBackend: TranscriberBackend, @unchecked Sendable {
     let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.yield(()); $0.finish() }
 
     init() {
+        // swiftlint:disable:next identifier_name
         var c: AsyncStream<TranscribedToken>.Continuation!
         tokenStream = AsyncStream { c = $0 }
         cont = c
@@ -129,6 +133,42 @@ final class YieldingAppleBackendFactory: AppleBackendFactory, @unchecked Sendabl
     }
 }
 
+// MARK: - NeverReadyStubBackend / NeverReadyAppleBackendFactory
+// Internal so SessionCoordinatorTests can use them for the V6 topology test.
+
+final class NeverReadyStubBackend: TranscriberBackend, @unchecked Sendable {
+    private let tokenCont: AsyncStream<TranscribedToken>.Continuation
+    let tokenStream: AsyncStream<TranscribedToken>
+
+    // engineReadyContinuation kept alive indefinitely — stream never yields, never finishes.
+    private let engineReadyContinuation: AsyncStream<Void>.Continuation
+    let engineReadyStream: AsyncStream<Void>
+
+    init() {
+        var tokenStreamCont: AsyncStream<TranscribedToken>.Continuation!
+        tokenStream = AsyncStream { tokenStreamCont = $0 }
+        tokenCont = tokenStreamCont
+
+        var erc: AsyncStream<Void>.Continuation!
+        engineReadyStream = AsyncStream { erc = $0 }
+        engineReadyContinuation = erc
+    }
+
+    func start(locale: Locale) async throws {}
+    func stop() async {
+        engineReadyContinuation.finish()
+        tokenCont.finish()
+    }
+    func yield(_ token: TranscribedToken) { tokenCont.yield(token) }
+}
+
+final class NeverReadyAppleBackendFactory: AppleBackendFactory, @unchecked Sendable {
+    let stubbedBackend = NeverReadyStubBackend()
+    func make(audioBufferProvider: any AudioBufferProvider) -> any TranscriberBackend {
+        stubbedBackend
+    }
+}
+
 // MARK: - SessionCoordinatorWiringTests
 
 @MainActor
@@ -144,6 +184,7 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         return SessionCoordinator(micMonitor: micMonitor, settingsStore: settingsStore)
     }
 
+    // swiftlint:disable large_tuple
     private func makeWiring(
         stubbedLocale: String = "en-US",
         appleLocales: [String] = ["en-US"],
@@ -157,6 +198,7 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         fakeLD: FakeLanguageDetector,
         localesProvider: FakeSupportedLocalesProvider
     ) {
+        // swiftlint:enable large_tuple
         let engineProvider = WiringFakeAudioEngineProvider()
         engineProvider.startShouldThrow = engineStartShouldThrow
         let pipeline = AudioPipeline(provider: engineProvider)
@@ -165,7 +207,9 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         fakeLD.stubbedLocale = Locale(identifier: stubbedLocale)
         fakeLD.stubbedError = langError
 
+        // swiftlint:disable:next identifier_name
         let af = appleFactory ?? TestAppleBackendFactory()
+        // swiftlint:disable:next identifier_name
         let pf = parakeetFactory ?? TestParakeetBackendFactory()
 
         let localesProvider = FakeSupportedLocalesProvider()
@@ -400,6 +444,7 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         whisper.stubbedError = WhisperLIDProviderError.modelUnavailable
 
         // en_US + ja_JP triggers WhisperLID strategy (Strategy 3, isBlocking=true)
+        // swiftlint:disable:next identifier_name
         let ld = LanguageDetector(
             declaredLocales: [Locale(identifier: "en_US"), Locale(identifier: "ja_JP")],
             partialTranscriptProvider: StubPartialTranscriptProvider(),

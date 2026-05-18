@@ -83,6 +83,7 @@ final class SessionCoordinator: ObservableObject {
     // Exposed as private(set) so tests can `await sut.sessionWiringTask?.value`
     // to synchronise on wiring completion without polling.
     private(set) var sessionWiringTask: Task<Void, Never>?
+    private(set) var engineReadyTask: Task<Void, Never>?
     private var localeMonitorTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
     private var activeEngine: TranscriptionEngine?
@@ -322,13 +323,14 @@ final class SessionCoordinator: ObservableObject {
         activeEngine = engine
         currentLocale = locale
 
-        // Await the first engine-ready signal synchronously: lastEngineReadyAt is set before
-        // sessionWiringTask resolves, so subscribers see it without an extra Task.yield().
-        for await _ in engine.engineReadyStream {
-            lastEngineReadyAt = Date()
-            break
+        // Spawn engineReadyTask in parallel with relay/locale/poll so runSession() exits
+        // immediately after engine.start() — relayTask and pollTask are not gated on engine-ready.
+        engineReadyTask = Task { [weak self] in
+            for await _ in engine.engineReadyStream {
+                self?.handleEngineReadyEvent()
+                break
+            }
         }
-
         localeMonitorTask = Task { [weak self] in await self?.monitorLocaleChanges() }
         relayTask = Task { [weak self] in await self?.relayTokens(from: engine) }
         startPollTimer()
@@ -383,11 +385,18 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
+    private func handleEngineReadyEvent() {
+        lastEngineReadyAt = Date()
+        Logger.session.info("SessionCoordinator: engine-ready event received from backend")
+    }
+
     private func teardownWiring() async {
         let teardownStart = Date()
         let sessionMs = sessionStartTime.map { Int(teardownStart.timeIntervalSince($0) * 1000) } ?? 0
 
         sessionWiringTask?.cancel()
+        engineReadyTask?.cancel()
+        engineReadyTask = nil
         localeMonitorTask?.cancel()
         relayTask?.cancel()
 

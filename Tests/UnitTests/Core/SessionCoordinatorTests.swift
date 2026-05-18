@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Combine
 import CoreAudio
 import XCTest
@@ -76,6 +77,7 @@ private final class FakeCoreAudioDeviceProvider: CoreAudioDeviceProvider, @unche
 // MARK: - Tests
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class SessionCoordinatorTests: XCTestCase {
 
     private var fake: FakeCoreAudioDeviceProvider!
@@ -387,9 +389,46 @@ final class SessionCoordinatorTests: XCTestCase {
         sut.start()
         sut.micActivated()
         if let task = sut.sessionWiringTask { await task.value }
+        // engineReadyTask runs in parallel with sessionWiringTask — await it separately.
+        if let task = sut.engineReadyTask { await task.value }
 
         XCTAssertNotNil(sut.lastEngineReadyAt,
                         "lastEngineReadyAt must be set when engine-ready signal arrives from backend")
+    }
+
+    func testEngineReadyTask_DoesNotBlockRelayTask_WhenEngineReadyNeverFires() async throws {
+        let silenceScheduler = FakeTokenSilenceScheduler()
+        makeSUT(tokenSilenceScheduler: silenceScheduler)
+        let neverReadyFactory = NeverReadyAppleBackendFactory()
+        let engineProvider = ProbeTestEngineProvider()
+        let pipeline = AudioPipeline(provider: engineProvider)
+        let fakeLD = FakeLanguageDetector()
+        let locales = FakeSupportedLocalesProvider()
+        locales.locales = [Locale(identifier: "en-US")]
+
+        let consumer = FakeTokenConsumer()
+        sut.addConsumer(consumer)
+        sut.wiring = SessionWiring(
+            audioPipeline: pipeline,
+            languageDetector: fakeLD,
+            appleBackendFactory: neverReadyFactory,
+            parakeetBackendFactory: TestParakeetBackendFactory(),
+            supportedLocalesProvider: locales
+        )
+
+        sut.start()
+        sut.micActivated()
+        // sessionWiringTask completes as soon as all four tasks are spawned —
+        // engineReadyStream never yielding must NOT block this.
+        if let task = sut.sessionWiringTask { await task.value }
+
+        // relayTask is running concurrently — verify it can receive and forward tokens
+        let tokenExp = XCTestExpectation(description: "token relayed even without engine-ready")
+        consumer.onReceiveToken = { tokenExp.fulfill() }
+        neverReadyFactory.stubbedBackend.yield(
+            TranscribedToken(token: "hi", startTime: 0, endTime: 0.1, isFinal: true)
+        )
+        await fulfillment(of: [tokenExp], timeout: 2.0)
     }
 
     func testRelayTokens_ArmsTokenSilenceScheduler() async throws {
