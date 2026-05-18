@@ -69,32 +69,11 @@ final class AudioProcessProberPollTests: XCTestCase {
                         "pollTask must be non-nil after wiring completes (poll started, AC-FIX5-A1)")
     }
 
-    // MARK: - T-FIX5-2: micFreedExternally fires when prober returns non-empty external readers
+    // MARK: - T-FIX5-2: session continues while external readers are present
 
-    func testPoll_MicFreedExternally_WhenExternalReadersNonEmpty() async throws {
+    func testPoll_SessionContinues_WhenExternalReadersPresent() async throws {
         let prober = FakeAudioProcessProber()
-        prober.stubbedReaders = [999] // non-empty → external reader → session should end
-        let (sut, _) = makeSUT(audioProcessProber: prober, probePollInterval: 0.1)
-
-        let exp = XCTestExpectation(description: "session ended via poll")
-        sut.onSessionEnded { _ in exp.fulfill() }
-
-        sut.wiring = makeWiring()
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        await fulfillment(of: [exp], timeout: 3.0)
-
-        XCTAssertEqual(sut.lastEndReason, .micFreedExternally,
-                       "Session must end with .micFreedExternally when external readers detected (AC-FIX5-A2)")
-        XCTAssertEqual(sut.state, .idle)
-    }
-
-    // MARK: - T-FIX5-3: no session end when prober returns empty external readers
-
-    func testPoll_NoSessionEnd_WhenExternalReadersEmpty() async throws {
-        let prober = FakeAudioProcessProber()
-        prober.stubbedReaders = [] // empty → no external readers → session continues
+        prober.stubbedReaders = [123, 456] // non-empty → external apps reading → session continues
         let (sut, _) = makeSUT(audioProcessProber: prober, probePollInterval: 0.1)
 
         var endedCount = 0
@@ -104,20 +83,43 @@ final class AudioProcessProberPollTests: XCTestCase {
         sut.micActivated()
         if let task = sut.sessionWiringTask { await task.value }
 
-        try await Task.sleep(for: .milliseconds(350)) // 3+ poll cycles at 0.1s
+        try await Task.sleep(for: .milliseconds(500)) // 5+ poll cycles at 0.1s
 
         XCTAssertEqual(endedCount, 0,
-                       "Session must NOT end when prober returns empty external readers (AC-FIX5-A3)")
+                       "Session must NOT end while external readers are present (AC-FIX5-POLARITY)")
         if case .active = sut.state { } else {
-            XCTFail("Session must remain .active when external readers empty")
+            XCTFail("Session must remain .active while external readers present")
         }
+        XCTAssertGreaterThanOrEqual(prober.callCount, 3,
+                                    "Poll must have run multiple times; callCount=\(prober.callCount) (AC-FIX5-POLARITY)")
+    }
+
+    // MARK: - T-FIX5-3: session ends immediately when external readers empty from start
+
+    func testPoll_SessionEnds_WhenExternalReadersEmptyFromStart() async throws {
+        let prober = FakeAudioProcessProber()
+        prober.stubbedReaders = [] // empty from start → no external app → end session
+        let (sut, _) = makeSUT(audioProcessProber: prober, probePollInterval: 0.1)
+
+        let exp = XCTestExpectation(description: "session ended when readers empty from start")
+        sut.onSessionEnded { _ in exp.fulfill() }
+
+        sut.wiring = makeWiring()
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        await fulfillment(of: [exp], timeout: 3.0)
+
+        XCTAssertEqual(sut.lastEndReason, .micFreedExternally,
+                       "Session must end with .micFreedExternally when readers empty from start (AC-FIX5-POLARITY)")
+        XCTAssertEqual(sut.state, .idle)
     }
 
     // MARK: - T-FIX5-4: poll calls prober multiple times at configured interval
 
     func testPoll_CallsProberMultipleTimes_AtConfiguredInterval() async throws {
         let prober = FakeAudioProcessProber()
-        prober.stubbedReaders = [] // empty → no session end, poll keeps running
+        prober.stubbedReaders = [123] // non-empty → session continues, poll keeps running
         let (sut, _) = makeSUT(audioProcessProber: prober, probePollInterval: 0.1)
 
         sut.wiring = makeWiring()
@@ -152,7 +154,7 @@ final class AudioProcessProberPollTests: XCTestCase {
 
     func testPoll_StopsWhenSessionEnds() async throws {
         let prober = FakeAudioProcessProber()
-        prober.stubbedReaders = [] // empty — keeps session alive via poll
+        prober.stubbedReaders = [123] // non-empty — keeps session alive; poll keeps running
         let (sut, _) = makeSUT(audioProcessProber: prober, probePollInterval: 0.1)
 
         sut.wiring = makeWiring()
@@ -171,6 +173,39 @@ final class AudioProcessProberPollTests: XCTestCase {
 
         XCTAssertEqual(prober.callCount, callCountAfterEnd,
                        "Poll must stop when session ends — no more prober calls after session end (AC-FIX5-A5)")
+    }
+
+    // MARK: - T-FIX5-POLARITY: session ends when external readers transition from present to empty
+
+    func testPoll_SessionEnds_WhenExternalReadersBecomeEmpty() async throws {
+        let prober = FakeAudioProcessProber()
+        prober.stubbedReaders = [123] // start with external app reading → session continues
+        let (sut, _) = makeSUT(audioProcessProber: prober, probePollInterval: 0.1)
+
+        var endedCount = 0
+        sut.onSessionEnded { _ in endedCount += 1 }
+
+        sut.wiring = makeWiring()
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        // Multiple poll cycles with non-empty readers — session must remain alive
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(endedCount, 0, "Session must remain active while external readers present")
+        guard case .active = sut.state else {
+            XCTFail("Session must be .active while external readers present"); return
+        }
+
+        // Simulate external app releasing the mic
+        prober.stubbedReaders = []
+
+        let endExp = XCTestExpectation(description: "session ended after readers cleared")
+        sut.onSessionEnded { _ in endExp.fulfill() }
+        await fulfillment(of: [endExp], timeout: 1.0)
+
+        XCTAssertEqual(sut.lastEndReason, .micFreedExternally,
+                       "Session must end with .micFreedExternally when readers become empty (AC-FIX5-POLARITY)")
+        XCTAssertEqual(sut.state, .idle)
     }
 
     // MARK: - isExternalReader helper (unit tests, no OS calls)

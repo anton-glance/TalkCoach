@@ -195,11 +195,12 @@ final class SessionCoordinator: ObservableObject {
                 guard case .active = self.state else { break }
                 let readers = await prober.externalReaders(excluding: ourPID)
                 if Task.isCancelled { break }
-                if !readers.isEmpty {
-                    Logger.session.info("SessionCoordinator: poll — \(readers.count) external reader(s) → ending session (.micFreedExternally)")
+                if readers.isEmpty {
+                    Logger.session.info("SessionCoordinator: poll — no external readers → ending session (.micFreedExternally)")
                     self.endCurrentSession(reason: .micFreedExternally)
                     break
                 }
+                Logger.session.debug("SessionCoordinator: poll — \(readers.count) external reader(s) present — session continues")
             }
         }
     }
