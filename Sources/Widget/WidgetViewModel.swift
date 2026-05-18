@@ -4,8 +4,6 @@ import Foundation
 enum WidgetActivityState: Equatable {
     case waiting
     case counting
-    case probing
-    case resuming
 }
 
 @MainActor

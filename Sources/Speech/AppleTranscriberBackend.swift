@@ -22,7 +22,7 @@ actor AppleTranscriberBackend: TranscriberBackend {
     // MARK: TranscriberBackend
 
     nonisolated let tokenStream: AsyncStream<TranscribedToken>
-    nonisolated var engineReadyStream: AsyncStream<Void> { AsyncStream { $0.finish() } }
+    nonisolated let engineReadyStream: AsyncStream<Void>
 
     // MARK: Private stored
 
@@ -30,6 +30,7 @@ actor AppleTranscriberBackend: TranscriberBackend {
     private let localesProvider: any SupportedLocalesProvider
     private let assetStatusProvider: any AssetInventoryStatusProvider
     private let continuation: AsyncStream<TranscribedToken>.Continuation
+    private var engineReadyContinuation: AsyncStream<Void>.Continuation?
     private var feedTask: Task<Void, Never>?
     private var resultTask: Task<Void, Never>?
 
@@ -52,6 +53,10 @@ actor AppleTranscriberBackend: TranscriberBackend {
         var cont: AsyncStream<TranscribedToken>.Continuation!
         self.tokenStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { cont = $0 }
         self.continuation = cont
+
+        var erCont: AsyncStream<Void>.Continuation!
+        self.engineReadyStream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { erCont = $0 }
+        self.engineReadyContinuation = erCont
     }
 
     // MARK: TranscriberBackend
@@ -139,6 +144,9 @@ actor AppleTranscriberBackend: TranscriberBackend {
                         "AppleTranscriberBackend: SpeechAnalyzer started (\(af.sampleRate)Hz \(af.channelCount)ch)"
                     )
                     analyzerStarted = true
+                    self.engineReadyContinuation?.yield(())
+                    self.engineReadyContinuation?.finish()
+                    self.engineReadyContinuation = nil
                 }
 
                 guard let af = analyzerFormat else { continue }
@@ -176,6 +184,8 @@ actor AppleTranscriberBackend: TranscriberBackend {
         resultTask = nil
         _transcriber = nil
         continuation.finish()
+        engineReadyContinuation?.finish()
+        engineReadyContinuation = nil
     }
 }
 

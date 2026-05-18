@@ -53,8 +53,6 @@ struct PlaceholderWidgetView: View {
         switch state {
         case .waiting: return "Listening\u{2026}"
         case .counting: return "Counting\u{2026}"
-        case .probing: return "Checking mic\u{2026}"
-        case .resuming: return "Resuming\u{2026}"
         }
     }
 

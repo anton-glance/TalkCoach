@@ -102,7 +102,7 @@ final class YieldingStubBackend: TranscriberBackend, @unchecked Sendable {
 
     private let cont: AsyncStream<TranscribedToken>.Continuation
     let tokenStream: AsyncStream<TranscribedToken>
-    let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.finish() }
+    let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.yield(()); $0.finish() }
 
     init() {
         var c: AsyncStream<TranscribedToken>.Continuation!

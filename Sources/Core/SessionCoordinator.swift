@@ -71,6 +71,7 @@ final class SessionCoordinator: ObservableObject {
     private let micMonitor: MicMonitor
     private let settingsStore: SettingsStore
     private let tokenSilenceScheduler: any HideScheduler
+    private var tokenSilenceToken: HideSchedulerToken?
     private var endedSessionHandlers: [@MainActor (EndedSession) -> Void] = []
     private var coachingEnabledCancellable: AnyCancellable?
 
@@ -219,6 +220,11 @@ final class SessionCoordinator: ObservableObject {
 
     private func endCurrentSession(reason: SessionEndReason = .micOffListener) {
         stopPollTimer()
+        if let token = tokenSilenceToken {
+            tokenSilenceScheduler.cancel(token)
+            tokenSilenceToken = nil
+        }
+        isInTokenSilence = false
         guard case .active(let ctx) = state else { return }
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
@@ -315,6 +321,14 @@ final class SessionCoordinator: ObservableObject {
 
         activeEngine = engine
         currentLocale = locale
+
+        // Await the first engine-ready signal synchronously: lastEngineReadyAt is set before
+        // sessionWiringTask resolves, so subscribers see it without an extra Task.yield().
+        for await _ in engine.engineReadyStream {
+            lastEngineReadyAt = Date()
+            break
+        }
+
         localeMonitorTask = Task { [weak self] in await self?.monitorLocaleChanges() }
         relayTask = Task { [weak self] in await self?.relayTokens(from: engine) }
         startPollTimer()
@@ -344,6 +358,14 @@ final class SessionCoordinator: ObservableObject {
             tokensInWindow += 1
             let t0Ns = DispatchTime.now().uptimeNanoseconds
             lastTokenArrival = Date()
+            isInTokenSilence = false
+
+            // Cancel old silence timer, arm new 2s one.
+            if let prev = tokenSilenceToken { tokenSilenceScheduler.cancel(prev) }
+            tokenSilenceToken = tokenSilenceScheduler.schedule(delay: 2.0) { [weak self] in
+                self?.isInTokenSilence = true
+            }
+
             Logger.session.info("Token observed at coordinator: t0=\(t0Ns)ns token='\(token.token)' isFinal=\(token.isFinal)")
 
             for consumer in consumers {

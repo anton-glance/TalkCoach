@@ -35,6 +35,8 @@ final class FloatingPanelController {
     private var stateSubscription: AnyCancellable?
     private var tokenArrivalSubscription: AnyCancellable?
     private var captureStateSubscription: AnyCancellable?
+    private var engineReadySubscription: AnyCancellable?
+    private var tokenSilenceSubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
     private var dragDebounceToken: HideSchedulerToken?
     private var countingTimeoutToken: HideSchedulerToken?
@@ -42,6 +44,7 @@ final class FloatingPanelController {
     private var isProgrammaticMove = false
     private var isStarted = false
     private var lastTokenObservedAtNs: UInt64 = 0
+    private var lingerStartedAt: Date?
 
     var isShowingPanel: Bool { panel?.isVisible ?? false }
     var currentPanelFrame: NSRect? { panel?.frame }
@@ -78,14 +81,27 @@ final class FloatingPanelController {
                 self.handleStateChange(newState)
             }
 
-        // Token-silence decoupling: hide is driven by token arrival gaps, not session-end.
-        // Each token resets the hide timer. Absence of tokens for widgetHideDelaySeconds hides the panel.
         tokenArrivalSubscription = sessionCoordinator.$lastTokenArrival
             .sink { [weak self] arrival in
                 let t1Ns = DispatchTime.now().uptimeNanoseconds
                 guard let self, arrival != nil else { return }
                 self.lastTokenObservedAtNs = t1Ns
                 self.handleTokenArrival()
+            }
+
+        engineReadySubscription = sessionCoordinator.$lastEngineReadyAt
+            .dropFirst()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.handleEngineReady()
+            }
+
+        tokenSilenceSubscription = sessionCoordinator.$isInTokenSilence
+            .dropFirst()
+            .sink { [weak self] isSilent in
+                guard let self, isSilent else { return }
+                self.viewModel.activityState = .waiting
+                Logger.floatingPanel.info("activity state: waiting (token-silence)")
             }
 
         captureStateSubscription = sessionCoordinator.$captureActivityState
@@ -103,6 +119,8 @@ final class FloatingPanelController {
         stateSubscription = nil
         tokenArrivalSubscription = nil
         captureStateSubscription = nil
+        engineReadySubscription = nil
+        tokenSilenceSubscription = nil
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
             moveObserver = nil
@@ -110,21 +128,24 @@ final class FloatingPanelController {
         cancelPendingDragDebounce()
         cancelPendingHide()
         cancelCountingTimeout()
+        lingerStartedAt = nil
         hidePanel(reason: "lifecycle-stop")
     }
 
     func requestDismiss() {
-        guard panelState == .visible else { return }
+        guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
         Logger.floatingPanel.info("Dismiss requested")
 
         let confirmed = alertPresenter.presentDismissConfirmation()
         if confirmed {
+            cancelPendingHide()
+            lingerStartedAt = nil
             panelState = .dismissed
             hidePanel(reason: "dismissed")
             sessionCoordinator.requestFinalize()
             Logger.floatingPanel.info("Dismiss confirmed — panel hidden, session finalized")
         } else {
-            Logger.floatingPanel.info("Dismiss canceled — panel stays visible")
+            Logger.floatingPanel.info("Dismiss canceled — panel stays in \(String(describing: self.panelState))")
         }
     }
 
@@ -140,9 +161,14 @@ final class FloatingPanelController {
     }
 
     private func handleSessionActive(_ ctx: SessionContext) {
-        cancelPendingHide()
+        // Cancel pending hide timer only when not in linger — linger timers survive into Phase G.
+        switch panelState {
+        case .hidden, .visible, .fadingOut, .dismissed:
+            cancelPendingHide()
+        case .lingerFull, .lingerFade:
+            break
+        }
 
-        // Clear a prior-session dismiss so the widget can reappear on the first token.
         if panelState == .dismissed {
             panelState = .hidden
             Logger.floatingPanel.info("New session — clearing prior dismiss state for \(ctx.id)")
@@ -150,79 +176,110 @@ final class FloatingPanelController {
 
         viewModel.sessionStartedAt = ctx.startedAt
         viewModel.isSessionActive = true
-        // Widget visibility is now driven by token arrival (handleTokenArrival), not mic-on.
-        Logger.floatingPanel.info("Session active \(ctx.id) — widget will appear on first token")
+        Logger.floatingPanel.info("Session active \(ctx.id) — widget will appear on engine-ready")
     }
 
     private func handleSessionIdle() {
         cancelCountingTimeout()
-        viewModel.activityState = .waiting
-        viewModel.totalTokens = 0
         viewModel.isSessionActive = false
         viewModel.sessionStartedAt = nil
 
         switch panelState {
         case .visible, .fadingOut:
-            // M3.7.3: session-end hides immediately. The fade timer is driven by token-silence
-            // (handleTokenArrival), which fires before the session ends in normal usage.
-            // A hard session-end (coaching disabled, sleep, shutdown) hides immediately.
             cancelPendingHide()
-            hidePanel(reason: "session-ended")
-            Logger.floatingPanel.info("Session ended — panel hidden immediately (M3.7.3)")
+            startLingerFull()
+            Logger.floatingPanel.info("Session ended while visible — starting lingerFull")
 
         case .dismissed:
-            panelState = .hidden
-            Logger.floatingPanel.info("Session ended while dismissed — hidden")
+            break  // Stays dismissed until new session clears it in handleSessionActive
 
-        case .lingerFull, .lingerFade:
-            // stub: linger-state session-end handling implemented in green phase
+        case .lingerFull, .lingerFade, .hidden:
             break
+        }
+    }
 
+    private func handleEngineReady() {
+        viewModel.activityState = .counting
+        cancelCountingTimeout()
+        switch panelState {
         case .hidden:
+            guard case .active(let ctx) = sessionCoordinator.state else { return }
+            viewModel.sessionStartedAt = ctx.startedAt
+            viewModel.isSessionActive = true
+            panelState = .visible
+            showPanel()
+            armCountingTimeout()
+            Logger.floatingPanel.info("Engine ready — panel shown (.visible)")
+        case .visible:
+            armCountingTimeout()
+        case .lingerFull, .lingerFade:
+            break  // Phase G: in-place content swap, state unchanged
+        case .dismissed, .fadingOut:
             break
         }
     }
 
     private func handleTokenArrival() {
         let t2Ns = DispatchTime.now().uptimeNanoseconds
-        // A token arrived — counting state and timers are only updated inside each case,
-        // after the active-session guard, so stale signals while idle are fully ignored.
-        cancelPendingHide()
         switch panelState {
-        case .hidden, .fadingOut:
-            // Re-show only when a session is actually active; ignore stale token signals while idle.
-            guard case .active(let ctx) = sessionCoordinator.state else { return }
-            viewModel.totalTokens += 1
-            viewModel.activityState = .counting
-            cancelCountingTimeout()
-            armCountingTimeout()
-            viewModel.sessionStartedAt = ctx.startedAt
-            viewModel.isSessionActive = true
-            panelState = .visible
-            showPanel()
-            let t3Ns = DispatchTime.now().uptimeNanoseconds
-            let t1Ns = lastTokenObservedAtNs
-            let sinkLatencyMs = Double(t2Ns - t1Ns) / 1_000_000.0
-            let showLatencyMs = Double(t3Ns - t2Ns) / 1_000_000.0
-            let totalLatencyMs = Double(t3Ns - t1Ns) / 1_000_000.0
-            Logger.floatingPanel.info("widget-reshow-timing: trigger=reshow sink→handler=\(sinkLatencyMs)ms handler→visible=\(showLatencyMs)ms total=\(totalLatencyMs)ms")
-            armHideTimer()
         case .visible:
             viewModel.totalTokens += 1
             viewModel.activityState = .counting
             cancelCountingTimeout()
             armCountingTimeout()
-            armHideTimer()
             let t3Ns = DispatchTime.now().uptimeNanoseconds
             let t1Ns = lastTokenObservedAtNs
             let sinkLatencyMs = Double(t2Ns - t1Ns) / 1_000_000.0
             let totalLatencyMs = Double(t3Ns - t1Ns) / 1_000_000.0
-            Logger.floatingPanel.info("widget-reshow-timing: trigger=reschedule sink→handler=\(sinkLatencyMs)ms total=\(totalLatencyMs)ms")
-        case .dismissed:
-            return
+            Logger.floatingPanel.info("widget-token-timing: sink→handler=\(sinkLatencyMs)ms total=\(totalLatencyMs)ms")
         case .lingerFull, .lingerFade:
+            viewModel.totalTokens += 1
+            viewModel.activityState = .counting
+            cancelCountingTimeout()
+            armCountingTimeout()
+        case .hidden, .fadingOut, .dismissed:
             break
         }
+    }
+
+    // MARK: - Linger sequence
+
+    private func startLingerFull() {
+        panelState = .lingerFull
+        lingerStartedAt = now()
+        hideToken = hideScheduler.schedule(delay: 3.0) { [weak self] in
+            guard let self else { return }
+            self.lingerFullTimerFired()
+        }
+        Logger.floatingPanel.info("LingerFull started — 3s countdown")
+    }
+
+    private func lingerFullTimerFired() {
+        guard panelState == .lingerFull else { return }
+        hideToken = nil
+        if reducedMotionProvider() {
+            completeLingerHide()
+        } else {
+            panelState = .lingerFade
+            hideToken = hideScheduler.schedule(delay: 2.0) { [weak self] in
+                guard let self else { return }
+                self.completeLingerHide()
+            }
+            Logger.floatingPanel.info("LingerFull expired — starting lingerFade (2s)")
+        }
+    }
+
+    private func completeLingerHide() {
+        hideToken = nil
+        lingerStartedAt = nil
+        hidePanel(reason: "linger-complete")
+        resetViewModel()
+        Logger.floatingPanel.info("Linger complete — panel hidden, viewModel reset")
+    }
+
+    private func resetViewModel() {
+        viewModel.totalTokens = 0
+        viewModel.activityState = .waiting
     }
 
     private func armCountingTimeout() {
@@ -233,18 +290,6 @@ final class FloatingPanelController {
             self.countingTimeoutToken = nil
         }
         Logger.floatingPanel.info("activity state: counting (token #\(self.viewModel.totalTokens))")
-    }
-
-    private func armHideTimer() {
-        let delay = settingsStore.widgetHideDelaySeconds
-        hideToken = hideScheduler.schedule(delay: delay) { [weak self] in
-            guard let self, self.panelState == .visible else { return }
-            self.panelState = .fadingOut
-            self.hidePanel(reason: "token-silence-fade")
-            self.panelState = .hidden
-            Logger.floatingPanel.info("Token-silence timer fired — panel hidden after \(delay)s of silence")
-        }
-        Logger.floatingPanel.debug("Token arrived — hide timer rearmed for \(delay)s")
     }
 
     // MARK: - Panel Management
@@ -399,21 +444,38 @@ final class FloatingPanelController {
     // MARK: - Capture Activity State
 
     private func handleCaptureActivityStateChange(_ newState: CaptureActivityState) {
-        // CaptureActivityState has only .waiting in the M3.7.3-fix5 redesign;
-        // the probe/resume cycle is replaced by the 1Hz HAL process-list poll.
+        // CaptureActivityState has only .waiting; the probe/resume cycle was removed in M3.7.3-fix5.
         switch newState {
         case .waiting:
-            if viewModel.activityState == .probing || viewModel.activityState == .resuming {
-                viewModel.activityState = .waiting
-                Logger.floatingPanel.info("activity state: waiting")
-            }
+            break
         }
     }
 
-    // MARK: - Hover tracking (stub — implemented in green phase)
+    // MARK: - Hover tracking
 
-    func handleHoverEntered() {}
-    func handleHoverExited() {}
+    func handleHoverEntered() {
+        switch panelState {
+        case .lingerFull:
+            cancelPendingHide()
+        case .lingerFade:
+            cancelPendingHide()
+            panelState = .lingerFull
+            lingerStartedAt = nil
+        default:
+            break
+        }
+    }
+
+    func handleHoverExited() {
+        guard panelState == .lingerFull else { return }
+        let start = lingerStartedAt ?? now()
+        let elapsed = now().timeIntervalSince(start)
+        let remaining = max(0.5, 3.0 - elapsed)
+        hideToken = hideScheduler.schedule(delay: remaining) { [weak self] in
+            guard let self else { return }
+            self.lingerFullTimerFired()
+        }
+    }
 
     // MARK: - Hide Timer
 
