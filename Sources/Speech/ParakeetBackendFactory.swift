@@ -14,6 +14,7 @@ nonisolated protocol ParakeetBackendFactory: Sendable {
 // Parakeet claims to support (none in this phase).
 nonisolated final class PlaceholderParakeetTranscriberBackend: TranscriberBackend, @unchecked Sendable {
     let tokenStream: AsyncStream<TranscribedToken> = AsyncStream { $0.finish() }
+    let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.finish() }
 
     func start(locale: Locale) async throws {
         throw TranscriberBackendError.modelUnavailable

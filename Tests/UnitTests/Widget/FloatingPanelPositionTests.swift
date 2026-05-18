@@ -130,7 +130,7 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         XCTAssertEqual(sut.panelState, .visible)
@@ -148,7 +148,7 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
@@ -161,7 +161,7 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
@@ -236,7 +236,7 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         let frame = sut.currentPanelFrame!
@@ -265,7 +265,7 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
@@ -295,7 +295,7 @@ final class FloatingPanelPositionTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16

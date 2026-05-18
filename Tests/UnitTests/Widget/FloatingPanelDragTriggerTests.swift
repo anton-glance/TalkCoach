@@ -110,7 +110,7 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         XCTAssertNil(
@@ -129,7 +129,7 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         guard let panel = sut.panelWindow else {
@@ -154,7 +154,7 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         guard let panel = sut.panelWindow else {
@@ -193,7 +193,7 @@ final class FloatingPanelDragTriggerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastTokenArrival = Date()
+        coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         guard let panel = sut.panelWindow else {

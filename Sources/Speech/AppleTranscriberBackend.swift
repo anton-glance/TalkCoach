@@ -22,6 +22,7 @@ actor AppleTranscriberBackend: TranscriberBackend {
     // MARK: TranscriberBackend
 
     nonisolated let tokenStream: AsyncStream<TranscribedToken>
+    nonisolated var engineReadyStream: AsyncStream<Void> { AsyncStream { $0.finish() } }
 
     // MARK: Private stored
 

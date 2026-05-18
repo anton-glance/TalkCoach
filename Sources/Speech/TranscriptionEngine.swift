@@ -10,6 +10,7 @@ private let logger = Logger.transcription
 /// If neither supports the locale, throws `TranscriberBackendError.unsupportedLocale`.
 final class TranscriptionEngine {
     nonisolated let tokenStream: AsyncStream<TranscribedToken>
+    nonisolated var engineReadyStream: AsyncStream<Void> { backend.engineReadyStream }
 
     private let locale: Locale
     private let backend: any TranscriberBackend

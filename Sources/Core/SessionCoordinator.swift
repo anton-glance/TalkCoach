@@ -62,12 +62,15 @@ final class SessionCoordinator: ObservableObject {
     // Intentionally non-private setter: tests set this directly to verify the idle guard.
     // Production code: only SessionCoordinator sets this property.
     @Published var lastTokenArrival: Date?
+    @Published var lastEngineReadyAt: Date?
+    @Published var isInTokenSilence: Bool = false
     @Published private(set) var captureActivityState: CaptureActivityState = .waiting
     private(set) var lastEndReason: SessionEndReason?
     private(set) var isRunning: Bool = false
 
     private let micMonitor: MicMonitor
     private let settingsStore: SettingsStore
+    private let tokenSilenceScheduler: any HideScheduler
     private var endedSessionHandlers: [@MainActor (EndedSession) -> Void] = []
     private var coachingEnabledCancellable: AnyCancellable?
 
@@ -108,12 +111,14 @@ final class SessionCoordinator: ObservableObject {
         micMonitor: MicMonitor,
         settingsStore: SettingsStore,
         audioProcessProber: (any AudioProcessProber)? = nil,
-        systemEventObserver: (any SystemEventObserving)? = nil
+        systemEventObserver: (any SystemEventObserving)? = nil,
+        tokenSilenceScheduler: any HideScheduler = DispatchHideScheduler()
     ) {
         self.micMonitor = micMonitor
         self.settingsStore = settingsStore
         self.audioProcessProber = audioProcessProber
         self.systemEventObserver = systemEventObserver
+        self.tokenSilenceScheduler = tokenSilenceScheduler
     }
 
     // MARK: Coordinator lifecycle

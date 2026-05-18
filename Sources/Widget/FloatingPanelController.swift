@@ -13,6 +13,8 @@ enum PanelVisibilityState: Equatable {
     case visible
     case dismissed
     case fadingOut
+    case lingerFull
+    case lingerFade
 }
 
 @MainActor
@@ -25,6 +27,8 @@ final class FloatingPanelController {
     private let hideScheduler: HideScheduler
     private let screenProvider: ScreenProvider
     private let settingsStore: SettingsStore
+    private let now: () -> Date
+    private let reducedMotionProvider: () -> Bool
     let viewModel = WidgetViewModel()
 
     private var panel: CoachingPanel?
@@ -48,13 +52,19 @@ final class FloatingPanelController {
         alertPresenter: AlertPresenter = SystemAlertPresenter(),
         hideScheduler: HideScheduler = DispatchHideScheduler(),
         screenProvider: ScreenProvider = SystemScreenProvider(),
-        settingsStore: SettingsStore = SettingsStore()
+        settingsStore: SettingsStore = SettingsStore(),
+        now: @escaping () -> Date = { Date() },
+        reducedMotionProvider: @escaping () -> Bool = {
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        }
     ) {
         self.sessionCoordinator = sessionCoordinator
         self.alertPresenter = alertPresenter
         self.hideScheduler = hideScheduler
         self.screenProvider = screenProvider
         self.settingsStore = settingsStore
+        self.now = now
+        self.reducedMotionProvider = reducedMotionProvider
     }
 
     func start() {
@@ -164,6 +174,10 @@ final class FloatingPanelController {
             panelState = .hidden
             Logger.floatingPanel.info("Session ended while dismissed — hidden")
 
+        case .lingerFull, .lingerFade:
+            // stub: linger-state session-end handling implemented in green phase
+            break
+
         case .hidden:
             break
         }
@@ -206,6 +220,8 @@ final class FloatingPanelController {
             Logger.floatingPanel.info("widget-reshow-timing: trigger=reschedule sink→handler=\(sinkLatencyMs)ms total=\(totalLatencyMs)ms")
         case .dismissed:
             return
+        case .lingerFull, .lingerFade:
+            break
         }
     }
 
@@ -393,6 +409,11 @@ final class FloatingPanelController {
             }
         }
     }
+
+    // MARK: - Hover tracking (stub — implemented in green phase)
+
+    func handleHoverEntered() {}
+    func handleHoverExited() {}
 
     // MARK: - Hide Timer
 
