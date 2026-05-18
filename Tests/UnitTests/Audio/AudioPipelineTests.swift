@@ -208,8 +208,7 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertTrue(fake.callLog.isEmpty)
     }
 
-    // Bug C fix: stop() no longer permanently disables the pipeline.
-    // A second start() after stop() reinstalls the tap and resumes the same stream.
+    // Each start() after stop() reinstalls the tap on a fresh AsyncStream.
     func testStartAfterStop_ReinitializesSuccessfully() throws {
         makeSUT()
         try sut.start()
@@ -281,7 +280,6 @@ final class AudioPipelineTests: XCTestCase {
             "No recovery steps should run after stop: \(fake.callLog)"
         )
         XCTAssertNil(sut.lastRecoveryDuration)
-        // Bug C fix: stream is NOT terminated by stop() — it stays alive for the next start().
     }
 
     // MARK: - Recovery latency
@@ -370,68 +368,69 @@ final class AudioPipelineTests: XCTestCase {
 
     // MARK: - Cleanup
 
-    // Bug C fix: stop() removes the tap but does NOT finish the stream continuation.
-    // The same stream remains consumable after a subsequent start() call.
-    func testStop_RemovesTapButDoesNotFinishStream() async throws {
+    // stop() removes the tap and finishes the current session's stream. The next start()
+    // provides a fresh stream for the next session (single-consumer contract, SE-0314).
+    func testStop_RemovesTapAndFinishesCurrentStream() async throws {
         makeSUT()
         try sut.start()
+        let streamFromSession1 = sut.bufferStream
         sut.stop()
 
         XCTAssertTrue(fake.callLog.contains("removeTap"),
                       "stop() must remove the AVAudioEngine tap")
 
-        // Verify stream stays open (no timeout — we don't expect it to finish)
-        var receivedBuffer = false
-        let stream = sut.bufferStream
-        let consumeTask = Task { @MainActor in
-            for await _ in stream {
-                receivedBuffer = true
+        // The session-1 stream must terminate so its iterator drains naturally.
+        let finishExpectation = XCTestExpectation(description: "Session-1 stream finishes after stop()")
+        let drainTask = Task { @MainActor in
+            for await _ in streamFromSession1 {}  // drains until continuation.finish()
+            finishExpectation.fulfill()
+        }
+        await fulfillment(of: [finishExpectation], timeout: 2.0)
+        drainTask.cancel()
+    }
+
+    // Each session gets a NEW iterator on a fresh bufferStream — mirroring production behavior
+    // where AppleTranscriberBackend creates a new feedTask per session that calls bufferStream()
+    // after AudioPipeline.start() recreates the stream.
+    func testAudioPipeline_Restart_AfterStopProducesBuffers() async throws {
+        makeSUT()
+
+        // Session 1: subscribe, deliver, stop
+        try sut.start()
+        let stream1 = sut.bufferStream
+        var received1: [Int64] = []
+        let exp1 = XCTestExpectation(description: "Session 1 buffer received")
+        let task1 = Task { @MainActor in
+            for await buffer in stream1 {
+                received1.append(buffer.sampleTime)
+                exp1.fulfill()
                 break
             }
         }
+        deliverSyntheticBuffer(sampleTime: 100)
+        await fulfillment(of: [exp1], timeout: 2.0)
+        sut.stop()
+        await task1.value  // drains cleanly: stop() finishes the continuation
 
-        // Restart and deliver a buffer — stream must still be alive
+        // Session 2: fresh stream from start() — new iterator, new session
         try sut.start()
-        deliverSyntheticBuffer()
-        try await Task.sleep(for: .milliseconds(200))
-        consumeTask.cancel()
-
-        XCTAssertTrue(receivedBuffer, "Stream must still deliver buffers after stop/start cycle")
-    }
-
-    // Bug C fix: verifies the same bufferStream serves two consecutive sessions.
-    func testAudioPipeline_Restart_AfterStopProducesBuffers() async throws {
-        makeSUT()
-        try sut.start()
-
-        var received: [Int64] = []
-        let expectation = XCTestExpectation(description: "Two buffers received across stop/start")
-        expectation.expectedFulfillmentCount = 2
-        let stream = sut.bufferStream
-        let consumeTask = Task { @MainActor in
-            var count = 0
-            for await buffer in stream {
-                received.append(buffer.sampleTime)
-                count += 1
-                expectation.fulfill()
-                if count >= 2 { break }
+        let stream2 = sut.bufferStream
+        var received2: [Int64] = []
+        let exp2 = XCTestExpectation(description: "Session 2 buffer received on fresh stream")
+        let task2 = Task { @MainActor in
+            for await buffer in stream2 {
+                received2.append(buffer.sampleTime)
+                exp2.fulfill()
+                break
             }
         }
-
-        // Session 1: deliver one buffer, then stop
-        deliverSyntheticBuffer(sampleTime: 100)
-        sut.stop()
-
-        // Session 2: restart, deliver another buffer on the SAME stream
-        try sut.start()
         deliverSyntheticBuffer(sampleTime: 200)
+        await fulfillment(of: [exp2], timeout: 2.0)
+        sut.stop()
+        await task2.value
 
-        await fulfillment(of: [expectation], timeout: 2.0)
-        consumeTask.cancel()
-
-        XCTAssertEqual(received.count, 2, "Both sessions must deliver buffers to the same stream")
-        XCTAssertEqual(received[0], 100, "Session 1 buffer must arrive first")
-        XCTAssertEqual(received[1], 200, "Session 2 buffer must arrive after stop/start")
+        XCTAssertEqual(received1, [100], "Session 1 iterator must receive its buffer")
+        XCTAssertEqual(received2, [200], "Session 2 iterator must receive its buffer via the fresh stream")
     }
 
     func testStopDeregistersObserver() throws {

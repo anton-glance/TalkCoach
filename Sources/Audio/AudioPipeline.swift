@@ -66,10 +66,14 @@ nonisolated func makeTapBlock(
 final class AudioPipeline {
     private(set) var isStarted: Bool = false
     private(set) var lastRecoveryDuration: TimeInterval?
-    let bufferStream: AsyncStream<CapturedAudioBuffer>
+    // AsyncStream is single-consumer per SE-0314. Recreated on each start() so each
+    // session's feedTask iterator operates on a fresh stream. nonisolated(unsafe) because
+    // AudioPipelineBufferProvider.bufferStream() may read this from non-MainActor contexts;
+    // the write in start() happens-before the read via the SessionCoordinator wiring sequence.
+    nonisolated(unsafe) private(set) var bufferStream: AsyncStream<CapturedAudioBuffer>
+    nonisolated(unsafe) private var continuation: AsyncStream<CapturedAudioBuffer>.Continuation
 
     private let provider: any AudioEngineProvider
-    private let continuation: AsyncStream<CapturedAudioBuffer>.Continuation
     nonisolated(unsafe) private var configChangeObserver: (any NSObjectProtocol)?
 
     init(provider: any AudioEngineProvider = SystemAudioEngineProvider()) {
@@ -88,6 +92,11 @@ final class AudioPipeline {
 
     func start() throws {
         guard !isStarted else { return }
+
+        // Recreate stream + continuation each session (see property comment).
+        var cont: AsyncStream<CapturedAudioBuffer>.Continuation!
+        self.bufferStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { cont = $0 }
+        self.continuation = cont
 
         do {
             try provider.setVoiceProcessingEnabled(false)
@@ -138,6 +147,9 @@ final class AudioPipeline {
             configChangeObserver = nil
         }
 
+        // Finish current session's stream so its iterator terminates cleanly.
+        // The next start() will recreate both stream and continuation.
+        continuation.finish()
         isStarted = false
     }
 
