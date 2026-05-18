@@ -8,8 +8,10 @@ import XCTest
 private final class LifecycleAlertPresenter: AlertPresenter, @unchecked Sendable {
     nonisolated(unsafe) var stubbedResult: Bool = true
     nonisolated(unsafe) private(set) var callCount = 0
+    nonisolated(unsafe) var onPresent: (() -> Void)?
     @MainActor func presentDismissConfirmation() -> Bool {
         callCount += 1
+        onPresent?()
         return stubbedResult
     }
 }
@@ -570,7 +572,78 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "completeLingerHide must reset alphaValue to 1.0 so next show starts opaque")
     }
 
-    // MARK: - Group 9: Dismissed state invariants
+    // MARK: - Group 9: Alpha-snap correctness (Bug D / E / F)
+
+    // Bug D: hover during lingerFade must snap alpha to 1.0 immediately
+    func testHoverEntered_DuringLingerFade_SnapsAlphaToFullOpacity() async {
+        makeComponents(reducedMotion: false)
+        sut.start()
+        await activateSession()
+        await showPanel()
+        await endSession()
+        scheduler.fire(delay: 3.0)
+        XCTAssertEqual(sut.panelState, .lingerFade)
+        // Simulate fade having progressed to a sub-1.0 alpha
+        sut.panelWindow?.alphaValue = 0.4
+
+        sut.handleHoverEntered()
+
+        XCTAssertEqual(sut.panelWindow?.alphaValue, 1.0,
+                       "Hover during lingerFade must snap alpha back to 1.0 (cancel visual fade)")
+        XCTAssertEqual(sut.panelState, .lingerFull,
+                       "Hover during lingerFade must transition to .lingerFull")
+    }
+
+    // Bug E: X-button during lingerFade must snap alpha to 1.0 BEFORE modal opens
+    func testRequestDismiss_DuringLingerFade_SnapsAlphaBeforeModal() async {
+        makeComponents(reducedMotion: false)
+        sut.start()
+        await activateSession()
+        await showPanel()
+        await endSession()
+        scheduler.fire(delay: 3.0)
+        XCTAssertEqual(sut.panelState, .lingerFade)
+        sut.panelWindow?.alphaValue = 0.4  // simulate mid-fade
+
+        nonisolated(unsafe) var alphaAtModalOpen: CGFloat?
+        alertPresenter.onPresent = { [weak sut] in
+            alphaAtModalOpen = sut?.panelWindow?.alphaValue
+        }
+        alertPresenter.stubbedResult = false  // cancel
+        sut.requestDismiss()
+
+        XCTAssertEqual(alphaAtModalOpen, 1.0,
+                       "Alpha must be snapped to 1.0 BEFORE modal opens during .lingerFade")
+        XCTAssertEqual(sut.panelState, .lingerFull,
+                       "Cancel-from-lingerFade must transition to .lingerFull with fresh countdown")
+        XCTAssertTrue(scheduler.hasEntry(delay: 3.0),
+                      "Fresh 3.0s countdown must be rearmed after cancel from .lingerFade")
+    }
+
+    // Bug F: showPanel() defensive alpha reset — reused panel must always start opaque
+    func testShowPanel_AlwaysStartsAtFullOpacity_EvenIfPanelLeftAtSubOpacity() async {
+        makeComponents(reducedMotion: true)
+        sut.start()
+        // Session 1: show, linger, complete — panel ivar survives at .hidden
+        await activateSession()
+        await showPanel()
+        await endSession()
+        scheduler.fire(delay: 3.0)  // reducedMotion → completeLingerHide → .hidden
+        XCTAssertEqual(sut.panelState, .hidden)
+
+        // Corrupt alpha to simulate a missed reset from any prior code path
+        sut.panelWindow?.alphaValue = 0.3
+
+        // Session 2: engine-ready must reset alpha in showPanel() before ordering front
+        await activateSession()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+
+        XCTAssertEqual(sut.panelWindow?.alphaValue, 1.0,
+                       "showPanel must reset alpha to 1.0 regardless of prior state leakage")
+    }
+
+    // MARK: - Group 10: Dismissed state invariants
 
     func testDismissed_ClearedAtMicOn_PanelHiddenUntilEngineReady() async {
         makeComponents()

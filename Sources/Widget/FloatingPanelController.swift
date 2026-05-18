@@ -145,9 +145,23 @@ final class FloatingPanelController {
         let sourceState = panelState
         Logger.floatingPanel.info("Dismiss requested")
 
-        let confirmed = alertPresenter.presentDismissConfirmation()
-        if confirmed {
+        let confirmed: Bool
+        switch panelState {
+        case .lingerFade:
+            Logger.floatingPanel.info("X-button during lingerFade — snapping alpha before modal")
             cancelPendingHide()
+            panel?.alphaValue = 1.0
+            confirmed = alertPresenter.presentDismissConfirmation()
+        case .lingerFull:
+            Logger.floatingPanel.info("X-button during lingerFull — pausing countdown before modal")
+            cancelPendingHide()
+            confirmed = alertPresenter.presentDismissConfirmation()
+        default:
+            confirmed = alertPresenter.presentDismissConfirmation()
+        }
+
+        if confirmed {
+            cancelPendingHide()  // no-op for linger (already cancelled); needed for .visible
             lingerStartedAt = nil
             panelState = .dismissed
             hidePanel(reason: "dismissed")
@@ -156,7 +170,22 @@ final class FloatingPanelController {
             }
             Logger.floatingPanel.info("Dismiss confirmed — panel hidden")
         } else {
-            Logger.floatingPanel.info("Dismiss canceled — panel stays in \(String(describing: self.panelState))")
+            switch panelState {
+            case .lingerFade, .lingerFull:
+                panelState = .lingerFull
+                lingerStartedAt = now()
+                hideToken = hideScheduler.schedule(delay: 3.0) { [weak self] in
+                    guard let self else { return }
+                    self.lingerFullTimerFired()
+                }
+                Logger.floatingPanel.info(
+                    "Dismiss canceled from \(String(describing: sourceState)) — restarting lingerFull"
+                )
+            case .visible, .hidden, .dismissed:
+                Logger.floatingPanel.info(
+                    "Dismiss canceled — panel stays in \(String(describing: self.panelState))"
+                )
+            }
         }
     }
 
@@ -337,6 +366,7 @@ final class FloatingPanelController {
     private func showPanel() {
         let thePanel = panel ?? createPanel()
         panel = thePanel
+        thePanel.alphaValue = 1.0  // defensive: always start at full opacity
 
         let frame = frameForShow()
         isProgrammaticMove = true
@@ -501,6 +531,7 @@ final class FloatingPanelController {
             cancelPendingHide()
         case .lingerFade:
             cancelPendingHide()
+            panel?.alphaValue = 1.0
             panelState = .lingerFull
             lingerStartedAt = nil
         default:
