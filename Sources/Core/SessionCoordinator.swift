@@ -184,7 +184,24 @@ final class SessionCoordinator: ObservableObject {
     // MARK: Private — poll timer
 
     private func startPollTimer() {
-        // Poll implementation added in green phase (m3.7.3-fix5)
+        guard let prober = audioProcessProber else { return }
+        let ourPID = getpid()
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { break }
+                let interval = self.settingsStore.probePollIntervalSeconds
+                try? await Task.sleep(for: .seconds(interval))
+                if Task.isCancelled { break }
+                guard case .active = self.state else { break }
+                let readers = await prober.externalReaders(excluding: ourPID)
+                if Task.isCancelled { break }
+                if !readers.isEmpty {
+                    Logger.session.info("SessionCoordinator: poll — \(readers.count) external reader(s) → ending session (.micFreedExternally)")
+                    self.endCurrentSession(reason: .micFreedExternally)
+                    break
+                }
+            }
+        }
     }
 
     private func stopPollTimer() {

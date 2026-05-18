@@ -27,6 +27,12 @@ nonisolated func isExternalReader(
 
 // MARK: - Production implementation
 
+private struct AudioProcessInfo {
+    let pid: pid_t
+    let bundle: String
+    let isRunningInput: Bool
+}
+
 struct SystemAudioProcessProber: AudioProcessProber {
     func externalReaders(excluding ourPID: pid_t) async -> [pid_t] {
         var listAddr = AudioObjectPropertyAddress(
@@ -67,9 +73,7 @@ struct SystemAudioProcessProber: AudioProcessProber {
         return result
     }
 
-    private func readProcess(
-        objID: AudioObjectID
-    ) -> (pid: pid_t, bundle: String, isRunningInput: Bool)? {
+    private func readProcess(objID: AudioObjectID) -> AudioProcessInfo? {
         var pidSize = UInt32(MemoryLayout<pid_t>.size)
         var pid: pid_t = 0
         var pidAddr = AudioObjectPropertyAddress(
@@ -109,6 +113,6 @@ struct SystemAudioProcessProber: AudioProcessProber {
             }
         }
 
-        return (pid: pid, bundle: bundle, isRunningInput: isRunningInput != 0)
+        return AudioProcessInfo(pid: pid, bundle: bundle, isRunningInput: isRunningInput != 0)
     }
 }
