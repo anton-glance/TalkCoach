@@ -27,6 +27,7 @@ nonisolated final class FileBufferProvider: AudioBufferProvider, @unchecked Send
                         if pcm.frameLength == 0 { break }
                         var samples: [[Float]] = []
                         if let floatData = pcm.floatChannelData {
+                            // swiftlint:disable:next identifier_name
                             for ch in 0..<Int(format.channelCount) {
                                 samples.append(Array(UnsafeBufferPointer(
                                     start: floatData[ch],

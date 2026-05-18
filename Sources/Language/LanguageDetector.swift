@@ -45,8 +45,10 @@ actor LanguageDetector {
                 initialLocale: declaredLocales.first ?? Locale(identifier: "en_US")
             )
         } else {
+            // swiftlint:disable identifier_name
             let s1 = dominantScript(for: declaredLocales[0])
             let s2 = dominantScript(for: declaredLocales[1])
+            // swiftlint:enable identifier_name
 
             if s1 == s2 {
                 self.strategy = SameScriptStrategy(
@@ -78,8 +80,10 @@ actor LanguageDetector {
             storedLocale = locale
             return locale
         } else {
+            // swiftlint:disable identifier_name
             let s = strategy
             let c = continuation
+            // swiftlint:enable identifier_name
             detectionTask = Task { [s, c] in
                 _ = try? await s.runDetection(continuation: c)
             }

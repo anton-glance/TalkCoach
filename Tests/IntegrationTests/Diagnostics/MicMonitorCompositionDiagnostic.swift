@@ -140,6 +140,7 @@ final class MicMonitorCompositionDiagnostic: XCTestCase {
     // AC-D3: Probe kAudioHardwarePropertyProcessObjectList API availability and notification behavior.
     // This verifies the proposed fix surface is available in the current SDK.
     // Expected: dataSize status == noErr; each process object has a readable PID.
+    // swiftlint:disable:next function_body_length
     func testD3_ProcessObjectListAPIAvailability() async throws {
         guard let deviceID = provider.defaultInputDeviceID() else {
             throw XCTSkip("No default input device")

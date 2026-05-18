@@ -33,11 +33,14 @@ final class TokenConsumerTests: XCTestCase {
 
     // AC-TC2: Serial fan-out — two consumers both receive same token in registration order
     func testSerialFanOutDeliversToAllConsumers() async {
+        // swiftlint:disable identifier_name
         let c1 = FakeTokenConsumer()
         let c2 = FakeTokenConsumer()
+        // swiftlint:enable identifier_name
         let token = TranscribedToken(token: "hello", startTime: 0.0, endTime: 0.5, isFinal: true)
 
         let consumers: [any TokenConsumer] = [c1, c2]
+        // swiftlint:disable:next identifier_name
         for c in consumers { await c.consume(token) }
 
         XCTAssertEqual(c1.receivedTokens.count, 1)
@@ -50,15 +53,19 @@ final class TokenConsumerTests: XCTestCase {
     func testZeroConsumersIsNoOp() async {
         let token = TranscribedToken(token: "test", startTime: 0.0, endTime: 1.0, isFinal: false)
         let consumers: [any TokenConsumer] = []
+        // swiftlint:disable:next identifier_name
         for c in consumers { await c.consume(token) }
     }
 
     // AC-TC4: sessionEnded reaches all registered consumers
     func testSessionEndedReachesAllConsumers() async {
+        // swiftlint:disable identifier_name
         let c1 = FakeTokenConsumer()
         let c2 = FakeTokenConsumer()
+        // swiftlint:enable identifier_name
 
         let consumers: [any TokenConsumer] = [c1, c2]
+        // swiftlint:disable:next identifier_name
         for c in consumers { await c.sessionEnded() }
 
         XCTAssertEqual(c1.sessionEndedCallCount, 1)

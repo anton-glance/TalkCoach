@@ -49,6 +49,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         let pipeline = AudioPipeline(provider: engineProvider)
 
         // Real LanguageDetector — single declared locale → SingleLocaleStrategy → returns immediately
+        // swiftlint:disable:next identifier_name
         let ld = LanguageDetector(
             declaredLocales: [Locale(identifier: "en_US")],
             partialTranscriptProvider: StubPartialTranscriptProvider(),

@@ -39,6 +39,14 @@ actor AppleTranscriberBackend: TranscriberBackend {
     // serialization keeps the write-then-read ordering safe.
     nonisolated(unsafe) private var _transcriber: SpeechTranscriber?
 
+    // Test seams — nil in production. Set before start() is called.
+    // testOnlySkipAnalyzerStart: bypasses SpeechAnalyzer creation/start so tests
+    //   can verify engine-ready timing without a real Speech framework environment.
+    // afterInputYieldHook: fires synchronously before engineReadyContinuation.yield(),
+    //   after the first inputContinuation.yield() — used to verify ordering in tests.
+    nonisolated(unsafe) var testOnlySkipAnalyzerStart: Bool = false
+    nonisolated(unsafe) var afterInputYieldHook: (@Sendable () -> Void)?
+
     // MARK: Init
 
     init(
@@ -61,6 +69,7 @@ actor AppleTranscriberBackend: TranscriberBackend {
 
     // MARK: TranscriberBackend
 
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     func start(locale: Locale) async throws {
         // Find the canonical Apple locale. Never use supportedLocale(equivalentTo:)
         // — it gives misleading results for unsupported locales (Session 006).
@@ -90,6 +99,7 @@ actor AppleTranscriberBackend: TranscriberBackend {
 
         // Result task: iterate transcriber.results, tokenize, relay to tokenStream
         resultTask = Task { [self] in
+            // swiftlint:disable:next identifier_name
             guard let t = self._transcriber else { return }
             do {
                 for try await result in t.results {
@@ -106,9 +116,13 @@ actor AppleTranscriberBackend: TranscriberBackend {
             cont.finish()
         }
 
-        // Feed task: set up SpeechAnalyzer on first buffer, convert + feed each buffer
+        // Feed task: set up SpeechAnalyzer on first buffer, convert + feed each buffer.
+        // Engine-ready fires AFTER the first buffer is yielded to the analyzer input
+        // (not at analyzer.start) — Plan v4 §1. testOnlySkipAnalyzerStart bypasses
+        // SpeechAnalyzer for unit tests; afterInputYieldHook fires before the signal.
         feedTask = Task { [self] in
             var analyzerStarted = false
+            var engineReadySignaled = false
             var converter: AVAudioConverter?
             var analyzerFormat: AVAudioFormat?
 
@@ -116,39 +130,45 @@ actor AppleTranscriberBackend: TranscriberBackend {
                 if Task.isCancelled { break }
 
                 if !analyzerStarted {
-                    guard let t = self._transcriber else { break }
                     guard let sourceFormat = AVAudioFormat(
                         standardFormatWithSampleRate: capturedBuffer.sampleRate,
                         channels: AVAudioChannelCount(capturedBuffer.channelCount)
                     ) else { continue }
 
-                    let targetFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
-                        compatibleWith: [t], considering: sourceFormat
-                    )
-                    let af = targetFormat ?? sourceFormat
-                    analyzerFormat = af
+                    if self.testOnlySkipAnalyzerStart {
+                        analyzerFormat = sourceFormat
+                        analyzerStarted = true
+                    } else {
+                        // swiftlint:disable:next identifier_name
+                        guard let t = self._transcriber else { break }
+                        let targetFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+                            compatibleWith: [t], considering: sourceFormat
+                        )
+                        // swiftlint:disable:next identifier_name
+                        let af = targetFormat ?? sourceFormat
+                        analyzerFormat = af
 
-                    if let tf = targetFormat, tf != sourceFormat {
-                        converter = AVAudioConverter(from: sourceFormat, to: tf)
-                    }
+                        // swiftlint:disable:next identifier_name
+                        if let tf = targetFormat, tf != sourceFormat {
+                            converter = AVAudioConverter(from: sourceFormat, to: tf)
+                        }
 
-                    let analyzer = SpeechAnalyzer(modules: [t])
-                    do {
-                        try await analyzer.prepareToAnalyze(in: af)
-                        try await analyzer.start(inputSequence: inputStream)
-                    } catch {
-                        logger.error("AppleTranscriberBackend: analyzer start failed: \(error)")
-                        break
+                        let analyzer = SpeechAnalyzer(modules: [t])
+                        do {
+                            try await analyzer.prepareToAnalyze(in: af)
+                            try await analyzer.start(inputSequence: inputStream)
+                        } catch {
+                            logger.error("AppleTranscriberBackend: analyzer start failed: \(error)")
+                            break
+                        }
+                        logger.info(
+                            "AppleTranscriberBackend: SpeechAnalyzer started (\(af.sampleRate)Hz \(af.channelCount)ch)"
+                        )
+                        analyzerStarted = true
                     }
-                    logger.info(
-                        "AppleTranscriberBackend: SpeechAnalyzer started (\(af.sampleRate)Hz \(af.channelCount)ch)"
-                    )
-                    analyzerStarted = true
-                    self.engineReadyContinuation?.yield(())
-                    self.engineReadyContinuation?.finish()
-                    self.engineReadyContinuation = nil
                 }
 
+                // swiftlint:disable:next identifier_name
                 guard let af = analyzerFormat else { continue }
                 guard let pcm = toPCMBuffer(capturedBuffer) else { continue }
 
@@ -170,7 +190,15 @@ actor AppleTranscriberBackend: TranscriberBackend {
                     analyzerBuffer = pcm
                 }
 
+                // Yield the buffer to the analyzer input BEFORE signaling engine-ready.
                 inputContinuation.yield(AnalyzerInput(buffer: analyzerBuffer))
+                if !engineReadySignaled {
+                    engineReadySignaled = true
+                    self.afterInputYieldHook?()
+                    self.engineReadyContinuation?.yield(())
+                    self.engineReadyContinuation?.finish()
+                    self.engineReadyContinuation = nil
+                }
             }
 
             inputContinuation.finish()
@@ -236,6 +264,7 @@ private nonisolated func toPCMBuffer(_ buffer: CapturedAudioBuffer) -> AVAudioPC
     }
     pcm.frameLength = buffer.frameLength
     if let channelData = pcm.floatChannelData {
+        // swiftlint:disable:next identifier_name
         for (ch, samples) in buffer.samples.enumerated() {
             let dst = channelData[ch]
             samples.withUnsafeBufferPointer { buf in

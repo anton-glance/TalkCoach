@@ -68,7 +68,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
     private func makeComponents(
         reducedMotion: Bool = true,
-        now nowProvider: @escaping () -> Date = { Date() }
+        now nowProvider: @escaping () -> Date = { Date() },
+        runAnimation: @escaping (TimeInterval, @escaping () -> Void) -> Void = { _, block in block() }
     ) {
         let suiteName = "LifecycleTests.\(UUID())"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -85,7 +86,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
             hideScheduler: scheduler,
             settingsStore: settingsStore,
             now: nowProvider,
-            reducedMotionProvider: { reducedMotion }
+            reducedMotionProvider: { reducedMotion },
+            runAnimation: runAnimation
         )
     }
 
@@ -517,6 +519,55 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
         XCTAssertTrue(exitedFired,
                       "TrackingContentView.mouseExited must invoke onHoverExited callback")
+    }
+
+    // MARK: - Group 10: Bug B — linger fade animation and alpha reset
+
+    func testLingerFullTimer_NonReducedMotion_RunsAnimationWithDuration2() async {
+        // Bug B fix: lingerFullTimerFired() must call runAnimation(2.0, block) in the
+        // non-reducedMotion path. The injected closure captures arguments for verification.
+        var capturedDuration: TimeInterval?
+        var capturedBlock: (() -> Void)?
+        makeComponents(reducedMotion: false, runAnimation: { duration, block in
+            capturedDuration = duration
+            capturedBlock = block
+        })
+        sut.start()
+        await activateSession()
+        await showPanel()
+        await endSession()
+        XCTAssertEqual(sut.panelState, .lingerFull)
+
+        scheduler.fire(delay: 3.0) // lingerFullTimerFired() runs
+
+        XCTAssertEqual(capturedDuration, 2.0,
+                       "lingerFade animation must have exactly 2.0s duration")
+        XCTAssertNotNil(capturedBlock,
+                        "runAnimation must be called with a non-nil block")
+
+        // Verify the block sets panel alpha to 0 (fade-to-invisible)
+        capturedBlock?()
+        XCTAssertEqual(sut.panelWindow?.alphaValue, 0.0,
+                       "Animation block must set panel alphaValue to 0 for fade effect")
+    }
+
+    func testCompleteLingerHide_ResetsAlphaToOne_ForNextShow() async {
+        // Bug B fix: completeLingerHide() must reset panel alphaValue to 1.0 after hiding,
+        // so the next session's showPanel() starts at full opacity, not 0.0 from the fade.
+        makeComponents(reducedMotion: true) // reduced motion skips animation, fires hide directly
+        sut.start()
+        await activateSession()
+        await showPanel()
+        await endSession()
+        XCTAssertEqual(sut.panelState, .lingerFull)
+
+        // Simulate alpha being at 0.0 (as if a fade animation ran and ended)
+        sut.panelWindow?.alphaValue = 0.0
+
+        scheduler.fire(delay: 3.0) // reduced-motion path → completeLingerHide()
+
+        XCTAssertEqual(sut.panelWindow?.alphaValue, 1.0,
+                       "completeLingerHide must reset alphaValue to 1.0 so next show starts opaque")
     }
 
     // MARK: - Group 9: Dismissed state invariants

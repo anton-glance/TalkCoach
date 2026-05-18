@@ -18,6 +18,7 @@ nonisolated final class SpeechStubBackend: TranscriberBackend, @unchecked Sendab
     let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.finish() }
 
     init() {
+        // swiftlint:disable:next identifier_name
         var c: AsyncStream<TranscribedToken>.Continuation!
         tokenStream = AsyncStream { c = $0 }
         cont = c

@@ -36,6 +36,7 @@ nonisolated func makeTapBlock(
         channels.reserveCapacity(Int(channelCount))
 
         if let floatData = buffer.floatChannelData {
+            // swiftlint:disable:next identifier_name
             for ch in 0..<Int(channelCount) {
                 let ptr = floatData[ch]
                 let channelSamples = Array(UnsafeBufferPointer(start: ptr, count: Int(frameLength)))
@@ -69,7 +70,6 @@ final class AudioPipeline {
 
     private let provider: any AudioEngineProvider
     private let continuation: AsyncStream<CapturedAudioBuffer>.Continuation
-    private var isStopped = false
     nonisolated(unsafe) private var configChangeObserver: (any NSObjectProtocol)?
 
     init(provider: any AudioEngineProvider = SystemAudioEngineProvider()) {
@@ -87,7 +87,7 @@ final class AudioPipeline {
     }
 
     func start() throws {
-        guard !isStarted, !isStopped else { return }
+        guard !isStarted else { return }
 
         do {
             try provider.setVoiceProcessingEnabled(false)
@@ -138,9 +138,7 @@ final class AudioPipeline {
             configChangeObserver = nil
         }
 
-        continuation.finish()
         isStarted = false
-        isStopped = true
     }
 
     func recover() {

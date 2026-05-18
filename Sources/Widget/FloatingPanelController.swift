@@ -28,6 +28,7 @@ final class FloatingPanelController {
     private let settingsStore: SettingsStore
     private let now: () -> Date
     private let reducedMotionProvider: () -> Bool
+    private let runAnimation: (TimeInterval, @escaping () -> Void) -> Void
     let viewModel = WidgetViewModel()
 
     private var panel: CoachingPanel?
@@ -58,6 +59,13 @@ final class FloatingPanelController {
         now: @escaping () -> Date = { Date() },
         reducedMotionProvider: @escaping () -> Bool = {
             NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        },
+        runAnimation: @escaping (TimeInterval, @escaping () -> Void) -> Void = { duration, block in
+            NSAnimationContext.runAnimationGroup({
+                $0.duration = duration
+                $0.allowsImplicitAnimation = true
+                block()
+            })
         }
     ) {
         self.sessionCoordinator = sessionCoordinator
@@ -67,6 +75,7 @@ final class FloatingPanelController {
         self.settingsStore = settingsStore
         self.now = now
         self.reducedMotionProvider = reducedMotionProvider
+        self.runAnimation = runAnimation
     }
 
     func start() {
@@ -283,6 +292,9 @@ final class FloatingPanelController {
             completeLingerHide()
         } else {
             panelState = .lingerFade
+            runAnimation(2.0) { [weak self] in
+                self?.panel?.alphaValue = 0.0
+            }
             hideToken = hideScheduler.schedule(delay: 2.0) { [weak self] in
                 guard let self else { return }
                 self.completeLingerHide()
@@ -295,6 +307,9 @@ final class FloatingPanelController {
         hideToken = nil
         lingerStartedAt = nil
         hidePanel(reason: "linger-complete")
+        // Reset alpha so the next session's showPanel() starts at full opacity,
+        // not at the 0.0 the fade animation left it at.
+        panel?.alphaValue = 1.0
         resetViewModel()
         Logger.floatingPanel.info("Linger complete — panel hidden, viewModel reset")
     }
@@ -495,9 +510,16 @@ final class FloatingPanelController {
 
     func handleHoverExited() {
         guard panelState == .lingerFull else { return }
-        let start = lingerStartedAt ?? now()
-        let elapsed = now().timeIntervalSince(start)
-        let remaining = max(0.5, 3.0 - elapsed)
+        let remaining: TimeInterval
+        if let start = lingerStartedAt {
+            let elapsed = now().timeIntervalSince(start)
+            remaining = max(0.5, 3.0 - elapsed)
+        } else {
+            // lingerStartedAt is nil — entered lingerFull from lingerFade via hover.
+            // Restart the full 3-second countdown.
+            lingerStartedAt = now()
+            remaining = 3.0
+        }
         hideToken = hideScheduler.schedule(delay: remaining) { [weak self] in
             guard let self else { return }
             self.lingerFullTimerFired()

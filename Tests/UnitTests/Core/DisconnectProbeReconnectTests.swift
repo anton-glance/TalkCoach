@@ -94,6 +94,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     private func makeWiring(
         stubbedLocale: String = "en-US",
         appleLocales: [String] = ["en-US"]
+    // swiftlint:disable:next large_tuple
     ) -> (wiring: SessionWiring, engineProvider: ProbeTestEngineProvider, fakeLD: FakeLanguageDetector) {
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)

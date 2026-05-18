@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import AVFAudio
 import XCTest
 @testable import TalkCoach
@@ -52,6 +53,7 @@ private final class FakeAudioEngineProvider: AudioEngineProvider {
 // MARK: - Tests
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class AudioPipelineTests: XCTestCase {
 
     private var fake: FakeAudioEngineProvider!
@@ -73,6 +75,7 @@ final class AudioPipelineTests: XCTestCase {
         }
         buffer.frameLength = frameCount
         if let floatData = buffer.floatChannelData {
+            // swiftlint:disable:next identifier_name
             for i in 0..<Int(frameCount) {
                 floatData[0][i] = Float(i) / Float(frameCount)
             }
@@ -205,14 +208,17 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertTrue(fake.callLog.isEmpty)
     }
 
-    func testStartAfterStopIsNoOp() throws {
+    // Bug C fix: stop() no longer permanently disables the pipeline.
+    // A second start() after stop() reinstalls the tap and resumes the same stream.
+    func testStartAfterStop_ReinitializesSuccessfully() throws {
         makeSUT()
         try sut.start()
         sut.stop()
         fake.callLog.removeAll()
         try sut.start()
-        XCTAssertFalse(sut.isStarted)
-        XCTAssertTrue(fake.callLog.isEmpty, "No provider calls on restart after stop")
+        XCTAssertTrue(sut.isStarted, "Pipeline must be restartable after stop (Bug C fix)")
+        XCTAssertEqual(fake.callLog.filter { $0 == "installTap" }.count, 1,
+                       "Second start must reinstall the tap")
     }
 
     // MARK: - Recovery
@@ -275,15 +281,7 @@ final class AudioPipelineTests: XCTestCase {
             "No recovery steps should run after stop: \(fake.callLog)"
         )
         XCTAssertNil(sut.lastRecoveryDuration)
-
-        let expectation = XCTestExpectation(description: "Stream terminated")
-        let stream = sut.bufferStream
-        let task = Task { @MainActor in
-            for await _ in stream {}
-            expectation.fulfill()
-        }
-        await fulfillment(of: [expectation], timeout: 1.0)
-        task.cancel()
+        // Bug C fix: stream is NOT terminated by stop() — it stays alive for the next start().
     }
 
     // MARK: - Recovery latency
@@ -351,6 +349,7 @@ final class AudioPipelineTests: XCTestCase {
     // MARK: - Concurrency
 
     func testCapturedAudioBufferIsSendable() {
+        // swiftlint:disable:next identifier_name
         nonisolated func acceptSendable(_ fn: @Sendable () -> Void) { fn() }
         let buffer = CapturedAudioBuffer(
             frameLength: 0, sampleRate: 0, channelCount: 0,
@@ -362,6 +361,7 @@ final class AudioPipelineTests: XCTestCase {
     func testMakeTapBlockCallableFromNonisolatedContext() {
         var cont: AsyncStream<CapturedAudioBuffer>.Continuation!
         _ = AsyncStream<CapturedAudioBuffer>(bufferingPolicy: .bufferingNewest(1)) { cont = $0 }
+        // swiftlint:disable:next identifier_name
         nonisolated func callFactory(c: AsyncStream<CapturedAudioBuffer>.Continuation) {
             _ = makeTapBlock(continuation: c)
         }
@@ -370,21 +370,68 @@ final class AudioPipelineTests: XCTestCase {
 
     // MARK: - Cleanup
 
-    func testStopRemovesTapAndFinishesStream() async throws {
+    // Bug C fix: stop() removes the tap but does NOT finish the stream continuation.
+    // The same stream remains consumable after a subsequent start() call.
+    func testStop_RemovesTapButDoesNotFinishStream() async throws {
         makeSUT()
         try sut.start()
         sut.stop()
 
-        XCTAssertTrue(fake.callLog.contains("removeTap"))
+        XCTAssertTrue(fake.callLog.contains("removeTap"),
+                      "stop() must remove the AVAudioEngine tap")
 
-        let expectation = XCTestExpectation(description: "Stream terminated")
+        // Verify stream stays open (no timeout — we don't expect it to finish)
+        var receivedBuffer = false
         let stream = sut.bufferStream
-        let task = Task { @MainActor in
-            for await _ in stream {}
-            expectation.fulfill()
+        let consumeTask = Task { @MainActor in
+            for await _ in stream {
+                receivedBuffer = true
+                break
+            }
         }
-        await fulfillment(of: [expectation], timeout: 1.0)
-        task.cancel()
+
+        // Restart and deliver a buffer — stream must still be alive
+        try sut.start()
+        deliverSyntheticBuffer()
+        try await Task.sleep(for: .milliseconds(200))
+        consumeTask.cancel()
+
+        XCTAssertTrue(receivedBuffer, "Stream must still deliver buffers after stop/start cycle")
+    }
+
+    // Bug C fix: verifies the same bufferStream serves two consecutive sessions.
+    func testAudioPipeline_Restart_AfterStopProducesBuffers() async throws {
+        makeSUT()
+        try sut.start()
+
+        var received: [Int64] = []
+        let expectation = XCTestExpectation(description: "Two buffers received across stop/start")
+        expectation.expectedFulfillmentCount = 2
+        let stream = sut.bufferStream
+        let consumeTask = Task { @MainActor in
+            var count = 0
+            for await buffer in stream {
+                received.append(buffer.sampleTime)
+                count += 1
+                expectation.fulfill()
+                if count >= 2 { break }
+            }
+        }
+
+        // Session 1: deliver one buffer, then stop
+        deliverSyntheticBuffer(sampleTime: 100)
+        sut.stop()
+
+        // Session 2: restart, deliver another buffer on the SAME stream
+        try sut.start()
+        deliverSyntheticBuffer(sampleTime: 200)
+
+        await fulfillment(of: [expectation], timeout: 2.0)
+        consumeTask.cancel()
+
+        XCTAssertEqual(received.count, 2, "Both sessions must deliver buffers to the same stream")
+        XCTAssertEqual(received[0], 100, "Session 1 buffer must arrive first")
+        XCTAssertEqual(received[1], 200, "Session 2 buffer must arrive after stop/start")
     }
 
     func testStopDeregistersObserver() throws {

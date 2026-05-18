@@ -57,6 +57,7 @@ final class FakeAudioBufferProvider: AudioBufferProvider, @unchecked Sendable {
 @MainActor
 final class LanguageDetectorTests: XCTestCase {
 
+    // swiftlint:disable:next large_tuple
     private func makeProviders() -> (
         FakePartialTranscriptProvider,
         FakeWhisperLIDProvider,

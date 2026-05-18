@@ -1,4 +1,3 @@
-// swiftlint:disable file_length
 import XCTest
 @testable import TalkCoach
 
@@ -49,7 +48,6 @@ private final class WidgetTestHideScheduler: HideScheduler, @unchecked Sendable 
 // MARK: - WidgetDecouplingTests
 
 @MainActor
-// swiftlint:disable:next type_body_length
 final class WidgetDecouplingTests: XCTestCase {
 
     // swiftlint:disable large_tuple

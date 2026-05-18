@@ -111,6 +111,68 @@ final class AppleTranscriberBackendTests: XCTestCase {
         await backend.stop()
     }
 
+    // MARK: - Bug A: engine-ready fires after first buffer, not at analyzer.start
+
+    // Creates a minimal CapturedAudioBuffer for injection into FakeAudioBufferProvider.
+    private func makeSyntheticCapturedBuffer() -> CapturedAudioBuffer {
+        let frameCount: AVAudioFrameCount = 480
+        return CapturedAudioBuffer(
+            frameLength: frameCount,
+            sampleRate: 48_000,
+            channelCount: 1,
+            sampleTime: 0,
+            hostTime: 0,
+            samples: [Array(repeating: 0.0, count: Int(frameCount))]
+        )
+    }
+
+    func testEngineReady_FiresAfterFirstBufferDeliveredToAnalyzerInput() async throws {
+        // Plan v4 §1: engine-ready = first audio buffer flowing into SpeechAnalyzer.
+        // testOnly_skipAnalyzerStart bypasses the real SpeechAnalyzer (requires Speech
+        // framework) so we can verify the signal fires at the buffer-yield callsite.
+        // afterInputYieldHook fires synchronously BEFORE engineReadyContinuation.yield(),
+        // confirming the code-level ordering guarantee.
+        let localesProvider = FakeSupportedLocalesProvider()
+        localesProvider.locales = [Locale(identifier: "en-US")]
+        let assetProvider = FakeAssetInventoryStatusProvider()
+        assetProvider.installedResult = true
+
+        let bufferProvider = FakeAudioBufferProvider()
+        bufferProvider.scriptedBuffers = [makeSyntheticCapturedBuffer()]
+
+        let backend = AppleTranscriberBackend(
+            audioBufferProvider: bufferProvider,
+            localesProvider: localesProvider,
+            assetStatusProvider: assetProvider
+        )
+        backend.testOnlySkipAnalyzerStart = true
+
+        // afterInputYieldHook fires BEFORE engineReadyContinuation.yield().
+        // When we observe engine-ready, hookFiredBeforeEngineReady must already be true.
+        nonisolated(unsafe) var hookFiredBeforeEngineReady = false
+        backend.afterInputYieldHook = { hookFiredBeforeEngineReady = true }
+
+        try await backend.start(locale: Locale(identifier: "en-US"))
+
+        let exp = XCTestExpectation(description: "engineReadyStream fires after first buffer")
+        nonisolated(unsafe) var hookStateAtObservation = false
+        let engineReadyTask = Task {
+            for await _ in backend.engineReadyStream {
+                hookStateAtObservation = hookFiredBeforeEngineReady
+                exp.fulfill()
+                break
+            }
+        }
+
+        await fulfillment(of: [exp], timeout: 2.0)
+        engineReadyTask.cancel()
+        await backend.stop()
+
+        XCTAssertTrue(hookStateAtObservation,
+                      "afterInputYieldHook must fire before engineReadyContinuation.yield() — " +
+                      "confirming engine-ready fires AFTER the first buffer is yielded to the analyzer")
+    }
+
     // MARK: InstalledLocalesProvider seam
 
     func testIsInstalledTrustsInstalledLocalesSet() async throws {

@@ -20,6 +20,9 @@ excluded:
   - PowerSpike
   - TokenStabilitySpike
   - ShoutingSpike
+  - MicTapTightenSpike
+  - Spike
+  - research
   - design
   - docs/design/old
 
