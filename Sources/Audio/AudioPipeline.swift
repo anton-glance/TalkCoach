@@ -66,6 +66,8 @@ nonisolated func makeTapBlock(
 final class AudioPipeline {
     private(set) var isStarted: Bool = false
     private(set) var lastRecoveryDuration: TimeInterval?
+    var onRecoveryBegan: (() -> Void)?
+    var onRecoveryEnded: (() -> Void)?
     // AsyncStream is single-consumer per SE-0314. Recreated on each start() so each
     // session's feedTask iterator operates on a fresh stream. nonisolated(unsafe) because
     // AudioPipelineBufferProvider.bufferStream() may read this from non-MainActor contexts;
@@ -155,6 +157,7 @@ final class AudioPipeline {
 
     func recover() {
         guard isStarted else { return }
+        onRecoveryBegan?()
         let start = CFAbsoluteTimeGetCurrent()
         let interval = signposter.beginInterval("AudioRecovery")
 
@@ -185,5 +188,6 @@ final class AudioPipeline {
         lastRecoveryDuration = elapsed
         signposter.endInterval("AudioRecovery", interval)
         logger.info("Recovered in \(Int(elapsed * 1000))ms")
+        onRecoveryEnded?()
     }
 }

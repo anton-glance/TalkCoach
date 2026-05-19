@@ -43,12 +43,6 @@ enum SessionEndReason: String {
     case micFreedExternally = "mic-freed-externally"
 }
 
-// MARK: - CaptureActivityState
-
-enum CaptureActivityState: Equatable {
-    case waiting
-}
-
 // MARK: - SessionCoordinator
 
 /// Orchestrates session lifecycle. When the mic activates, wires the audio pipeline,
@@ -64,7 +58,6 @@ final class SessionCoordinator: ObservableObject {
     @Published var lastTokenArrival: Date?
     @Published var lastEngineReadyAt: Date?
     @Published var isInTokenSilence: Bool = false
-    @Published private(set) var captureActivityState: CaptureActivityState = .waiting
     @Published private(set) var isRecovering: Bool = false
     private(set) var lastEndReason: SessionEndReason?
     private(set) var isRunning: Bool = false
@@ -237,11 +230,11 @@ final class SessionCoordinator: ObservableObject {
             tokenSilenceToken = nil
         }
         isInTokenSilence = false
+        isRecovering = false
         guard case .active(let ctx) = state else { return }
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
         state = .idle
         lastTokenArrival = nil
-        captureActivityState = .waiting
         lastEndReason = reason
         Logger.session.info("Session ended: \(ended.id) reason=\(reason.rawValue) duration \(ended.endedAt.timeIntervalSince(ended.startedAt), format: .fixed(precision: 1))s")
         for handler in endedSessionHandlers {
@@ -263,6 +256,12 @@ final class SessionCoordinator: ObservableObject {
 
         // Step 1: AudioPipeline
         do {
+            capturedWiring.audioPipeline.onRecoveryBegan = { [weak self] in
+                self?.audioPipelineDidBeginRecovery()
+            }
+            capturedWiring.audioPipeline.onRecoveryEnded = { [weak self] in
+                self?.audioPipelineDidEndRecovery()
+            }
             try capturedWiring.audioPipeline.start()
             activePipeline = capturedWiring.audioPipeline
             Logger.session.info("SessionCoordinator: AudioPipeline started")

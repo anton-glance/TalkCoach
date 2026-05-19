@@ -1,0 +1,7 @@
+timestamp,prev,next,reason,idle,warming,counting,waiting,wrapping,recovering,dismissed
+2026-05-19T10:00:00.000Z,idle,warming,session-active,v,^,,,,,
+2026-05-19T10:00:02.500Z,warming,counting,engine-ready,,v,^,,,,
+2026-05-19T10:00:05.100Z,counting,waiting,token-silence,,,v,^,,,
+2026-05-19T10:00:07.200Z,waiting,counting,token,,,^,v,,,
+2026-05-19T10:00:09.800Z,counting,wrapping,session-idle,,,v,,^,,
+2026-05-19T10:00:12.900Z,wrapping,idle,linger-complete,^,,,,v,,

@@ -1,0 +1,6 @@
+widget-state: 2026-05-19T10:00:00.000Z idle→warming reason=session-active
+widget-state: 2026-05-19T10:00:02.500Z warming→counting reason=engine-ready
+widget-state: 2026-05-19T10:00:05.100Z counting→waiting reason=token-silence
+widget-state: 2026-05-19T10:00:07.200Z waiting→counting reason=token
+widget-state: 2026-05-19T10:00:09.800Z counting→wrapping reason=session-idle
+widget-state: 2026-05-19T10:00:12.900Z wrapping→idle reason=linger-complete

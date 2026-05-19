@@ -34,17 +34,23 @@ final class FloatingPanelController {
     private var panel: CoachingPanel?
     private var stateSubscription: AnyCancellable?
     private var tokenArrivalSubscription: AnyCancellable?
-    private var captureStateSubscription: AnyCancellable?
     private var engineReadySubscription: AnyCancellable?
     private var tokenSilenceSubscription: AnyCancellable?
+    private var recoverySubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
     private var dragDebounceToken: HideSchedulerToken?
-    private var countingTimeoutToken: HideSchedulerToken?
+    private var recoveryEndToken: HideSchedulerToken?
     private var moveObserver: (any NSObjectProtocol)?
     private var isProgrammaticMove = false
     private var isStarted = false
     private var lastTokenObservedAtNs: UInt64 = 0
     private var lingerStartedAt: Date?
+
+    private let isoFormatter: ISO8601DateFormatter = {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fmt
+    }()
 
     var isShowingPanel: Bool { panel?.isVisible ?? false }
     var currentPanelFrame: NSRect? { panel?.frame }
@@ -108,14 +114,18 @@ final class FloatingPanelController {
             .dropFirst()
             .sink { [weak self] isSilent in
                 guard let self, isSilent else { return }
-                self.viewModel.activityState = .waiting
-                Logger.floatingPanel.info("activity state: waiting (token-silence)")
+                self.setActivityState(.waiting, reason: "token-silence")
             }
 
-        captureStateSubscription = sessionCoordinator.$captureActivityState
-            .sink { [weak self] newState in
+        recoverySubscription = sessionCoordinator.$isRecovering
+            .dropFirst()
+            .sink { [weak self] isRecovering in
                 guard let self else { return }
-                self.handleCaptureActivityStateChange(newState)
+                if isRecovering {
+                    self.handleRecoveryBegan()
+                } else {
+                    self.handleRecoveryEnded()
+                }
             }
     }
 
@@ -126,16 +136,16 @@ final class FloatingPanelController {
 
         stateSubscription = nil
         tokenArrivalSubscription = nil
-        captureStateSubscription = nil
         engineReadySubscription = nil
         tokenSilenceSubscription = nil
+        recoverySubscription = nil
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
             moveObserver = nil
         }
         cancelPendingDragDebounce()
         cancelPendingHide()
-        cancelCountingTimeout()
+        cancelRecoveryEndTimer()
         lingerStartedAt = nil
         hidePanel(reason: "lifecycle-stop")
     }
@@ -215,17 +225,33 @@ final class FloatingPanelController {
         }
 
         viewModel.isSessionActive = true
-        Logger.floatingPanel.info("Session active \(ctx.id) — widget will appear on engine-ready")
+        viewModel.sessionStartedAt = ctx.startedAt  // always set to mic-on time
+
+        switch panelState {
+        case .hidden:
+            panelState = .visible
+            showPanel()
+            setActivityState(.warming, reason: "session-active")
+            Logger.floatingPanel.info("Session active \(ctx.id) — panel shown warming")
+        case .visible:
+            setActivityState(.warming, reason: "session-active")  // rapid restart within same visible state
+        case .lingerFull, .lingerFade:
+            // Phase G Branch B: linger continues; sessionStartedAt updated; engine-ready will switch to .counting
+            Logger.floatingPanel.info("Phase G: session-active during linger [\(ctx.id)] — sessionStartedAt updated, waiting for engine-ready")
+        case .dismissed:
+            break
+        }
     }
 
     private func handleSessionIdle() {
-        cancelCountingTimeout()
+        cancelRecoveryEndTimer()
         viewModel.isSessionActive = false
         viewModel.sessionStartedAt = nil
 
         switch panelState {
         case .visible:
             cancelPendingHide()
+            setActivityState(.wrapping, reason: "session-idle")
             startLingerFull()
             Logger.floatingPanel.info("Session ended while visible — starting lingerFull")
 
@@ -238,42 +264,35 @@ final class FloatingPanelController {
     }
 
     private func handleEngineReady() {
-        cancelCountingTimeout()
+        guard case .active = sessionCoordinator.state else { return }
         switch panelState {
         case .hidden:
-            guard case .active = sessionCoordinator.state else { return }
-            viewModel.sessionStartedAt = now()
-            viewModel.isSessionActive = true
-            viewModel.activityState = .waiting
-            panelState = .visible
-            showPanel()
-            armCountingTimeout()
-            Logger.floatingPanel.info("Engine ready — panel shown (.visible)")
+            // Unreachable: handleSessionActive always shows the panel (warming) before engine-ready fires.
+            assertionFailure("engine-ready while hidden — handleSessionActive should have shown warming panel first")
         case .visible:
-            armCountingTimeout()
+            // warming → counting
+            setActivityState(.counting, reason: "engine-ready")
         case .lingerFull:
             // Phase G: in-place content swap — cancel linger, reset content, stay showing
             cancelPendingHide()
             lingerStartedAt = nil
             resetViewModel()
-            viewModel.sessionStartedAt = now()
             viewModel.isSessionActive = true
-            viewModel.activityState = .waiting
             panelState = .visible
-            armCountingTimeout()
-            Logger.floatingPanel.info("Phase G: engine-ready during lingerFull — in-place content swap → .visible")
+            applyPanelOpacity(animated: false)
+            setActivityState(.counting, reason: "engine-ready-phase-g")
+            Logger.floatingPanel.info("Phase G: engine-ready during lingerFull — in-place content swap → .counting")
         case .lingerFade:
             // Phase G: cancel fade, snap alpha, reset content, stay showing
             cancelPendingHide()
             panel?.alphaValue = 1.0
             lingerStartedAt = nil
             resetViewModel()
-            viewModel.sessionStartedAt = now()
             viewModel.isSessionActive = true
-            viewModel.activityState = .waiting
             panelState = .visible
-            armCountingTimeout()
-            Logger.floatingPanel.info("Phase G: engine-ready during lingerFade — fade cancelled, in-place content swap → .visible")
+            applyPanelOpacity(animated: false)
+            setActivityState(.counting, reason: "engine-ready-phase-g")
+            Logger.floatingPanel.info("Phase G: engine-ready during lingerFade — fade cancelled → .counting")
         case .dismissed:
             break
         }
@@ -284,9 +303,8 @@ final class FloatingPanelController {
         switch panelState {
         case .visible:
             viewModel.totalTokens += 1
-            viewModel.activityState = .counting
-            cancelCountingTimeout()
-            armCountingTimeout()
+            cancelRecoveryEndTimer()
+            setActivityState(.counting, reason: "token")
             let t3Ns = DispatchTime.now().uptimeNanoseconds
             let t1Ns = lastTokenObservedAtNs
             let sinkLatencyMs = Double(t2Ns - t1Ns) / 1_000_000.0
@@ -294,9 +312,8 @@ final class FloatingPanelController {
             Logger.floatingPanel.info("widget-token-timing: sink→handler=\(sinkLatencyMs)ms total=\(totalLatencyMs)ms")
         case .lingerFull, .lingerFade:
             viewModel.totalTokens += 1
-            viewModel.activityState = .counting
-            cancelCountingTimeout()
-            armCountingTimeout()
+            cancelRecoveryEndTimer()
+            setActivityState(.counting, reason: "token")
         case .hidden, .dismissed:
             break
         }
@@ -316,7 +333,7 @@ final class FloatingPanelController {
 
     private func lingerFullTimerFired() {
         guard panelState == .lingerFull else { return }
-        hideToken = nil
+        cancelPendingHide()  // multi-fire fix: cancel any existing token before scheduling fade
         if reducedMotionProvider() {
             completeLingerHide()
         } else {
@@ -340,22 +357,12 @@ final class FloatingPanelController {
         // not at the 0.0 the fade animation left it at.
         panel?.alphaValue = 1.0
         resetViewModel()
+        setActivityState(.idle, reason: "linger-complete")
         Logger.floatingPanel.info("Linger complete — panel hidden, viewModel reset")
     }
 
     private func resetViewModel() {
         viewModel.totalTokens = 0
-        viewModel.activityState = .waiting
-    }
-
-    private func armCountingTimeout() {
-        countingTimeoutToken = hideScheduler.schedule(delay: 1.5) { [weak self] in
-            guard let self, self.viewModel.activityState == .counting else { return }
-            self.viewModel.activityState = .waiting
-            Logger.floatingPanel.info("activity state: waiting (counting-timeout)")
-            self.countingTimeoutToken = nil
-        }
-        Logger.floatingPanel.info("activity state: counting (token #\(self.viewModel.totalTokens))")
     }
 
     // MARK: - Panel Management
@@ -513,16 +520,6 @@ final class FloatingPanelController {
         }
     }
 
-    // MARK: - Capture Activity State
-
-    private func handleCaptureActivityStateChange(_ newState: CaptureActivityState) {
-        // CaptureActivityState has only .waiting; the probe/resume cycle was removed in M3.7.3-fix5.
-        switch newState {
-        case .waiting:
-            break
-        }
-    }
-
     // MARK: - Hover tracking
 
     func handleHoverEntered() {
@@ -541,6 +538,7 @@ final class FloatingPanelController {
 
     func handleHoverExited() {
         guard panelState == .lingerFull else { return }
+        cancelPendingHide()  // multi-fire fix: cancel prior token before scheduling
         let remaining: TimeInterval
         if let start = lingerStartedAt {
             let elapsed = now().timeIntervalSince(start)
@@ -566,10 +564,62 @@ final class FloatingPanelController {
         }
     }
 
-    private func cancelCountingTimeout() {
-        if let token = countingTimeoutToken {
+    // MARK: - State Transition Logger
+
+    private func setActivityState(_ state: WidgetActivityState, reason: String) {
+        let prev = viewModel.activityState
+        viewModel.activityState = state
+        let timestamp = isoFormatter.string(from: now())
+        Logger.floatingPanel.info("widget-state: \(timestamp) \(String(describing: prev))→\(String(describing: state)) reason=\(reason)")
+        applyPanelOpacity(animated: true)
+    }
+
+    // MARK: - Panel Opacity
+
+    private func applyPanelOpacity(animated: Bool) {
+        guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
+        let targetAlpha: CGFloat?
+        switch viewModel.activityState {
+        case .waiting: targetAlpha = 0.5
+        case .warming, .counting, .recovering: targetAlpha = 1.0
+        case .idle, .wrapping, .dismissed: targetAlpha = nil
+        }
+        guard let alpha = targetAlpha else { return }
+        if animated {
+            runAnimation(0.3) { [weak self] in
+                self?.panel?.alphaValue = alpha
+            }
+        } else {
+            panel?.alphaValue = alpha
+        }
+    }
+
+    // MARK: - Recovery
+
+    private func handleRecoveryBegan() {
+        guard panelState == .visible || panelState == .lingerFull else { return }
+        setActivityState(.recovering, reason: "pipeline-recovery-began")
+    }
+
+    private func handleRecoveryEnded() {
+        cancelRecoveryEndTimer()
+        recoveryEndToken = hideScheduler.schedule(delay: 2.0) { [weak self] in
+            guard let self else { return }
+            self.handleRecoveryTimeout()
+        }
+        Logger.floatingPanel.info("Recovery ended — 2s window for token before fallback to waiting")
+    }
+
+    private func handleRecoveryTimeout() {
+        recoveryEndToken = nil
+        guard viewModel.activityState == .recovering else { return }
+        setActivityState(.waiting, reason: "recovery-timeout")
+    }
+
+    private func cancelRecoveryEndTimer() {
+        if let token = recoveryEndToken {
             hideScheduler.cancel(token)
-            countingTimeoutToken = nil
+            recoveryEndToken = nil
         }
     }
 }
