@@ -737,7 +737,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     // MARK: - Group 12: Panel opacity per activity state (AC-FIX7)
 
     func testPanelOpacity_AtWaiting_Is050() async {
-        makeComponents(runAnimation: { _, block in block() })
+        makeComponents(runAnimation: { _, block in
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
+        })
         sut.start()
         await activateSession()
         await showPanel()  // warming → engine-ready → counting
@@ -752,7 +754,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     }
 
     func testPanelOpacity_AtCounting_Is100() async {
-        makeComponents(runAnimation: { _, block in block() })
+        makeComponents(runAnimation: { _, block in
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
+        })
         sut.start()
         await activateSession()
         await showPanel()  // warming → engine-ready → counting
@@ -763,7 +767,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     }
 
     func testPanelOpacity_AtWarming_Is100() async {
-        makeComponents(runAnimation: { _, block in block() })
+        makeComponents(runAnimation: { _, block in
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
+        })
         sut.start()
         coordinator.start()
 
@@ -776,7 +782,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     }
 
     func testPanelOpacity_LingerFadeFromWaiting_AnimatesFrom050To0() async {
-        makeComponents(reducedMotion: false, runAnimation: { _, block in block() })
+        makeComponents(reducedMotion: false, runAnimation: { _, block in
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
+        })
         sut.start()
         await activateSession()
         await showPanel()
@@ -944,6 +952,54 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
         XCTAssertEqual(sut.viewModel.activityState, .waiting,
                        "Recovery timeout with no token must transition activityState to .waiting")
+    }
+
+    // MARK: - Group 15: ViewModel initial state and linger preservation (AC-FIX7-audit)
+
+    func testWidgetViewModel_InitialActivityState_IsIdle() {
+        let vm = WidgetViewModel()
+        XCTAssertEqual(vm.activityState, .idle,
+                       "WidgetViewModel.activityState must initialize to .idle (AC25)")
+    }
+
+    func testHandleSessionIdle_PreservesSessionStartedAt_DuringLinger() async {
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.totalTokens, 1)
+
+        // Capture the sessionStartedAt that was set at mic-on time
+        let micOnStartedAt = sut.viewModel.sessionStartedAt
+        XCTAssertNotNil(micOnStartedAt, "sessionStartedAt must be set after mic-on")
+
+        // End session → lingerFull
+        await endSession()
+        XCTAssertEqual(sut.panelState, .lingerFull,
+                       "Panel must be in lingerFull after session ends")
+
+        // Session data must be preserved during linger (AC26)
+        XCTAssertEqual(sut.viewModel.sessionStartedAt, micOnStartedAt,
+                       "sessionStartedAt must be preserved during linger so timer keeps ticking")
+        XCTAssertTrue(sut.viewModel.isSessionActive,
+                      "isSessionActive must remain true during linger so SwiftUI timer keeps ticking")
+        XCTAssertEqual(sut.viewModel.totalTokens, 1,
+                       "totalTokens must be preserved during linger")
+
+        // Advance through lingerFull → lingerFade → completeLingerHide
+        scheduler.fire(delay: 3.0)
+        scheduler.fire(delay: 2.0)
+
+        // After linger completes, viewModel must be reset (AC26)
+        XCTAssertNil(sut.viewModel.sessionStartedAt,
+                     "sessionStartedAt must be nil after completeLingerHide")
+        XCTAssertFalse(sut.viewModel.isSessionActive,
+                       "isSessionActive must be false after completeLingerHide")
+        XCTAssertEqual(sut.viewModel.totalTokens, 0,
+                       "totalTokens must be 0 after completeLingerHide")
     }
 }
 // swiftlint:enable file_length type_body_length

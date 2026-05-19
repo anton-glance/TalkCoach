@@ -175,6 +175,7 @@ final class FloatingPanelController {
             lingerStartedAt = nil
             panelState = .dismissed
             hidePanel(reason: "dismissed")
+            resetViewModel()
             if sourceState == .visible {
                 sessionCoordinator.requestFinalize()
             }
@@ -245,8 +246,6 @@ final class FloatingPanelController {
 
     private func handleSessionIdle() {
         cancelRecoveryEndTimer()
-        viewModel.isSessionActive = false
-        viewModel.sessionStartedAt = nil
 
         switch panelState {
         case .visible:
@@ -264,7 +263,7 @@ final class FloatingPanelController {
     }
 
     private func handleEngineReady() {
-        guard case .active = sessionCoordinator.state else { return }
+        guard case .active(let ctx) = sessionCoordinator.state else { return }
         switch panelState {
         case .hidden:
             // Unreachable: handleSessionActive always shows the panel (warming) before engine-ready fires.
@@ -278,6 +277,7 @@ final class FloatingPanelController {
             lingerStartedAt = nil
             resetViewModel()
             viewModel.isSessionActive = true
+            viewModel.sessionStartedAt = ctx.startedAt
             panelState = .visible
             applyPanelOpacity(animated: false)
             setActivityState(.counting, reason: "engine-ready-phase-g")
@@ -289,6 +289,7 @@ final class FloatingPanelController {
             lingerStartedAt = nil
             resetViewModel()
             viewModel.isSessionActive = true
+            viewModel.sessionStartedAt = ctx.startedAt
             panelState = .visible
             applyPanelOpacity(animated: false)
             setActivityState(.counting, reason: "engine-ready-phase-g")
@@ -339,7 +340,7 @@ final class FloatingPanelController {
         } else {
             panelState = .lingerFade
             runAnimation(2.0) { [weak self] in
-                self?.panel?.alphaValue = 0.0
+                self?.panel?.animator().alphaValue = 0.0
             }
             hideToken = hideScheduler.schedule(delay: 2.0) { [weak self] in
                 guard let self else { return }
@@ -363,6 +364,8 @@ final class FloatingPanelController {
 
     private func resetViewModel() {
         viewModel.totalTokens = 0
+        viewModel.sessionStartedAt = nil
+        viewModel.isSessionActive = false
     }
 
     // MARK: - Panel Management
@@ -587,7 +590,7 @@ final class FloatingPanelController {
         guard let alpha = targetAlpha else { return }
         if animated {
             runAnimation(0.3) { [weak self] in
-                self?.panel?.alphaValue = alpha
+                self?.panel?.animator().alphaValue = alpha
             }
         } else {
             panel?.alphaValue = alpha
