@@ -65,6 +65,7 @@ final class SessionCoordinator: ObservableObject {
     @Published var lastEngineReadyAt: Date?
     @Published var isInTokenSilence: Bool = false
     @Published private(set) var captureActivityState: CaptureActivityState = .waiting
+    @Published private(set) var isRecovering: Bool = false
     private(set) var lastEndReason: SessionEndReason?
     private(set) var isRunning: Bool = false
 
@@ -179,6 +180,16 @@ final class SessionCoordinator: ObservableObject {
 
     func addConsumer(_ consumer: any TokenConsumer) {
         consumers.append(consumer)
+    }
+
+    /// Called by AudioPipeline when a recovery cycle begins.
+    func audioPipelineDidBeginRecovery() {
+        isRecovering = true
+    }
+
+    /// Called by AudioPipeline when a recovery cycle completes.
+    func audioPipelineDidEndRecovery() {
+        isRecovering = false
     }
 
     /// Ends the current session immediately. Called from the widget X-button (AC-13).

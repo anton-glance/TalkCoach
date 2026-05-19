@@ -108,29 +108,27 @@ final class WidgetDecouplingTests: XCTestCase {
                        "inactivityThresholdSeconds must default to 15.0 seconds (AC-1)")
     }
 
-    // MARK: - T20: Session end without tokens → widget hides immediately (no fade)
+    // MARK: - T20: Session end without tokens → widget shows warming then enters lingerFull (AC-FIX7)
 
-    func testSessionEnd_WithoutPriorTokens_HidesWidget_Immediately() async {
-        let (coordinator, _, scheduler, fpc) = makeComponents()
+    func testSessionEnd_WithoutPriorTokens_ShowsWarmingThenLingerFull() async {
+        let (coordinator, _, _, fpc) = makeComponents()
         fpc.start()
         coordinator.start()
 
         coordinator.micActivated()
         await Task.yield()
-        // AC-FIX3-A1: widget stays hidden until first token
-        XCTAssertEqual(fpc.panelState, .hidden,
-                       "Widget must stay hidden on mic-on — no token in this test (AC-FIX3-A1)")
+        // AC-FIX7: panel shows immediately on mic-on as .warming
+        XCTAssertEqual(fpc.panelState, .visible,
+                       "Widget must show .warming on mic-on (AC-FIX7)")
+        XCTAssertEqual(fpc.viewModel.activityState, .warming,
+                       "activityState must be .warming on mic-on (AC-FIX7)")
 
         coordinator.micDeactivated()
         await Task.yield()
 
-        // Widget must not remain visible after session ends
-        XCTAssertNotEqual(fpc.panelState, .visible,
-                          "Panel must not remain visible after session ends with no tokens (AC-5)")
-        // And no fade timer should have been scheduled (session-end is now immediate hide)
-        // since token-silence timer is the primary hide mechanism
-        XCTAssertEqual(scheduler.scheduledDelays.count, 0,
-                       "Session end without tokens must hide immediately, not schedule a fade")
+        // Session ended while visible (warming) → lingerFull
+        XCTAssertEqual(fpc.panelState, .lingerFull,
+                       "Session end while .warming must start lingerFull, not hide immediately (AC-FIX7)")
     }
 
     // MARK: - T-FIX-2: Widget does not reshow after X-button dismiss (AC-FIX-2)
@@ -254,9 +252,9 @@ final class WidgetDecouplingTests: XCTestCase {
                        "No hide timer must be scheduled when session is idle")
     }
 
-    // MARK: - T-FIX3-A.5.1: Widget stays hidden on mic-on, shows only on engine-ready (AC-fix6)
+    // MARK: - T-FIX7-A.5.1: Widget shows warming on mic-on, transitions to counting on engine-ready (AC-FIX7)
 
-    func testWidgetStaysHiddenUntilEngineReady_ShowsOnEngineReady() async {
+    func testWidgetShowsWarming_OnMicOn_CountingOnEngineReady() async {
         let (coordinator, _, _, fpc) = makeComponents()
         fpc.start()
         coordinator.start()
@@ -264,17 +262,21 @@ final class WidgetDecouplingTests: XCTestCase {
         coordinator.micActivated()
         await Task.yield()
 
-        XCTAssertEqual(fpc.panelState, .hidden,
-                       "Widget must remain hidden on mic-on — engine-ready is the show trigger (AC-fix6)")
+        XCTAssertEqual(fpc.panelState, .visible,
+                       "Widget must appear immediately on mic-on in .warming state (AC-FIX7)")
+        XCTAssertEqual(fpc.viewModel.activityState, .warming,
+                       "activityState must be .warming on mic-on (AC-FIX7)")
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         XCTAssertEqual(fpc.panelState, .visible,
-                       "Widget must appear when engine-ready fires during an active session (AC-fix6)")
+                       "Widget must remain .visible after engine-ready")
+        XCTAssertEqual(fpc.viewModel.activityState, .counting,
+                       "activityState must transition to .counting on engine-ready (AC-FIX7)")
     }
 
-    // MARK: - T-FIX3-A.5.2: Widget clears prior dismiss on new session, shows on token (AC-FIX3-A2)
+    // MARK: - T-FIX7-A.5.2: Widget clears prior dismiss on new session, shows warming then counting (AC-FIX7)
 
     func testWidgetClearsPriorDismissOnNewSession() async {
         let (coordinator, _, _, fpc) = makeComponents(
@@ -283,28 +285,28 @@ final class WidgetDecouplingTests: XCTestCase {
         fpc.start()
         coordinator.start()
 
-        // Session 1: activate, show via engine-ready, then dismiss
+        // Session 1: activate, show via mic-on, then dismiss
         coordinator.micActivated()
         await Task.yield()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(fpc.panelState, .visible, "Panel must be visible after engine-ready in session 1")
+        XCTAssertEqual(fpc.panelState, .visible, "Panel must be visible (warming) after mic-on in session 1")
 
         fpc.requestDismiss()
         // requestDismiss → confirmed → panelState = .dismissed, session finalized
 
-        // Session 2: mic-on clears .dismissed, panel stays hidden until engine-ready
+        // Session 2: mic-on clears .dismissed and shows panel immediately as .warming
         coordinator.micActivated()
         await Task.yield()
 
-        XCTAssertEqual(fpc.panelState, .hidden,
-                       "Dismissed state must clear on new mic-on — panel stays hidden until engine-ready (AC-FIX3-A2)")
+        XCTAssertEqual(fpc.panelState, .visible,
+                       "Dismissed state must clear on new mic-on — panel shows .warming immediately (AC-FIX7)")
+        XCTAssertEqual(fpc.viewModel.activityState, .warming,
+                       "activityState must be .warming after dismiss-cleared mic-on (AC-FIX7)")
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(fpc.panelState, .visible,
-                       "Widget must appear on engine-ready in new session after prior dismiss (AC-FIX3-A2)")
+        XCTAssertEqual(fpc.viewModel.activityState, .counting,
+                       "activityState must transition to .counting on engine-ready after dismiss-cleared session (AC-FIX7)")
     }
 
     // MARK: - T-FIX3-B3: totalTokens increments per token, resets on session end (AC-FIX3-B3)

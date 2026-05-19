@@ -2,8 +2,13 @@ import Combine
 import Foundation
 
 enum WidgetActivityState: Equatable {
-    case waiting
+    case idle
+    case warming
     case counting
+    case waiting
+    case wrapping
+    case recovering
+    case dismissed
 }
 
 @MainActor

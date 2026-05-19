@@ -51,8 +51,13 @@ struct PlaceholderWidgetView: View {
 
     private static func label(for state: WidgetActivityState) -> String {
         switch state {
-        case .waiting: return "Listening\u{2026}"
+        case .idle: return ""
+        case .warming: return "Warming\u{2026}"
         case .counting: return "Counting\u{2026}"
+        case .waiting: return "Waiting\u{2026}"
+        case .wrapping: return "Wrapping\u{2026}"
+        case .recovering: return "Recovering\u{2026}"
+        case .dismissed: return ""
         }
     }
 

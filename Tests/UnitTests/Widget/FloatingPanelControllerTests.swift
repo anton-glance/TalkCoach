@@ -104,23 +104,26 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertFalse(sut.isShowingPanel)
     }
 
-    // MARK: - Hidden on mic-on, visible on first token (AC-FIX3-A1)
+    // MARK: - Visible on mic-on (warming), counting on engine-ready (AC-FIX7)
 
-    func testMicActivation_KeepsHidden_VisibleOnFirstToken() async {
+    func testMicActivation_ShowsWarming_CountingOnEngineReady() async {
         makeSUT()
         sut.start()
         coordinator.start()
         await activateMic()
 
-        XCTAssertEqual(sut.panelState, .hidden,
-                       "Widget must stay hidden on mic-on — token arrival triggers show (AC-FIX3-A1)")
-        XCTAssertFalse(sut.isShowingPanel)
+        XCTAssertEqual(sut.panelState, .visible,
+                       "Widget must appear immediately on mic-on in .warming state (AC-FIX7)")
+        XCTAssertTrue(sut.isShowingPanel)
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "activityState must be .warming on mic-on (AC-FIX7)")
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
         XCTAssertEqual(sut.panelState, .visible)
-        XCTAssertTrue(sut.isShowingPanel)
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "activityState must transition to .counting on engine-ready")
     }
 
     // MARK: - Idempotent visible state
@@ -142,41 +145,43 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertTrue(sut.isShowingPanel)
     }
 
-    // MARK: - Hide after mic-off with scheduler
+    // MARK: - Session end while warming starts lingerFull
 
-    func testHideAfterMicOffWithScheduler() async {
+    func testSessionEnd_WhileWarming_StartsLingerFull() async {
         makeSUT()
         sut.start()
         coordinator.start()
         await activateMic()
+        XCTAssertEqual(sut.panelState, .visible, "Panel must be .visible (warming) after mic-on")
+
         await deactivateMic()
 
-        // M3.7.3: session-end now hides immediately via token-silence path; no fade timer scheduled
-        XCTAssertEqual(sut.panelState, .hidden,
-                       "M3.7.3: session end must hide immediately — fade is driven by token-silence, not session state")
-        XCTAssertFalse(sut.isShowingPanel)
+        // AC-FIX7: panel shows at mic-on, so session-end while warming → lingerFull
+        XCTAssertEqual(sut.panelState, .lingerFull,
+                       "Session end while visible (warming) must start lingerFull (AC-FIX7)")
     }
 
-    // MARK: - Hide cancellation on rapid reactivation
+    // MARK: - Phase G: rapid reactivation during linger
 
-    func testHideCancellationOnRapidReactivation() async {
+    func testPhaseG_RapidReactivation_DuringLingerFull() async {
         makeSUT()
         sut.start()
         coordinator.start()
         await activateMic()
+        XCTAssertEqual(sut.panelState, .visible, "Panel visible (warming) after first mic-on")
         await deactivateMic()
-        // M3.7.3: session-end hides immediately — no fade timer scheduled
-        XCTAssertEqual(sut.panelState, .hidden,
-                       "M3.7.3: session end must hide immediately; fade is driven by token-silence")
+        XCTAssertEqual(sut.panelState, .lingerFull, "Session end while warming → lingerFull")
 
+        // Rapid reactivation during lingerFull (Phase G)
         await activateMic()
-        // AC-FIX3-A1: no token yet — panel stays hidden
-        XCTAssertEqual(sut.panelState, .hidden,
-                       "Widget must stay hidden on reactivation until a token arrives (AC-FIX3-A1)")
+        // Panel stays in linger until engine-ready
+        XCTAssertEqual(sut.panelState, .lingerFull,
+                       "Phase G: panel must stay in lingerFull between mic-on and engine-ready")
 
-        fakeScheduler.fire()
-        XCTAssertEqual(sut.panelState, .hidden, "Firing empty scheduler must not change hidden state")
-        XCTAssertFalse(sut.isShowingPanel)
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.panelState, .visible,
+                       "Phase G: engine-ready during lingerFull must transition to .visible")
     }
 
     // MARK: - Dismiss confirmation
@@ -310,10 +315,9 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
+        XCTAssertEqual(sut.panelState, .visible, "Panel visible (warming) after mic-on")
         await deactivateMic()
-        // M3.7.3: session-end hides immediately
-        XCTAssertEqual(sut.panelState, .hidden,
-                       "M3.7.3: session end must hide immediately")
+        XCTAssertEqual(sut.panelState, .lingerFull, "Session end while warming → lingerFull")
 
         sut.stop()
         XCTAssertEqual(sut.panelState, .hidden)
@@ -356,17 +360,13 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertEqual(sut.panelState, .hidden)
     }
 
-    // MARK: - Dismiss while fading out is no-op
+    // MARK: - Dismiss while hidden is no-op
 
-    func testDismissWhileHiddenIsNoOp() async {
+    func testDismissWhileHiddenIsNoOp() {
         makeSUT()
         sut.start()
         coordinator.start()
-        await activateMic()
-        await deactivateMic()
-        // M3.7.3: session-end hides immediately
-        XCTAssertEqual(sut.panelState, .hidden,
-                       "M3.7.3: session end must hide immediately")
+        // Never activate — panel stays .hidden
 
         fakeAlert.stubbedResult = true
         sut.requestDismiss()

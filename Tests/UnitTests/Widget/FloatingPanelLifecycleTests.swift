@@ -109,18 +109,34 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         await Task.yield()
     }
 
-    // MARK: - Group 1: Engine-ready show
+    // MARK: - Group 1: Mic-on show and engine-ready counting transition (AC-FIX7)
 
-    func testEngineReady_ShowsPanel_WhenHidden_DuringActiveSession() async {
+    func testWidget_AppearsAtMicOn_NotEngineReady() async {
+        makeComponents()
+        sut.start()
+        coordinator.start()
+
+        coordinator.micActivated()
+        await Task.yield()
+
+        XCTAssertEqual(sut.panelState, .visible,
+                       "Panel must appear immediately on mic-on in .warming state (AC-FIX7)")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "activityState must be .warming on mic-on before engine-ready (AC-FIX7)")
+    }
+
+    func testWidget_TransitionsToCounting_AtEngineReady() async {
         makeComponents()
         sut.start()
         await activateSession()
-        XCTAssertEqual(sut.panelState, .hidden, "Panel must be hidden before engine-ready")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "activityState must be .warming after mic-on")
 
-        await showPanel()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
 
-        XCTAssertEqual(sut.panelState, .visible,
-                       "Panel must become .visible on engine-ready during active session")
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "activityState must transition to .counting when engine-ready fires (AC-FIX7)")
     }
 
     func testEngineReady_NoShow_WhenSessionIdle() async {
@@ -166,16 +182,18 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Session end while visible must start lingerFull (3-second stay)")
     }
 
-    func testSessionEnd_WhileHidden_StaysHidden() async {
+    func testSessionEnd_WhileWarming_StartsLingerFull() async {
         makeComponents()
         sut.start()
         await activateSession()
-        // Never showed panel
+        // Panel shows .warming (visible) without engine-ready
+        XCTAssertEqual(sut.panelState, .visible,
+                       "Panel must be .visible (warming) after mic-on before engine-ready")
 
         await endSession()
 
-        XCTAssertEqual(sut.panelState, .hidden,
-                       "Session end while hidden must stay hidden — no linger triggered")
+        XCTAssertEqual(sut.panelState, .lingerFull,
+                       "Session end while visible (warming) must start lingerFull")
     }
 
     func testLingerFull_TimerFires_WithReducedMotion_HidesPanel() async {
@@ -233,6 +251,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
         XCTAssertEqual(sut.viewModel.totalTokens, 0,
                        "Linger completion must call resetViewModel, resetting totalTokens to 0")
+        XCTAssertEqual(sut.viewModel.activityState, .idle,
+                       "Linger completion must reset activityState to .idle")
     }
 
     // MARK: - Group 3: Hover during lingerFull
@@ -350,8 +370,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Phase G: viewModel.totalTokens must reset to 0")
         XCTAssertTrue(sut.viewModel.isSessionActive,
                       "Phase G: viewModel.isSessionActive must be true")
-        XCTAssertEqual(sut.viewModel.activityState, .waiting,
-                       "Phase G: activityState must start as .waiting")
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "Phase G: engine-ready must transition activityState to .counting")
         XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
                              "Phase G: lingerFull hideToken must be cancelled")
     }
@@ -376,8 +396,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Phase G: engine-ready during lingerFade must transition to .visible")
         XCTAssertEqual(sut.viewModel.totalTokens, 0,
                        "Phase G: viewModel.totalTokens must reset to 0")
-        XCTAssertEqual(sut.viewModel.activityState, .waiting,
-                       "Phase G: activityState must start as .waiting")
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "Phase G: engine-ready must transition activityState to .counting")
         XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
                              "Phase G: lingerFade hideToken must be cancelled")
     }
@@ -444,17 +464,19 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "isInTokenSilence=false must NOT change activityState (only true triggers .waiting)")
     }
 
-    func testEngineReady_InitialActivityState_IsWaiting() async {
+    func testEngineReady_TransitionsActivityState_ToCounting() async {
         makeComponents()
         sut.start()
         await activateSession()
-        sut.viewModel.activityState = .counting  // set to verify engine-ready overrides to .waiting
+        // Panel shows .warming after mic-on
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "activityState must be .warming after mic-on before engine-ready")
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .waiting,
-                       "Engine-ready must set initial activityState to .waiting, not .counting")
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "Engine-ready must transition activityState from .warming to .counting")
     }
 
     func testLastTokenArrival_SetsActivityState_Counting() async {
@@ -546,11 +568,6 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "lingerFade animation must have exactly 2.0s duration")
         XCTAssertNotNil(capturedBlock,
                         "runAnimation must be called with a non-nil block")
-
-        // Verify the block sets panel alpha to 0 (fade-to-invisible)
-        capturedBlock?()
-        XCTAssertEqual(sut.panelWindow?.alphaValue, 0.0,
-                       "Animation block must set panel alphaValue to 0 for fade effect")
     }
 
     func testCompleteLingerHide_ResetsAlphaToOne_ForNextShow() async {
@@ -645,7 +662,7 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
     // MARK: - Group 10: Dismissed state invariants
 
-    func testDismissed_ClearedAtMicOn_PanelHiddenUntilEngineReady() async {
+    func testDismissed_ClearedAtMicOn_PanelShowsWarming_ThenCounting() async {
         makeComponents()
         sut.start()
         await activateSession()
@@ -654,16 +671,279 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         sut.requestDismiss()
         XCTAssertEqual(sut.panelState, .dismissed)
 
-        // New session: mic-on clears .dismissed
+        // New session: mic-on clears .dismissed and shows panel immediately as .warming
         coordinator.micActivated()
         await Task.yield()
-        XCTAssertEqual(sut.panelState, .hidden,
-                       ".dismissed must be cleared to .hidden when new session starts (mic-on)")
+        XCTAssertEqual(sut.panelState, .visible,
+                       ".dismissed must be cleared and panel shown .warming on new session mic-on (AC-FIX3-A2)")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "activityState must be .warming immediately after dismiss-cleared mic-on")
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
-        XCTAssertEqual(sut.panelState, .visible,
-                       "Panel must show on engine-ready after dismiss cleared by new session")
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "activityState must transition to .counting on engine-ready after dismiss-cleared session")
+    }
+    // MARK: - Group 11: SessionStartedAt set at mic-on (AC-FIX7)
+
+    func testWidget_ShowsTimerFromMicOnTime() async {
+        makeComponents()
+        sut.start()
+        coordinator.start()
+
+        coordinator.micActivated()
+        await Task.yield()
+
+        let timeAfterMicOn = sut.viewModel.sessionStartedAt
+        XCTAssertNotNil(timeAfterMicOn,
+                        "sessionStartedAt must be set at mic-on, not engine-ready (AC-FIX7)")
+
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.sessionStartedAt, timeAfterMicOn,
+                       "sessionStartedAt must NOT change at engine-ready — stays at mic-on time")
+    }
+
+    func testPhaseG_SessionStartedAt_SetAtNewMicOn_NotEngineReady() async {
+        makeComponents()
+        sut.start()
+        coordinator.start()
+
+        // Session 1: full cycle
+        coordinator.micActivated()
+        await Task.yield()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        coordinator.micDeactivated()
+        await Task.yield()
+        XCTAssertEqual(sut.panelState, .lingerFull)
+
+        // Session 2 mic-on during lingerFull
+        coordinator.micActivated()
+        await Task.yield()
+
+        let timeAfterSession2MicOn = sut.viewModel.sessionStartedAt
+        XCTAssertNotNil(timeAfterSession2MicOn,
+                        "Phase G: sessionStartedAt must be updated at new mic-on during linger (AC-FIX7)")
+
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.sessionStartedAt, timeAfterSession2MicOn,
+                       "Phase G: sessionStartedAt must NOT change at engine-ready — stays at new mic-on time")
+    }
+
+    // MARK: - Group 12: Panel opacity per activity state (AC-FIX7)
+
+    func testPanelOpacity_AtWaiting_Is050() async {
+        makeComponents(runAnimation: { _, block in block() })
+        sut.start()
+        await activateSession()
+        await showPanel()  // warming → engine-ready → counting
+        XCTAssertEqual(sut.viewModel.activityState, .counting)
+
+        coordinator.isInTokenSilence = true
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .waiting)
+
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
+                       "Panel opacity must be 0.5 when activityState is .waiting and panel is .visible")
+    }
+
+    func testPanelOpacity_AtCounting_Is100() async {
+        makeComponents(runAnimation: { _, block in block() })
+        sut.start()
+        await activateSession()
+        await showPanel()  // warming → engine-ready → counting
+
+        XCTAssertEqual(sut.viewModel.activityState, .counting)
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.01,
+                       "Panel opacity must be 1.0 when activityState is .counting")
+    }
+
+    func testPanelOpacity_AtWarming_Is100() async {
+        makeComponents(runAnimation: { _, block in block() })
+        sut.start()
+        coordinator.start()
+
+        coordinator.micActivated()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .warming)
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.01,
+                       "Panel opacity must be 1.0 when activityState is .warming")
+    }
+
+    func testPanelOpacity_LingerFadeFromWaiting_AnimatesFrom050To0() async {
+        makeComponents(reducedMotion: false, runAnimation: { _, block in block() })
+        sut.start()
+        await activateSession()
+        await showPanel()
+        coordinator.isInTokenSilence = true
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .waiting)
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
+                       "Panel must be at 0.5 opacity in .waiting state before linger starts")
+
+        await endSession()  // → lingerFull
+
+        scheduler.fire(delay: 3.0)  // lingerFull → lingerFade, runAnimation(2.0) fires
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.0, accuracy: 0.01,
+                       "Linger fade from .waiting must animate from 0.5 to 0.0")
+    }
+
+    // MARK: - Group 13: Multi-fire regression fixes
+
+    func testLingerFullTimerFired_CancelsPendingHideBeforeSchedulingFade() async {
+        // Multi-fire fix 1: lingerFullTimerFired must call cancelPendingHide() instead of
+        // hideToken = nil, so any previously-scheduled token is properly cancelled before
+        // scheduling the new 2s fade timer.
+        makeComponents(reducedMotion: false)
+        sut.start()
+        await activateSession()
+        await showPanel()
+        await endSession()
+        XCTAssertEqual(sut.panelState, .lingerFull)
+
+        let cancelsBefore = scheduler.cancelCallCount
+
+        scheduler.fire(delay: 3.0)  // lingerFullTimerFired runs
+
+        XCTAssertEqual(sut.panelState, .lingerFade)
+        XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
+                             "lingerFullTimerFired must call cancelPendingHide() — cancel counter must increment")
+    }
+
+    func testHoverExited_CancelsPendingHideBeforeScheduling() async {
+        // Multi-fire fix 2: handleHoverExited must call cancelPendingHide() before scheduling,
+        // so any leftover token from a previous schedule is properly cancelled first.
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+        await endSession()
+        XCTAssertEqual(sut.panelState, .lingerFull)
+
+        // Hover-exit once to schedule a timer
+        sut.handleHoverExited()
+        let cancelsBefore = scheduler.cancelCallCount
+        let entriesBefore = scheduler.entryCount
+
+        // Hover-exit again WITHOUT an intervening hover-enter to simulate double-fire
+        sut.handleHoverExited()
+
+        XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
+                             "handleHoverExited must cancel prior token before scheduling (multi-fire fix)")
+        XCTAssertEqual(scheduler.entryCount, entriesBefore,
+                       "handleHoverExited double-fire must not accumulate extra scheduler entries")
+    }
+
+    // MARK: - Group 14a: Hover on hidden panel must not show it
+
+    func testHoverOnHiddenPanel_DoesNotShowPanel() {
+        makeComponents()
+        sut.start()
+        coordinator.start()
+        XCTAssertEqual(sut.panelState, .hidden)
+
+        sut.handleHoverEntered()
+
+        XCTAssertEqual(sut.panelState, .hidden,
+                       "Hover on hidden panel must not show it")
+    }
+
+    func testRequestDismiss_DuringWarming_SetsDismissed() async {
+        makeComponents()
+        alertPresenter.stubbedResult = true
+        sut.start()
+        await activateSession()
+        XCTAssertEqual(sut.viewModel.activityState, .warming)
+        XCTAssertEqual(sut.panelState, .visible)
+
+        sut.requestDismiss()
+
+        XCTAssertEqual(sut.panelState, .dismissed,
+                       "requestDismiss during .warming must set panelState to .dismissed")
+        XCTAssertEqual(coordinator.state, .idle,
+                       "Coordinator must end session on X-button dismiss during .warming")
+    }
+
+    func testXButton_DuringLingerFull_AlertOpen_PanelNotSnappedToHidden() async {
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+        await endSession()
+        XCTAssertEqual(sut.panelState, .lingerFull)
+        alertPresenter.stubbedResult = false  // cancel dismiss
+
+        nonisolated(unsafe) var panelStateAtModal: PanelVisibilityState?
+        alertPresenter.onPresent = { [weak sut] in
+            panelStateAtModal = sut?.panelState
+        }
+
+        sut.requestDismiss()
+
+        XCTAssertNotEqual(panelStateAtModal, .hidden,
+                          "Panel must NOT be hidden when the modal opens during lingerFull")
+    }
+
+    // MARK: - Group 14: Recovery state (AC-FIX7)
+
+    func testRecovery_TransitionsToRecoveringState_OnAudioPipelineRecoverBegin() async {
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+        XCTAssertEqual(sut.viewModel.activityState, .counting)
+
+        coordinator.audioPipelineDidBeginRecovery()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .recovering,
+                       "activityState must be .recovering when AudioPipeline recovery begins")
+    }
+
+    func testRecovery_TransitionsToCounting_OnTokenWithin2s() async {
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+
+        coordinator.audioPipelineDidBeginRecovery()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .recovering)
+
+        coordinator.audioPipelineDidEndRecovery()
+        await Task.yield()
+
+        // Token arrives within the 2s recovery window → .counting
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "Token arrival during recovery window must transition to .counting")
+    }
+
+    func testRecovery_TransitionsToWaiting_OnTimeoutNoToken() async {
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+
+        coordinator.audioPipelineDidBeginRecovery()
+        await Task.yield()
+        coordinator.audioPipelineDidEndRecovery()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .recovering)
+
+        // Fire the 2s recovery-end timer — no token arrived
+        scheduler.fire(delay: 2.0)
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+                       "Recovery timeout with no token must transition activityState to .waiting")
     }
 }
 // swiftlint:enable file_length type_body_length
