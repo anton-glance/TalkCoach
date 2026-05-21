@@ -3,6 +3,15 @@ import XCTest
 
 @MainActor final class WhisperCppBackendTests: XCTestCase {
 
+    // Held so tearDown can call shutdown() and free Metal contexts before process exit.
+    private var backendUnderTest: WhisperCppBackend?
+
+    override func tearDown() async throws {
+        await backendUnderTest?.shutdown()
+        backendUnderTest = nil
+        try await super.tearDown()
+    }
+
     // BPE tokens with a leading space start a new word; tokens without continue the current word.
     // " hello" + "world" → one word "helloworld"
     // " hello" + "world" + " there" → ["helloworld", "there"]
@@ -66,6 +75,7 @@ import XCTest
             whisperModelPath: "/tmp/nonexistent-talkcoach-metal-test.bin",
             sileroModelPath:  "/tmp/nonexistent-talkcoach-vad-test.bin"
         )
+        backendUnderTest = backend
         do {
             try await backend.start(locale: Locale(identifier: "en"))
             XCTFail("Expected modelUnavailable to be thrown")
@@ -85,6 +95,7 @@ import XCTest
             whisperModelPath: "/tmp/nonexistent-talkcoach-retry-test.bin",
             sileroModelPath:  "/tmp/nonexistent-talkcoach-vad-retry-test.bin"
         )
+        backendUnderTest = backend
         // First session — GPU fails
         do { try await backend.start(locale: Locale(identifier: "en")) } catch {}
         await backend.stop()

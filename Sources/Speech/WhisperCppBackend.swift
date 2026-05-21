@@ -135,6 +135,26 @@ actor WhisperCppBackend: TranscriberBackend {
         // Contexts intentionally kept alive between sessions (engine-always-warm).
     }
 
+    /// Frees the whisper.cpp and Silero VAD C contexts and finishes all streams.
+    /// Must be called before process exit to prevent ggml_metal_device_free asserting
+    /// that residency sets are non-empty (GGML_ASSERT([rsets->data count] == 0)).
+    /// Call after stop() so the inference task is already cancelled.
+    func shutdown() async {
+        inferenceTask?.cancel()
+        inferenceTask = nil
+        if let ctx = whisperCtx {
+            cwhisper_free(ctx)
+            whisperCtx = nil
+        }
+        if let ctx = vadCtx {
+            cwhisper_vad_free(ctx)
+            vadCtx = nil
+        }
+        tokenContinuation.finish()
+        engineReadyContinuation.finish()
+        vadActivityContinuation.finish()
+    }
+
     // MARK: - Inference loop
 
     private func runInferenceLoop(provider: any AudioBufferProvider, locale: Locale) async {

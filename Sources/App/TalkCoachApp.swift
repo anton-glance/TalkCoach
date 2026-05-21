@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var floatingPanelController: FloatingPanelController!
     private(set) var sessionStore: SessionStore?
     private(set) var settingsWindow: NSWindow?
+    private var whisperBackend: WhisperCppBackend?
 
     override init() {
         super.init()
@@ -85,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 languageDetector: languageDetector,
                 backend: backend
             )
+            whisperBackend = backend
         } else {
             Logger.app.error("WhisperCppBackend: model files not found in bundle — session wiring not set")
         }
@@ -121,6 +123,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         floatingPanelController.stop()
         sessionCoordinator.stop()
+        // Free whisper.cpp + Silero VAD Metal contexts before atexit handlers run.
+        // ggml_metal_device_free asserts residency sets are empty; this prevents that crash.
+        if let backend = whisperBackend {
+            let sema = DispatchSemaphore(value: 0)
+            Task.detached { await backend.shutdown(); sema.signal() }
+            _ = sema.wait(timeout: .now() + 2.0)
+        }
     }
 
     func openSettings() {

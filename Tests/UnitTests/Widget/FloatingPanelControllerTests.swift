@@ -1,4 +1,8 @@
 // swiftlint:disable file_length
+// TODO: FloatingPanelController test fixtures create real NSPanel windows that are not torn down
+// between test cases. Leftover panels remain on screen after the test suite runs. Fix scope is
+// too broad for a corrective sub-commit — defer to a dedicated test-hygiene pass. If you see
+// stray Locto widget squares after running tests, dismiss them manually.
 import Combine
 import CoreAudio
 import XCTest
