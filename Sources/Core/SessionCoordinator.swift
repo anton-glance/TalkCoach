@@ -58,6 +58,9 @@ final class SessionCoordinator: ObservableObject {
     @Published var lastTokenArrival: Date?
     @Published var lastEngineReadyAt: Date?
     @Published var isInTokenSilence: Bool = false
+    // VAD-driven silence signal: set true when Silero reports continuous voice inactivity.
+    // Drives widget .waiting state in Architecture Z (replaces token-silence timer in sub-commit 4).
+    @Published var isVoiceInactive: Bool = false
     @Published private(set) var isRecovering: Bool = false
     private(set) var lastEndReason: SessionEndReason?
     private(set) var isRunning: Bool = false

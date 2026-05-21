@@ -409,4 +409,24 @@ final class FloatingPanelControllerTests: XCTestCase {
         await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
     }
+
+    // MARK: - VAD-driven waiting state (Architecture Z, sub-commit 3)
+
+    func testIsVoiceInactiveTriggersWaitingState() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: must be counting")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+
+        XCTAssertEqual(
+            sut.viewModel.activityState, .waiting,
+            "VAD voice-inactive signal must transition widget to .waiting"
+        )
+    }
 }
