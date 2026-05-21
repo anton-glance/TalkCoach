@@ -7,10 +7,16 @@ enum WhisperModelLoaderError: Error, Equatable {
 
 struct WhisperModelLoader {
     static func whisperModelURL(bundle: Bundle = .main) throws -> URL {
-        URL(fileURLWithPath: "/stub/ggml-small.bin")  // stub — real impl searches bundle
+        guard let url = bundle.url(forResource: "ggml-small", withExtension: "bin") else {
+            throw WhisperModelLoaderError.whisperModelNotFound
+        }
+        return url
     }
 
     static func sileroModelURL(bundle: Bundle = .main) throws -> URL {
-        URL(fileURLWithPath: "/stub/ggml-silero-v5.1.2.bin")  // stub
+        guard let url = bundle.url(forResource: "ggml-silero-v5.1.2", withExtension: "bin") else {
+            throw WhisperModelLoaderError.sileroModelNotFound
+        }
+        return url
     }
 }
