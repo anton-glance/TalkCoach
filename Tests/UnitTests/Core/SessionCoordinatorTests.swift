@@ -4,6 +4,31 @@ import CoreAudio
 import XCTest
 @testable import TalkCoach
 
+// MARK: - VadStubBackend
+
+private final class VadStubBackend: TranscriberBackend, @unchecked Sendable {
+    private let tokenCont: AsyncStream<TranscribedToken>.Continuation
+    let tokenStream: AsyncStream<TranscribedToken>
+    let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.yield(()); $0.finish() }
+    private let vadCont: AsyncStream<Bool>.Continuation
+    let vadActivityStream: AsyncStream<Bool>
+
+    init() {
+        // swiftlint:disable:next identifier_name
+        var tc: AsyncStream<TranscribedToken>.Continuation!
+        tokenStream = AsyncStream { tc = $0 }
+        tokenCont = tc
+        // swiftlint:disable:next identifier_name
+        var vc: AsyncStream<Bool>.Continuation!
+        vadActivityStream = AsyncStream { vc = $0 }
+        vadCont = vc
+    }
+
+    func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws {}
+    func stop() async { tokenCont.finish(); vadCont.finish() }
+    func yieldVad(_ hasVoice: Bool) { vadCont.yield(hasVoice) }
+}
+
 // MARK: - FakeTokenSilenceScheduler
 
 private final class FakeTokenSilenceScheduler: HideScheduler, @unchecked Sendable {
@@ -552,5 +577,76 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertGreaterThan(silenceScheduler.cancelCallCount, 0,
                              "Session end must cancel the token-silence timer")
+    }
+
+    // MARK: - VAD debounce (AC-4.5)
+
+    func testDebounceVadFalseFor200msSetsIsVoiceInactive() async throws {
+        let silenceScheduler = FakeTokenSilenceScheduler()
+        makeSUT(tokenSilenceScheduler: silenceScheduler)
+        let vadBackend = VadStubBackend()
+        sut.wiring = SessionWiring(
+            audioPipeline: AudioPipeline(provider: ProbeTestEngineProvider()),
+            languageDetector: FakeLanguageDetector(),
+            backend: vadBackend
+        )
+        sut.start()
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        // t0: first false — debounce must prevent immediate flip.
+        // Use a 20ms sleep (not Task.yield) to guarantee the passthrough has fired before asserting.
+        vadBackend.yieldVad(false)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(sut.isVoiceInactive,
+                       "Must not flip isVoiceInactive on first false at t0 (200ms debounce required)")
+
+        // t0+120ms: still within debounce window
+        try await Task.sleep(for: .milliseconds(100))
+        vadBackend.yieldVad(false)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(sut.isVoiceInactive,
+                       "Must not flip isVoiceInactive at t0+120ms (120ms < 200ms threshold)")
+
+        // t0+350ms total: threshold crossed — must flip
+        try await Task.sleep(for: .milliseconds(210))
+        vadBackend.yieldVad(false)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(sut.isVoiceInactive,
+                      "Must flip isVoiceInactive after sustained false exceeding 200ms threshold")
+    }
+
+    func testVadTrueImmediatelyClearsIsVoiceInactive() async throws {
+        let silenceScheduler = FakeTokenSilenceScheduler()
+        makeSUT(tokenSilenceScheduler: silenceScheduler)
+        let vadBackend = VadStubBackend()
+        sut.wiring = SessionWiring(
+            audioPipeline: AudioPipeline(provider: ProbeTestEngineProvider()),
+            languageDetector: FakeLanguageDetector(),
+            backend: vadBackend
+        )
+        sut.start()
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        // Confirm debounce is active — first false must not flip immediately.
+        // Use a 20ms sleep to guarantee the passthrough has fired before asserting.
+        vadBackend.yieldVad(false)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(sut.isVoiceInactive,
+                       "Must not flip immediately on first false — confirms debounce is active")
+
+        // Sustain false past 200ms threshold to reach isVoiceInactive == true
+        try await Task.sleep(for: .milliseconds(230))
+        vadBackend.yieldVad(false)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(sut.isVoiceInactive,
+                      "Must be true after sustained false for 250ms (setup for immediate-clear test)")
+
+        // Single true must clear isVoiceInactive immediately — no debounce on voice onset
+        vadBackend.yieldVad(true)
+        await Task.yield()
+        XCTAssertFalse(sut.isVoiceInactive,
+                       "True must clear isVoiceInactive immediately within one Task.yield() tick (no debounce on voice onset)")
     }
 }
