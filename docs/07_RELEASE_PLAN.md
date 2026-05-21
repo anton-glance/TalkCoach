@@ -57,23 +57,23 @@ By that bar, only Phase 5 onward is genuinely user testable in the v1 sense (FM1
 
 ---
 
-### Phase 3 — Audio pipeline and transcription engine (~65–71h cumulative, +37–43h)
+### Phase 3 — Audio pipeline and transcription engine (~70–100h cumulative, +37–80h actual after four-spike STT engine search and M3.7 widget close-out, Session 033)
 
-**What works.** While a session is active, audio captures, gets routed to the right backend by language, and tokens flow. English speech goes to `AppleTranscriberBackend`. Russian (and other Apple-unsupported locales) goes to `ParakeetTranscriberBackend`. First-time use of a Parakeet language triggers the in-Settings download confirmation prompt with the ~1.2 GB size warning. Mid-session language re-detection works for N=2 declared.
+**What works (revised Session 033, Architecture Z lock).** While a session is active, audio captures and routes through whisper.cpp + Silero VAD. Silero VAD evaluates the buffer stream in real time for voice activity; on speech-onset, whisper.cpp's whisper-small (multilingual) runs fresh inference on the ring buffer; tokens emit with per-token confidence (`whisper_full_get_token_p` log_prob). First-token latency ~304-453ms measured (Spike #17.2 / #17.3). Multilingual coverage from a single ~244 MB model — no per-language download flow. Widget state machine subscribes to the Silero VAD signal (not transcription tokenStream), unblocking the speaking/listening transitions that Apple SpeechAnalyzer's batched commit boundaries (M3.7 fix #7 smoke gate finding) could not drive.
 
-**What does not work.** No WPM math. No monologue detection. The widget still shows the dynamic placeholder from Phase 2, not real data.
+**What does not work.** No WPM math. No monologue detection. The widget shows the 7-state lifecycle (idle/warming/counting/waiting/wrapping/recovering/dismissed) from M3.7 fix #6/#7 but with placeholder metric content. Mid-session language switching deferred to V1.5+.
 
-**Useful feedback at this point.** Russian transcription quality in real meeting audio. This is the highest-risk piece of v1. The S10 spike validated Parakeet on clean test recordings, but real meeting audio has cross-talk, mic placement variance, and accent variation the spike didn't cover. If accuracy is materially worse than S10 suggested, we need to know in week 3, not week 6 after sinking another ~40h into analyzer + widget work assuming the tokens are reliable.
+**Useful feedback at this point.** **The 14-step smoke gate against a real Voice Memos session is the load-bearing UX validation for V1's STT engine choice.** Per Session 033's Anton product call, the original 200ms first-token latency budget was empirically unachievable on any pre-2024 ASR engine; the spike's outcome is "ship whisper.cpp at measured 304-453ms latency and validate whether the UX feels acceptable in real use." If the smoke gate shows the lag is perceptible-but-tolerable (analog: a fast typist with mild delay), ship. If the smoke gate shows the lag is unacceptable (widget feels broken), escalate.
 
-Also useful: the Settings download flow. Does the confirmation prompt feel reasonable? Is the progress UI clear when 1.2 GB is fetching? Does cancellation work? Does the app behave correctly if the user denies the download (graceful "language unavailable" state vs crash)?
+Also useful: model download UX on first launch. Does the ~244 MB whisper-small download feel reasonable? Does the Metal shader compilation pause on first ever launch (one-time ~7.5s) feel like the app is broken, or does the "Preparing speech engine…" placeholder communicate correctly?
 
-**Why this is still not a product test.** No coaching feedback exists yet. You're validating that the foundation under the analyzer is sound.
+**Why this is still not a complete product test.** No coaching feedback exists yet. The 14-step smoke gate validates the STT engine choice empirically; Phase 4 (analyzer) then turns the tokens into metrics; Phase 5 surfaces those metrics in the production widget.
 
-**Checkpoint #2: Debug HUD overlay on widget.** *Baked into M3.7.* The widget's placeholder is replaced (during dev only) by a debug HUD showing: live token stream from the active backend, detected language label, backend identifier ("Apple" or "Parakeet"), and a confidence indicator if the backend exposes one. ~1h of dev cost. Removed in Phase 6 polish before ship. **This is the most important of the two checkpoints** — it's the validation gate before committing to Phase 4.
+**Checkpoint #2: 14-step smoke gate (M3.7.4 exit criterion).** Real Voice Memos session lasting ~5-10 minutes covering: mic-on, speech, silence, speech, second-app mic acquisition, sleep/wake, X-button dismiss, multi-display drag. State-transition CSV pivot (`tools/state-timeline.py`) produces per-step timing data. The product owner reviews the CSV against perceived UX and makes the ship/retreat decision.
 
-**Exit gate.** Speak English in a real Zoom call → HUD shows English tokens flowing from Apple backend. Speak Russian in a real Zoom call → HUD shows Russian tokens flowing from Parakeet backend, first-time use prompted for download in Settings. Token stream survives a 30-minute call without dropouts.
+**Exit gate.** Speak into Voice Memos → widget warms within ~5s → tokens flow from whisper.cpp + Silero VAD → state machine transitions counting↔waiting per VAD signal → 14-step smoke produces clean state-transition log with no rationalization-loop bugs → Anton confirms UX is acceptable (perceived latency feels responsive, not laggy).
 
-**If RU quality fails this gate.** Stop. Open a v1.x decision: either (a) accept the limitation and ship English-only v1, RU as v1.x once a better model arrives, or (b) re-spike Parakeet config (chunk size, normalization, mic-input format) to find the gap between spike conditions and meeting conditions. Don't proceed to Phase 4 with degraded RU tokens — every analyzer metric inherits the underlying noise.
+**If the 14-step smoke gate fails UX acceptance.** Stop. Open V1.5 decision: (a) escalate to Sherpa-ONNX + Moonshine (designed for sub-100ms streaming, ONNX Runtime dependency, ~6-12h spike); (b) two-engine architecture — Apple SpeechAnalyzer for English + cross-platform engine for other languages, accepting the complexity of routing; (c) further relax the C4 budget and accept the perceived lag for V1, iterate engine in V1.x. Don't proceed to Phase 4 with an STT engine the user perceives as broken — every analyzer metric inherits the underlying UX impression.
 
 ---
 

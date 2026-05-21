@@ -1063,10 +1063,267 @@ Distribution is tight and deterministic — 6.5 ms spread across 10 cycles, no o
 
 ---
 
-## Spike status summary (Session 030)
 
-All architecture-blocking spikes from earlier project phases are resolved. Seven spikes completed (S2, S4, S6, S7, S8, S9, S10), one superseded (S3). Two spikes deferred with their features: S1 (blocklist → v2), S11 (MonologueDetector → v1.x). S12 remains parked for v2 (trail-off detector). S5 deferred to v1.x.
+---
 
-**Spike #13 (external-mic-detection signal) — CLOSED Session 030.** All four formal probe paths (A, B, C, D) FAILED across nine total executions including additive-only extensions. Six locked Apple-framework runtime-discovery findings establish that no standard Apple API distinguishes our capture from external capture at the HAL level when our capture is active. Architect pivoted to disconnect-probe-reconnect algorithm proposed by product owner; algorithm sidesteps the distinguishability problem by temporarily removing Locto from the set of HAL readers during the probe step. **Spike #13.5 (HAL stop-settling time measurement)** measured the algorithm parameter empirically: max 45 ms with tight distribution, production parameter 100ms with safety margin. M3.7.3 implements the algorithm Session 031.
+## Spike #14 — SpeechAnalyzer warm-state survival across AVAudioEngine teardown
 
-Phase 1 module work is fully unblocked. Phase 3 token pipeline is functional pending M3.7.3 implementation.
+**Status:** ❌ REJECTED (Session 031, Spike branch closed) — Apple's framework resets analyzer state on audio source discontinuity
+
+### Question
+Can SpeechTranscriber + SpeechAnalyzer + inputContinuation references be reused across AVAudioEngine teardown to avoid the multi-second warm-up cost?
+
+### Why it matters
+M3.7.3 fix #4 disconnect-probe-reconnect algorithm required surviving warm state across engine rebuild. If state survives, the algorithm ships. If state doesn't survive, the algorithm is architecturally dead.
+
+### Result
+**FAIL.** Post-rebuild warm-up gap measured at **6.90 seconds** even keeping all three object references identical across rebuild. Apple's framework resets analyzer state on audio source discontinuity.
+
+### Architectural impact
+Forced architectural pivot from disconnect-probe-reconnect to engine-always-warm + 1Hz HAL polling. Closed the disconnect-probe-reconnect direction wholesale. Negative result was load-bearing.
+
+### Forward note
+Any future architecture that requires SpeechAnalyzer to survive AVAudioEngine teardown will hit this same 6.9s gap. Apple's framework does not expose a "rebind to new audio source without state loss" API.
+
+---
+
+## Spike #15 — Per-process HAL client enumeration via `kAudioHardwarePropertyProcessObjectList`
+
+**Status:** ✅ SUPPORTED (Session 031) — at ~50ms flip latency on macOS 26, with one filter constraint
+
+### Question
+Can per-process HAL client status be enumerated via `kAudioHardwarePropertyProcessObjectList` + `kAudioProcessPropertyIsRunningInput` to detect when external apps free the mic?
+
+### Result
+**PASS** at ~50ms transition latency on macOS 26. **One constraint locked:** `com.apple.CoreSpeech` process is permanently `IsRunningInput=true` and must be filtered out of the baseline scan. Without that filter, every poll returns false-positive "external mic activity present."
+
+### Architectural impact
+Replaced disconnect-probe-reconnect with engine-always-warm + 1Hz HAL polling. AVAudioEngine + SpeechAnalyzer run for entire session, warm up exactly once, never re-warm. 1Hz process-list poll drives session end via `SessionEndReason.micFreedExternally`.
+
+### Forward note
+Production filter MUST exclude `com.apple.CoreSpeech` (and ONLY that — not blanket `com.apple.*` prefix; that scope-creep was caught pre-merge in Session 031 fix #5). Architect verbatim-code audit caught two rationalization-class bugs in this fix: polarity inversion in poll-loop conditional, and the `com.apple.*` prefix scope creep.
+
+---
+
+## Spike #16 — Buffer-level VAD (energy-based RMS) for real-time speaking activity
+
+**Status:** ❌ FAIL (Session 033, RMS architecture rejected) — far-field MacBook built-in mic puts speech 5-10 dB above noise floor, energy alone cannot distinguish
+
+### Question
+Can an energy-based VAD on raw audio buffers (RMS + adaptive noise floor + hysteresis) deliver real-time voice activity for the widget's speaking/listening state? Replacing Apple SpeechAnalyzer's `tokenStream`-derived `isInTokenSilence` signal (which fails because Apple batches tokens at internal commit boundaries).
+
+### Method
+1. Anton recorded 10 .caf fixtures (5 scenarios × 2 mics) at 16 kHz mono Int16:
+   - `alternating_pods.caf` / `_mac.caf` — 5s speech / 5s silence × 3
+   - `quiet_speech_pods.caf` / `_mac.caf` — 30s continuous quiet speech
+   - `cafe_noise_pods.caf` / `_mac.caf` — 30s speech + cafe ambience
+   - `silence_only_pods.caf` / `_mac.caf` — 30s pure room tone
+   - `distractors_pods.caf` / `_mac.caf` — speech with typing / door slam / phone notification / silence interval
+   - Plus `real_world_test.caf` — Anton's 30s continuous English speech
+   - All with `manifest.csv` providing stopwatch-measured ground-truth event times (±500ms accuracy)
+2. Built `RMSVoiceActivityDetector` with calibration phase + adaptive noise floor + 3-on-hysteresis / 30-off-hysteresis + ceiling-fallback for sessions starting mid-speech
+3. Built `Spike16Eval` to compute 12 criteria with PASS/NEEDS_TUNING/FAIL disposition per criterion, verdict in summary.json
+4. Ran 27-combination parameter sweep across voiceOnHysteresisCount × voiceOffHysteresisCount × thresholdMarginDB
+
+### Result
+**FAIL across all 27 combinations.** Best `speech_fn_max` 16.09% still 3× over 5% budget. The 5-10dB SNR margin on far-field MacBook mic is below what energy-only methods can resolve. Filter cannot save it; this is an information-content problem, not a tuning problem.
+
+Per-criterion summary:
+- C4 onset_latency_median 140ms (budget 100ms) — FAIL
+- C8 silence_fp 0ms — PASS (silence detection works)
+- C9 speech_fn_max 28.15% — FAIL by 5.6×
+- C10 distractor_max 24% — FAIL
+
+### Forward note
+**Energy-based VAD on far-field mic is empirically dead for this product.** Spike #17.x onward all use Silero VAD (neural, 2MB ONNX) instead. The 11 fixtures + manifest from this spike CARRY FORWARD to every subsequent engine spike via symlink — they are the canonical test corpus.
+
+### Reusable artifacts
+- 11 `.caf` fixtures + `manifest.csv` at `Spike/Spike17.1.5_StreamingEOU/recordings/` (path moved across spikes)
+- `Spike16Eval` evaluation tool pattern (12-criteria scorecard with verdict in summary.json) — copied forward to #17.1, #17.1.5, #17.2, #17.3
+- `Spike17_1Eval/Criteria.swift` C8 silence-boundary check (with audio-time methodology fix from #17.3) — production-ready
+
+---
+
+## Spike #17.1 — Parakeet TDT v3 (600M) via FluidAudio `SlidingWindowAsrManager`
+
+**Status:** ❌ FAIL (Session 033) — SlidingWindow architecture is batch mode, not streaming
+
+### Question
+Does Parakeet TDT v3 via FluidAudio's SlidingWindowAsrManager work on macOS Apple Silicon, meet the 200ms first-token latency budget, and produce streaming tokens (not batched)?
+
+### Why this engine was chosen
+Anton's prior TiltTalk work measured Parakeet TDT v3 at 0.13-0.21s warm latency on iOS, 116 MB RAM, ~80% accuracy on Russian adversarial corpus, bounded failure mode (no hallucinations), per-token confidence < 0.85 correlates with low quality. Multilingual coverage: 25 European languages including all of Anton's target spec.
+
+### Result
+**FAIL** on 3 of 12 criteria: C4 first-token latency 18424ms (vs 200ms budget, 92× over), C5 inter-update p95 20761ms, C8 VAD heuristic 33%. **9 criteria PASS:** build clean on macOS (Risk A neutralized), model load 119ms, memory 78.9 MB, no hallucinations, silence handling clean, **confidence scores ARE exposed per-token** (correcting prior architecture analysis that said only isConfirmed was available — TiltTalk's wrapper hid them), cafe noise resilience, real-world cross-validation on Anton's recording.
+
+### Root cause
+SlidingWindowAsrManager's CoreML Preprocessor model was compiled with fixed input shape `[1, 240000]` (15 seconds). FluidAudio 0.14.7 default config produces 432000-sample windows that exceed this shape → CoreML rejects. Workaround forces 15-second batch mode, which kills latency. The model and macOS implementation both work fine; the API surface is a batch architecture, not streaming.
+
+### Three FluidAudio bugs filed
+1. `padAudioIfNeeded` doesn't truncate when audio exceeds the compiled model shape
+2. `finish()` doesn't close the stream's `updateContinuation` — consumer hangs
+3. Default `SlidingWindowAsrConfig` is incompatible with the standard compiled model shape
+
+### Forward note
+**The 600M TDT v3 model works on macOS.** First-token latency on a fresh model load is 18s only because of the SlidingWindow API surface; the model itself processes 15-second batches at acceptable rates. **If anyone considers Parakeet again for this product, evaluate the StreamingEouAsrManager API (Spike #17.1.5), NOT the SlidingWindow API.**
+
+Also confirmed: the `@main async` Swift CLI pattern is mandatory to avoid `DispatchSemaphore` deadlocks when calling async APIs from main. Spike #17.1's first attempt deadlocked for 9.5 hours at `semaphore_wait_trap` because the CLI used a semaphore to bridge `await loadModel()` to synchronous `main`, and the progressHandler callback dispatched back to MainActor (blocked on the semaphore).
+
+Cached Core ML models from prior projects (TiltTalk on the same Mac) can confuse FluidAudio's listing-phase validation; clean the cache before first run on a new platform.
+
+### Reusable artifacts
+- `Spike17_1Eval` evaluation tool (12-criteria scorecard, summary.json verdict) — copied forward to #17.1.5 and #17.2 and #17.3
+- `@main async` CLI scaffold pattern
+- TiltTalk's `ParakeetSpeechService.swift` API surface documentation (in Session 033 journal)
+
+---
+
+## Spike #17.1.5 — Parakeet 120M EOU via FluidAudio `StreamingEouAsrManager`
+
+**Status:** ❌ FAIL (Session 033, GATE 1 early-abort) — encoder cache warmup ~2s is architecturally untunable
+
+### Question
+Does the streaming-purpose API (StreamingEouAsrManager) with the smaller 120M EOU model meet 200ms first-token latency? Different model architecture, different API surface than Spike #17.1's SlidingWindow.
+
+### Different API characteristics
+- StreamingEouAsrManager actor with chunk sizes `.ms160` / `.ms320` / `.ms1280`
+- Polling `getPartialTranscript()` after each `process()` call
+- Different model: `FluidInference/parakeet-realtime-eou-120m-coreml` (120M vs 600M parameters)
+- **No per-token confidence** — RNNT streaming decoder doesn't expose log_prob; only isConfirmed at EOU boundaries (sentinel confidence = -1.0)
+
+### Result
+**GATE 1 FAIL at the 160ms smoke test.** First-token latency: cold 5831ms (JIT compile), warm 2336ms (11.7× budget). NO-SKIPPING early abort applied; chunk-size sweep (.ms320, .ms1280) not run because the math showed it couldn't save the verdict.
+
+### Root cause
+Loopback conformer encoder caches initialize to zeros. The encoder needs ~29 inference steps × 80ms shift = 2320ms audio context before producing usable encoder features that the RNNT decoder can map to tokens. Pass 1 cold 5831ms includes ~3.5s JIT compile + 2.3s cache warmup. Pass 2 warm 2336ms is pure cache warmup. **The cache warmup is constant ~2s regardless of chunk size.** Architecturally untunable — the warmup IS the architecture.
+
+C11 memory also failed: 241.5-306.6 MB RSS vs 200 MB budget. Smaller model does NOT mean smaller memory footprint; Core ML loads carry their own overhead.
+
+### Forward note
+**Any stateful streaming encoder with zero-initialized caches will hit this floor.** This generalizes beyond Parakeet — any RNNT or conformer architecture with cache state has this warmup property. Stateless-per-segment architectures (whisper.cpp + VAD, Sherpa-ONNX + streaming Zipformer with stateless decoder) are the alternative.
+
+Also confirmed: FluidAudio 0.14.7's StreamingEouAsrManager surface has TranscriptionUpdate with `text: String` and `isConfirmed: Bool` only. No per-token confidence. RNNT decoder does NOT expose log_prob per token; quality signal is at utterance granularity (isConfirmed at EOU boundary).
+
+### Reusable artifacts
+- C9 reframing: "isConfirmed accessible per emission, AND final emission per file is isConfirmed=true" — used in #17.2 and #17.3
+- C8 reframing: "≥5 of 6 windows correctly detected" (from 90% to 83% to account for 80ms update granularity)
+- GATE 1 fast-abort pattern (single-fixture smoke before full sweep)
+
+---
+
+## Spike #17.2 — whisper.cpp v1.8.4 + Silero VAD + whisper-small (baseline)
+
+**Status:** ❌ FAIL → tunable hypothesis (Session 033) — first-token latency 333-440ms vs 200ms budget; tested kLengthMs reduction in #17.3
+
+### Question
+Does whisper.cpp's stateless-per-segment architecture (VAD-gated inference, fresh whisper_full() per segment, no encoder cache between segments) hit the 200ms first-token budget on Apple Silicon Metal? Validates the architectural fix to the cache warmup problem from #17.1.5.
+
+### Why this engine was chosen
+After two FluidAudio FAILs, the architectural pattern needed was: no batch window, no encoder cache state. whisper.cpp's `stream` example demonstrates VAD-triggered inference with fresh whisper_full() per VAD segment. Cross-platform C++ (Linux/Windows/Android compile from the same source). Apache 2.0 license. Apple-Silicon Metal acceleration first-class.
+
+### Result
+**EARLY-GATE FAIL** on 4 of 12 criteria with whisper-small + Silero VAD at default thresholds:
+- C4 first-token latency 333-440ms across fixtures (1.67-2.2× over 200ms budget)
+- C5 inter-update p95 1985ms
+- C6 32 ghost tokens on silence-only fixtures
+- C8 0/6 silence boundaries detected (methodology bug — wall-clock vs audio-time)
+- C7 SKIP (text intelligibility — manual review)
+- C12 SKIP (real_world_test.caf at wrong path — fixture was at Spike17.1.5/recordings/ not Spike16/recordings/)
+
+**8 criteria PASS:** build/install clean, model load + Metal acceleration confirmed, streaming behavior (tokens emit incrementally during audio, not batched at end), C9 per-token log_prob median 0.745 (above baseline×0.90 threshold), C10 cafe noise resilience, C11 memory 814 MB (within 1 GB spike budget — but ABOVE 200 MB production budget).
+
+### Tunable hypothesis identified
+The agent's prediction at the time: reduce `kLengthMs` from 3000ms → 1000ms, predicted C4 of 120-160ms based on assumed linear scaling with audio window size. Spike #17.3 tested this hypothesis (FAILED — see #17.3).
+
+### macOS 26 beta findings
+- Intermittent Metal GPU hang (`kIOGPUCommandBufferCallbackErrorHang`) on first run; second attempt succeeded
+- Production needs retry-with-CPU-fallback wrapper for Metal command buffer errors
+- `ggml_metal_library_init` takes ~7.5s for embedded Metal shader compilation on first binary launch (one-time per binary, cached for subsequent launches)
+
+### Forward note
+**whisper.cpp architecture works.** Build, Metal acceleration, Swift-C bridging, model load, inference pipeline all validated on macOS 26 Apple Silicon M3. The latency issue identified here is not the architecture; it's the encoder cost per inference. See Spike #17.3 for the architectural root cause discovered.
+
+Reusable infrastructure:
+- CMake build configuration with `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DBUILD_SHARED_LIBS=OFF`
+- CWhisper C bridging shim with module.modulemap (multi-line format required for clang 21)
+- Package.swift swiftSettings unsafeFlags pattern for header includes
+- 3-way comparison report template (`tools/compare_to_17_x.py`)
+
+---
+
+## Spike #17.3 — whisper.cpp tuning sweep (kLengthMs reduction)
+
+**Status:** ❌ FAIL (Session 033, SMOKE-GATE) — Whisper's fixed 30-second mel context architecture is the floor; kLengthMs reduction is architecturally ineffective
+
+### Question
+Does reducing `kLengthMs` from 3000ms to 1000/800/600ms bring C4 first-token latency into the 200ms budget? Tests the prediction from #17.2 that encoder latency scales linearly with input audio duration.
+
+### Method
+Five focused fixes applied before smoke gate:
+1. kLengthMs configurable via constructor (vs constant)
+2. Silero VAD threshold configurable per mic profile (0.5 pods / 0.3 mac per Spike #16 finding)
+3. Special-token filter ([BLANK_AUDIO], [_BEG_], [MUSIC], "Thank you" when alone, etc.)
+4. `audio_sample_position_ms` field added to TokenEvent (fixes C8 methodology bug from #17.2 — wall-clock vs audio-time)
+5. Startup fixture verification (Step 0 before any model load)
+
+Smoke gate ran three kLengthMs values sequentially with cross-fixture check (alternating_pods.caf + quiet_speech_mac.caf at each value).
+
+### Result
+**FAIL all three smoke values.** Empirical measurements:
+- kLengthMs=1000: pods C4=453ms, mac C4=1322ms (PASS-with-caveat — cross-fixture variance >1.5×)
+- kLengthMs=800: pods C4=304ms, mac C4=280ms
+- kLengthMs=600: pods C4=335ms, mac C4=308ms
+
+**No monotonic improvement** with smaller ring buffer. Variance dominates over scaling effect. The 800ms result (304ms) was marginally lower than 600ms (335ms), confirming the noise floor — there's no real scaling happening.
+
+### Root cause — the architectural learning
+**whisper.cpp's `whisper_pcm_to_mel` ALWAYS computes a fixed-size mel spectrogram covering 30 × 16000 = 480000 samples (30 seconds), zero-padding shorter input to fill.** The Transformer encoder ALWAYS runs on 1500 mel frames regardless of input audio length. The C4 floor for whisper-small on Metal M3 is ~300-450ms for ALL kLengthMs values tested.
+
+**The #17.2 prediction (1s window → 120-160ms) was wrong because it assumed linear scaling.** Whisper's design uses a fixed 30s context; shorter input is zero-padded internally.
+
+This learning generalizes across ALL Whisper-derived options:
+- WhisperKit (same model, different runtime) — same 30s encoder context, same floor
+- whisper-cpp-rs (Rust runtime) — same model, same floor
+- faster-whisper (CTranslate2 runtime) — same model, same floor
+
+**If a future evaluation considers any Whisper variant, expect a ~300-450ms first-token floor on whisper-small / Apple Silicon. Smaller Whisper models (tiny ~80-100ms, base ~150-200ms) may meet the budget but at significant accuracy cost.**
+
+### Implementation bug discovered
+FluidAudio v0.14.7's `whisper_vad_segments_from_samples` applies `min_speech_duration_ms` segment filtering that rejects 160ms chunks as too short, returning 0 events. **Correct streaming usage:** call `whisper_vad_detect_speech` to populate internal probs, then inspect `whisper_vad_probs` directly and compare max probability against threshold. This matches per-chunk streaming semantics.
+
+### Forward note
+**The four-spike search ends here with a hard architectural truth:** every off-the-shelf ASR engine designed before 2024 has an architectural latency floor above the 200ms budget on streaming first-token. Apple SpeechAnalyzer batches at commit boundaries. Parakeet SlidingWindow runs 15s batches. Parakeet EOU has 2s cache warmup. Whisper has 30s mel context.
+
+**Anton's product decision:** relax the C4 budget to "whatever-best-possible" and validate via 14-step smoke gate whether the UX is acceptable. Whisper-small at kLengthMs=1000 gives 304-453ms C4 — measurable, but the budget is a UX question, not a math question.
+
+If 14-step smoke produces acceptable UX, ship whisper-small + Silero VAD as Locto V1's STT engine. If not, escalation options are: Sherpa-ONNX + Moonshine (designed for streaming, sub-100ms target on CPU, no 30s context), or two-engine architecture (Apple SpeechAnalyzer for English + cross-platform engine for other languages).
+
+### Reusable artifacts
+- audio_sample_position_ms field in TokenEvent (audio-time timestamp, separate from wall-clock emission_ms)
+- C8 evaluation methodology fix (compare audio-domain timestamps)
+- Special-token filter list
+- Silero VAD threshold tuning per mic profile (0.5 pods, 0.3 mac)
+- FluidAudio VAD usage pattern (`whisper_vad_detect_speech` + inspect probs, NOT segments_from_samples)
+- Five-fix infrastructure applied (kLengthMs configurable, threshold configurable, filter, audioSamplePositionMs, startup verify)
+
+---
+
+## Spike status summary (Session 033)
+
+Phase 0 spikes (locked Session 014):
+- Spike #1, #11 — deferred with their features
+- Spike #2, #4, #5, #6, #7, #8 — passed
+- Spike #3 — superseded
+- Spike #9 — invalidated, feature → v2
+- Spike #10 — Parakeet feasibility on iOS, passed (Sessions 006-007)
+
+Spikes #13 / #13.5 — closed Session 030 (HAL probing, all four formal probe paths failed; architectural pivot to disconnect-probe-reconnect, then to engine-always-warm via Spike #14/#15 results).
+
+Spikes #14 / #15 — closed Session 031 (engine-always-warm + 1Hz HAL polling locked).
+
+Spike #16 — closed Session 033 (energy-based VAD architecturally dead on far-field mic).
+
+Spikes #17.1 / #17.1.5 / #17.2 / #17.3 — closed Session 033 (FluidAudio's SlidingWindow batches, FluidAudio's StreamingEou has cache warmup, whisper.cpp has 30s mel context floor; all four engines fail 200ms budget; product owner relaxed budget pending 14-step smoke gate UX validation).
+
+**No active spikes at Session 033 close.** Next session: whisper.cpp integration into production transcriber stack.

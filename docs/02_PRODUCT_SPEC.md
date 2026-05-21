@@ -49,12 +49,15 @@ If felt experience and displayed data disagree, trust collapses.
 - Monologue indicator must fire on genuine 60s+ uninterrupted speaking and not fire on conversational back-and-forth
 - Calibration validated on real recordings before shipping
 
+**STT engine latency budget (revised Session 033 after four-spike search):**
+The original aspirational budget was ≤200ms first-token latency from VAD-detected speech onset (C4 in spike methodology). The four-spike engine search (Spikes #16, #17.1, #17.1.5, #17.2, #17.3 — see `01_PROJECT_JOURNAL.md` Session 033 and `05_SPIKES.md`) empirically established that every off-the-shelf ASR engine designed before 2024 has an architectural latency floor above 200ms on Apple Silicon: Apple SpeechAnalyzer batches tokens at internal commit boundaries (2-4s bursts); FluidAudio SlidingWindowAsrManager is batch mode (18s first-token); FluidAudio StreamingEouAsrManager has ~2s loopback encoder cache warmup; whisper.cpp has a 30-second fixed mel context floor at ~300-450ms on whisper-small. **Locked Session 033 (Anton's product call):** the C4 budget is relaxed to "whatever-best-possible." V1 ships whisper.cpp + Silero VAD + whisper-small at the empirically measured ~304-453ms first-token latency. The 14-step smoke gate against real Voice Memos session is the UX acceptance test. If perceived UX is acceptable, ship. If not, escalation paths are Sherpa-ONNX + Moonshine (sub-100ms streaming target on CPU), two-engine architecture (Apple SpeechAnalyzer for English + cross-platform engine for other languages), or further C4 budget relaxation. Product framing: 200ms feels instant, 400-600ms feels responsive ("like a fast typist"), 1000ms+ starts feeling laggy. The actual UX threshold is the smoke-gate question, not a fixed millisecond budget.
+
 ### FM3 — Minimal setup
 First launch must be ≤2 user actions total.
 - **One question at first launch:** "Which 1–2 languages do you speak in meetings?" Default: system locale, single selection. User can change in Settings later. Counts as one user action.
 - **Mic permission grant** at first session start (point-of-use, system dialog). Counts as the second user action.
 - No further setup required. No "tutorial," no "tour," no "configure your preferences."
-- Models silent-download on first use of each declared language: Apple-served languages (~150 MB) silently via `AssetInventory`; Parakeet-served languages (~1.2 GB) one-time CDN download with widget toast "Preparing [language] model…"
+- **STT model download on first session (Session 033 lock):** whisper-small multilingual (~244 MB) downloads once from HuggingFace on first launch, then cached locally. Silero VAD (~2 MB) bundled with same download flow. No per-language download; the multilingual model covers all V1 spec languages with a single ~244 MB asset. Widget shows "Preparing speech engine…" placeholder for the ~5-10s metal shader compilation on first ever launch of the binary (one-time per app install).
 - Sensible defaults for everything else (WPM band, widget position, hotkey)
 
 ### FM4 — No performance impact
@@ -62,7 +65,7 @@ Invisible cost during 1hr Zoom calls on battery.
 - <5% sustained CPU on Apple Silicon during active session
 - No mic dropouts in other apps (Zoom, Meet, FaceTime)
 - No measurable battery delta when idle (mic off)
-- Memory under 150MB resident
+- Memory under 1 GB resident (revised Session 033 — was 150 MB; relaxed for whisper-small on laptop deployment where RAM is not a constraint. Re-evaluate before V1 ship; if production builds run tighter, consider whisper-tiny accuracy fallback)
 
 ---
 

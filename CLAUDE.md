@@ -8,6 +8,8 @@
 
 A macOS menu bar app that runs silently in background, shows a translucent floating widget when the mic activates, and gives real-time speaking-pace + filler-word feedback. Local only, no cloud.
 
+**Current state (Session 033 close):** M3.7 widget close-out shipped at commit `7670867` (7-state widget model). Four-spike STT engine search completed (Spikes #16, #17.1, #17.1.5, #17.2, #17.3 — all FAIL with architectural root causes). **Architecture Z locked (Session 033):** whisper.cpp v1.8.4 + Silero VAD v5.1.2 + whisper-small (multilingual) at `kLengthMs=1000`, per-mic Silero threshold. Replaces prior Architecture Y (Apple SpeechAnalyzer + Parakeet dual backend). **Active frontier:** M3.7.4 whisper.cpp integration into production transcriber stack on `spike/13.5-hal-stop-settling`, gated by 14-step smoke gate UX validation. See `@docs/03_ARCHITECTURE.md` Section 4 (Architecture Z) and `01_PROJECT_JOURNAL.md` Session 033 for the full engine-search history.
+
 Full product spec: `@docs/02_PRODUCT_SPEC.md`
 Architecture: `@docs/03_ARCHITECTURE.md`
 
@@ -53,7 +55,7 @@ These are not negotiable. Every change is evaluated against them.
 - **FM1 — No destructive UI.** No flashing, no jitter, no animated reordering. Smooth color transitions only. Glanceable in <500ms peripheral vision.
 - **FM2 — No unreliable data.** WPM must reflect speed-up/slow-down within ~3s. Pauses for breath must NOT crash the WPM number.
 - **FM3 — Minimal setup.** Settings window auto-opens on first launch with language picker (1–2 languages from ~50 supported, system locale pre-checked). Mic permission grant at first session start. Model downloads require user confirmation in Settings. No tutorials, no further configuration. See `@docs/02_PRODUCT_SPEC.md`.
-- **FM4 — No performance impact.** <5% sustained CPU during 1hr active session on Apple Silicon. <150MB RSS. No mic dropouts in Zoom.
+- **FM4 — No performance impact.** <5% sustained CPU during 1hr active session on Apple Silicon. <1 GB RSS (revised Session 033 — was 150 MB; relaxed for whisper-small on laptop deployment; re-evaluate before V1 ship). No mic dropouts in Zoom.
 
 ---
 

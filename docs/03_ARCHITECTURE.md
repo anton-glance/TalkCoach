@@ -121,51 +121,75 @@ The audio tap callback runs on Core Audio's `RealtimeMessenger.mServiceQueue`. I
 
 ---
 
-### 4. `TranscriptionEngine` (Architecture Y)
+### 4. `TranscriptionEngine` — V1 locked to whisper.cpp + Silero VAD (Session 033, Architecture Z)
 
-**Job:** Convert audio buffers to timestamped word tokens. Routes to one of two backends based on locale, normalizing their outputs to a single token stream format.
+**Job:** Convert audio buffers to timestamped word tokens. Produces a unified token stream consumed by `SpeakingActivityTracker` and `Analyzer`.
 
-**Architecture pivot (locked Session 006):** the previous single-backend `SpeechEngine` module was renamed `TranscriptionEngine` and split into two backends. Reason: `SpeechTranscriber.supportedLocales` on macOS 26.4.1 does not include `ru_RU`, and Russian is a primary v1 language. Architecture Y (Apple where supported, Parakeet for the rest) is the resolution. See Session 006 in `01_PROJECT_JOURNAL.md`.
+**V1 architectural decision (Session 033, after four-spike STT engine search — see Session 033 in `01_PROJECT_JOURNAL.md`):**
 
-**Backend A — `AppleTranscriberBackend` (the default):**
-- Wraps `SpeechAnalyzer` with `SpeechTranscriber` module
-- Used for any locale in `SpeechTranscriber.supportedLocales` (currently 27 locales on macOS 26.4.1, including English, Spanish, French, German, Italian, Portuguese, Korean, Japanese, several Chinese variants)
-- Configured with:
-  - `transcriptionOptions: []`
-  - `reportingOptions: [.volatileResults]` — for live partials
-  - `attributeOptions: [.audioTimeRange]` — timestamps per token
-- Uses `AssetInventory.assetInstallationRequest(supporting:)` to download the locale's model (after user confirms in Settings)
-- Streams `AnalyzerInput` via `AsyncStream`
-- This is essentially "Apple does it for free" — minimal CPU/memory cost (validated in Spike #7 Phase A)
+Architecture Y (Apple where supported + Parakeet fallback, locked Session 006) is REPLACED by **Architecture Z (whisper.cpp + Silero VAD, single-engine multilingual)**. Both prior backends are removed from V1.
 
-**Backend B — `ParakeetTranscriberBackend` (fallback for locales Apple doesn't cover):**
-- Wraps NVIDIA's `parakeet-tdt-0.6b-v3` multilingual model (Core ML conversion by FluidInference, distributed via FluidAudio Swift SDK — selected and validated in Spike #10)
-- Used for any locale NOT in `SpeechTranscriber.supportedLocales` but in Parakeet's supported list (notably `ru_RU` for v1; 25 European languages total)
-- Model file size on disk: ~1.2 GB (FP16, ANE-optimized). INT8 alternative exists but forces CPU-only execution and was rejected (Spike #10 — ANE offload preserves CPU/GPU headroom for Zoom)
-- Downloaded after user confirms in Settings via FluidAudio's Hugging Face fetch, with Settings showing download progress. M3.6 may relocate this to a self-hosted CDN before launch — TBD.
-- Cold-start (validated Spike #10): three tiers — first-ever download ~53s on broadband (one-time); recompile after cache eviction ~16s; warm subsequent runs 0.4s
-- Real-time factor (validated Spike #10): 0.011 mean, 0.032 worst (≈90× real-time) — well under the 0.5 budget gate
-- Peak working memory (validated Spike #10): 133 MB — far under the 800 MB budget. Architecture's earlier estimate was conservative by ~6×.
-- Sustained-run validation (Spike #10 Phase E): 185 iterations, no memory leak, RSS flat
-- Russian transcription quality (validated Spike #10 + Session 007 addendum): WER 9.4% on clean and noisy speech at ~110 WPM (gate <15%); WER 26.8% on fast speech at ~205 WPM (marginal — fast Russian is the actual quality cliff, not noise); filler recognition 70–93% (gate ≥70%); WPM accuracy <2% error in normal-pace conditions
-- Word-level timestamps confirmed (Spike #10 Phase D) — feed directly into `SpeakingActivityTracker`, no proportional-estimation fallback needed
+**Why the change:**
+- M3.7 fix #7 smoke gate (Session 033) revealed Apple SpeechAnalyzer's `tokenStream` emits in 2–4-second bursts at internal commit boundaries, not in real-time. The widget's `isInTokenSilence` state machine subscribing to this stream cannot distinguish "user speaking, Apple holding commit" from "user silent." This is an architectural mismatch — not tunable. Apple SpeechAnalyzer is dropped as the V1 transcription engine.
+- Parakeet via FluidAudio's `SlidingWindowAsrManager` is batch-mode (Spike #17.1, 18s first-token latency); via `StreamingEouAsrManager` has ~2s loopback encoder cache warmup (Spike #17.1.5, architecturally untunable). Parakeet via FluidAudio is dropped as the V1 transcription engine.
+- whisper.cpp + Silero VAD validated as the cheapest path that meets a real-world acceptable UX: stateless-per-segment architecture, no encoder cache, VAD-gated inference (Spike #17.2, #17.3). First-token latency 304-453ms on whisper-small / Apple Silicon M3 / Metal — exceeds the original 200ms aspirational budget. Anton's product decision: relax the C4 budget to "whatever-best-possible" pending 14-step smoke gate UX validation.
 
-**Routing layer — `TranscriptionEngine` itself:**
-- Receives detected locale from `LanguageDetector`
-- Asks: is this locale in `SpeechTranscriber.supportedLocales`?
-  - Yes → instantiate `AppleTranscriberBackend(locale:)`
-  - No, but Parakeet supports it → instantiate `ParakeetTranscriberBackend(locale:)`
-  - No to both → log unsupported, surface error to the user (rare in practice; covered locale set is the union of Apple's 27 + Parakeet v3's 25)
-- Normalizes both backends' outputs into a unified `(token: String, startTime: TimeInterval, endTime: TimeInterval, isFinal: Bool)` stream
-- Handles backend swap when language detection updates mid-session — pause input briefly, swap backend, resume; aim <500ms gap
-- The two backends never run simultaneously in v1 (ruled out by Spike #7 power budget; v1.x can revisit if needed)
+**Architecture Z — whisper.cpp + Silero VAD (single multilingual backend):**
 
-**Outputs:** Stream of `(token, startTime, endTime, isFinal)` records — identical schema regardless of backend; downstream `SpeakingActivityTracker` and `Analyzer` are unaware of which backend produced them.
+- **whisper.cpp v1.8.4 (SHA `9386f239`)** as a git submodule. Pure C++ with Swift-C bridging via `CWhisper` system library target. Built with CMake `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DBUILD_SHARED_LIBS=OFF` for static linkage and embedded Metal shader bundle. Links `libwhisper.a` + Metal/MetalKit/Accelerate frameworks.
+- **Model: whisper-small (multilingual)** — `ggml-small.bin`, ~244 MB on disk, ~487 MB resident, downloaded from HuggingFace `ggerganov/whisper.cpp` on first launch. Covers all European + North American languages in V1 spec. Multilingual variant chosen for language-switching capability deferred to V1.5+ (see M3.8 backlog row).
+- **VAD: Silero v5.1.2** — `ggml-silero-v5.1.2.bin`, ~0.88 MB, downloaded same source. Neural VAD chosen over energy-based RMS after Spike #16 verdict ("far-field MacBook built-in mic puts speech 5-10 dB above noise floor; energy alone cannot distinguish"). Per-mic threshold tuning: 0.5 default for AirPods/close-mic, 0.3 for MacBook built-in.
+- **Streaming pattern (locked):** ring-buffer of `kLengthMs=1000ms` audio. Silero VAD evaluates each 160ms chunk; on speech-onset, fresh `whisper_full()` inference fires on current ring buffer; on sustained silence (≥300ms with VAD false), emit final TokenEvent and trim ring buffer to keep 200ms overlap. Stateless per VAD-triggered segment.
+- **Whisper VAD API usage (production-locked):** call `whisper_vad_detect_speech` to populate internal probs, inspect `whisper_vad_probs` directly, compare max probability against threshold. The `whisper_vad_segments_from_samples` API rejects 160ms chunks as too short via its `min_speech_duration_ms` filter — confirmed Spike #17.3.
 
-**Caveats:**
-- Word-level vs phrase-level timestamps: `SpeechAnalyzer` produces word-level. Parakeet's Core ML port (FluidAudio) was validated word-level in Spike #10 Phase D — `ASRResult.tokenTimings` provides per-token `startTime`/`endTime` after BPE subword tokens are merged. The proportional-estimation fallback designed in Session 006 is not needed and is dropped from `ParakeetTranscriberBackend`'s scope.
-- First use of any locale triggers a model download — gated by user confirmation in Settings.
-- Apple's `AssetInventory.status(forModules:)` returns `.unsupported` for locales the platform actually doesn't support, even if `supportedLocale(equivalentTo:)` returns the locale. The routing layer must check `supportedLocales` (the list), not `supportedLocale(equivalentTo:)` (the misleading helper). Spike #6 / Session 006 found this the hard way.
+**Token output:**
+- `TokenEvent` struct with fields: `update_index: Int`, `emission_ms: Int` (wall-clock), `audio_sample_position_ms: Int` (audio-time, computed as `totalSamplesProcessed × 1000 / 16000`), `text: String`, `is_confirmed: Bool` (true at VAD speech-end OR `finish()` return), `confidence: Float` (median per-token `whisper_full_get_token_p()` log_prob across the segment).
+- Audio-time timestamps separate from wall-clock emission timestamps. Required because Metal JIT compilation costs ~7.5s on first binary launch (one-time per binary, cached subsequent), which would otherwise shift `emission_ms` against any audio-domain ground truth.
+
+**Special-token filter (Session 033 fix):**
+Whisper-small hallucinates on near-silence audio: `[BLANK_AUDIO]`, `[_BEG_]`, `[_END_]`, `[MUSIC]`, `[NOISE]`, `[SILENCE]`, `[SOUND]`, "(Music playing)" always filtered. "Thank you." filtered when it's the only token in a segment (whisper-small's most common hallucination on speech-shaped silence). Filtered tokens do not emit TokenEvents — if filtering empties a segment, no event is emitted.
+
+**Metal command-buffer error recovery:**
+macOS 26 beta has been observed to produce intermittent `kIOGPUCommandBufferCallbackErrorHang` on the first inference of a process. Production wraps `whisper_full()` with retry-on-status-error logic; on retry failure, falls back to CPU-only inference (multi-threaded Accelerate/BLAS, ~3-8× slower but functional).
+
+**Cross-platform path (V1.5+ readiness):**
+whisper.cpp builds on Linux/Windows/Android from the same C++ source. macOS production uses `-DGGML_METAL=ON`; other platforms use `-DGGML_METAL=OFF` with `-DGGML_CUDA=ON` (NVIDIA GPU) or CPU-only fallback. The CWhisper bridge is macOS/iOS-only; for cross-platform, the C bridge plus whisper.cpp usage is the portable layer, and the Swift actor wrapping is platform-specific. Locto V1 ships macOS-only; V1.5+ cross-platform port becomes a UI rewrite, not an engine rewrite.
+
+**Memory footprint:**
+- whisper-small + Silero loaded: ~487 MB RSS after model load, ~814 MB after first inference (Spike #17.2 measurement). This EXCEEDS the original 200 MB production C11 budget. Locked Session 033 by Anton: laptop deployment, RAM is not a constraint; budget relaxed to 1 GB. Re-evaluate on production builds before V1 ship.
+
+**Outputs:** Stream of `TokenEvent` records consumed by `SpeakingActivityTracker` and `Analyzer`. Schema unchanged from Architecture Y — downstream modules unaware of engine swap.
+
+**Caveats / V1 risks:**
+- **C4 first-token latency 304-453ms** (vs original 200ms aspirational budget). UX validation deferred to M3.7.4's 14-step smoke gate. If UX is unacceptable, escalation paths: Sherpa-ONNX + Moonshine (designed for sub-100ms streaming, ONNX Runtime dependency); two-engine architecture (Apple SpeechAnalyzer for English + cross-platform for other languages); or further C4 budget relaxation.
+- Whisper's 30-second fixed mel context (Spike #17.3 finding) means kLengthMs is NOT a tuning knob for latency. Reducing kLengthMs does not reduce encoder cost. The latency floor is the encoder, not the audio window.
+- whisper-small's per-token confidence (median log_prob ~0.745, Spike #17.2 measurement) is exposed and usable for quality gating, analogous to TiltTalk's L-8 confidence < 0.85 rule but with whisper-specific calibration.
+- Mid-session language switching deferred to V1.5+ (see M3.8). V1 ships single-language sessions where the language is set in Settings or detected at session start; whisper's `language` parameter can be configured per-inference without model reload, but switching mid-utterance is not yet validated.
+
+**Migration path for retiring code in M3.7.4 implementation:**
+- `AppleTranscriberBackend.swift` → DELETED. Apple SpeechAnalyzer integration removed entirely. `ParakeetTranscriberBackend.swift` → DELETED (deferred V1 backend, never shipped).
+- `TranscriptionEngine` simplified from routing layer to single-backend wrapper.
+- New `WhisperCppBackend` implementing the same protocol surface as the deleted backends (so downstream `SpeakingActivityTracker` / `Analyzer` need zero changes).
+- Widget state machine subscribes to Silero VAD signal (`isVoiceActive: AsyncStream<Bool>`) for speaking/listening transitions, NOT to `isInTokenSilence`. The 7-state widget model (Session 033 fix #7) remains; the trigger source changes from token-arrival to VAD-detection.
+
+---
+
+### 4-archive. Architecture Y (RETIRED Session 033) — Apple SpeechAnalyzer + Parakeet dual backend
+
+> Documenting for spike-archive purposes. Not part of V1 architecture. See Session 006 + Session 033 in `01_PROJECT_JOURNAL.md` for the pivot history.
+
+The original v1 design split transcription between two backends based on locale support:
+- **`AppleTranscriberBackend`** wrapping `SpeechAnalyzer` + `SpeechTranscriber` for locales in `SpeechTranscriber.supportedLocales` (27 locales on macOS 26.4.1).
+- **`ParakeetTranscriberBackend`** wrapping NVIDIA's `parakeet-tdt-0.6b-v3` via FluidAudio for non-Apple locales (25 European languages, notably `ru_RU`).
+
+The routing layer in `TranscriptionEngine` checked `LanguageDetector`'s output locale against Apple's supported list and instantiated the appropriate backend. Mid-session language swap was designed to pause input, swap backend, resume within <500ms.
+
+**Why retired:** Apple SpeechAnalyzer's `tokenStream` is not a real-time speaking-activity stream (M3.7 fix #7 smoke gate, Session 033). Parakeet via FluidAudio's SlidingWindow / StreamingEou both have architectural latency floors above the 200ms budget (Spikes #17.1, #17.1.5). The architectural assumption that drove Architecture Y (Apple is real-time and free; Parakeet is the fallback for languages Apple doesn't cover) was empirically falsified.
+
+**Reusable from Architecture Y for Architecture Z:**
+- `TranscriptionEngine` protocol surface (unified token stream output)
+- `LanguageDetector` for language pre-detection at session start
+- `SpeakingActivityTracker` token consumption pattern
 
 ---
 
