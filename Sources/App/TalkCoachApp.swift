@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         sessionCoordinator.start()
 
+        // Architecture Z: eager WhisperCppBackend init (contexts load on first session start).
         let audioPipeline = AudioPipeline()
         let declaredLocales = settingsStore.declaredLocales.map { Locale(identifier: $0) }
         let bufferProvider = AudioPipelineBufferProvider(pipeline: audioPipeline)
@@ -73,13 +74,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             whisperLIDProvider: StubWhisperLIDProvider(),
             audioBufferProvider: bufferProvider
         )
-        sessionCoordinator.wiring = SessionWiring(
-            audioPipeline: audioPipeline,
-            languageDetector: languageDetector,
-            appleBackendFactory: SystemAppleBackendFactory(),
-            parakeetBackendFactory: PlaceholderParakeetBackendFactory(supportedLocaleIdentifiers: []),
-            supportedLocalesProvider: SystemSupportedLocalesProvider()
-        )
+        if let whisperURL = try? WhisperModelLoader.whisperModelURL(),
+           let sileroURL = try? WhisperModelLoader.sileroModelURL() {
+            let backend = WhisperCppBackend(
+                whisperModelPath: whisperURL.path,
+                sileroModelPath: sileroURL.path
+            )
+            sessionCoordinator.wiring = SessionWiring(
+                audioPipeline: audioPipeline,
+                languageDetector: languageDetector,
+                backend: backend
+            )
+        } else {
+            Logger.app.error("WhisperCppBackend: model files not found in bundle — session wiring not set")
+        }
 
         floatingPanelController.start()
 

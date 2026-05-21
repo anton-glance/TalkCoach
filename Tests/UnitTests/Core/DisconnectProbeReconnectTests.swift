@@ -93,21 +93,17 @@ final class DisconnectProbeReconnectTests: XCTestCase {
 
     private func makeWiring(
         stubbedLocale: String = "en-US",
-        appleLocales: [String] = ["en-US"]
+        backend: (any TranscriberBackend)? = nil
     // swiftlint:disable:next large_tuple
     ) -> (wiring: SessionWiring, engineProvider: ProbeTestEngineProvider, fakeLD: FakeLanguageDetector) {
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
         fakeLD.stubbedLocale = Locale(identifier: stubbedLocale)
-        let localesProvider = FakeSupportedLocalesProvider()
-        localesProvider.locales = appleLocales.map { Locale(identifier: $0) }
         let wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: TestAppleBackendFactory(),
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: localesProvider
+            backend: backend ?? YieldingStubBackend()
         )
         return (wiring, engineProvider, fakeLD)
     }
@@ -206,20 +202,8 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     func testLastTokenArrival_NilInitially_ThenSetsOnToken() async throws {
         let (sut, _) = makeSUT()
 
-        let yieldingFactory = YieldingAppleBackendFactory()
-        let engineProvider = ProbeTestEngineProvider()
-        let pipeline = AudioPipeline(provider: engineProvider)
-        let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
-
-        let wiring = SessionWiring(
-            audioPipeline: pipeline,
-            languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
-        )
+        let yieldingBackend = YieldingStubBackend()
+        let (wiring, _, _) = makeWiring(backend: yieldingBackend)
         sut.wiring = wiring
 
         XCTAssertNil(sut.lastTokenArrival, "lastTokenArrival must be nil before any session (AC-12)")
@@ -232,7 +216,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
         let tokenExp = XCTestExpectation(description: "token consumed")
         consumer.onReceiveToken = { tokenExp.fulfill() }
         let before = Date()
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "hi", startTime: 0, endTime: 0.4, isFinal: true)
         )
         await fulfillment(of: [tokenExp], timeout: 2.0)
@@ -246,20 +230,8 @@ final class DisconnectProbeReconnectTests: XCTestCase {
     func testLastTokenArrival_ResetsToNil_AfterSessionEnds() async throws {
         let (sut, _) = makeSUT()
 
-        let yieldingFactory = YieldingAppleBackendFactory()
-        let engineProvider = ProbeTestEngineProvider()
-        let pipeline = AudioPipeline(provider: engineProvider)
-        let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
-
-        let wiring = SessionWiring(
-            audioPipeline: pipeline,
-            languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
-        )
+        let yieldingBackend = YieldingStubBackend()
+        let (wiring, _, _) = makeWiring(backend: yieldingBackend)
         sut.wiring = wiring
 
         let consumer = FakeTokenConsumer()
@@ -269,7 +241,7 @@ final class DisconnectProbeReconnectTests: XCTestCase {
 
         let tokenExp = XCTestExpectation(description: "token consumed")
         consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "hi", startTime: 0, endTime: 0.4, isFinal: true)
         )
         await fulfillment(of: [tokenExp], timeout: 2.0)

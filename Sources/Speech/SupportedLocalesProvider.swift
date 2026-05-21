@@ -1,19 +1,4 @@
 import Foundation
-import Speech
-
-// MARK: - SupportedLocalesProvider
-
-nonisolated protocol SupportedLocalesProvider: Sendable {
-    func supportedLocales() async -> [Locale]
-}
-
-// MARK: - SystemSupportedLocalesProvider
-
-nonisolated struct SystemSupportedLocalesProvider: SupportedLocalesProvider {
-    func supportedLocales() async -> [Locale] {
-        await SpeechTranscriber.supportedLocales
-    }
-}
 
 // MARK: - Locale matching
 

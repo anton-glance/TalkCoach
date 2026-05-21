@@ -41,14 +41,10 @@ final class AudioProcessProberPollTests: XCTestCase {
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let localesProvider = FakeSupportedLocalesProvider()
-        localesProvider.locales = [Locale(identifier: "en-US")]
         return SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: TestAppleBackendFactory(),
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: localesProvider
+            backend: YieldingStubBackend()
         )
     }
 

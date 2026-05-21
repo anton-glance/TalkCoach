@@ -20,13 +20,11 @@ struct EndedSession: Equatable {
 
 // MARK: - SessionWiring
 
-/// Bundles the injectable dependencies for the audio → transcription pipeline.
+/// Bundles the injectable dependencies for the audio → transcription pipeline (Architecture Z).
 struct SessionWiring {
     let audioPipeline: AudioPipeline
     let languageDetector: any LanguageDetecting
-    let appleBackendFactory: any AppleBackendFactory
-    let parakeetBackendFactory: any ParakeetBackendFactory
-    let supportedLocalesProvider: any SupportedLocalesProvider
+    let backend: any TranscriberBackend
 }
 
 // MARK: - SessionEndReason
@@ -83,7 +81,7 @@ final class SessionCoordinator: ObservableObject {
     private(set) var engineReadyTask: Task<Void, Never>?
     private var localeMonitorTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
-    private var activeEngine: TranscriptionEngine?
+    private var vadMonitorTask: Task<Void, Never>?
     private var activePipeline: AudioPipeline?
 
     // Per-session measurement state — reset at start/end of each wiring cycle.
@@ -276,6 +274,9 @@ final class SessionCoordinator: ObservableObject {
         }
 
         // Step 2: LanguageDetector
+        // Sequential consumption invariant: LD.start() has returned before backend subscribes.
+        // Strategy 3 (WhisperLID, isBlocking=true) is the only strategy that consumes
+        // AudioPipeline.bufferStream; Strategies 1 & 2 use PartialTranscriptProvider only.
         let locale: Locale
         do {
             locale = try await capturedWiring.languageDetector.start()
@@ -291,19 +292,11 @@ final class SessionCoordinator: ObservableObject {
             return
         }
 
-        // Step 3: TranscriptionEngine init
-        // Sequential consumption invariant: LD.start() has returned above.
-        // Strategy 3 (WhisperLID, isBlocking=true) is the only strategy that consumes
-        // AudioPipeline.bufferStream; Strategies 1 & 2 use PartialTranscriptProvider only.
-        let engine: TranscriptionEngine
+        // Step 3: Backend start (Architecture Z — WhisperCppBackend via TranscriberBackend protocol)
+        let audioProvider = AudioPipelineBufferProvider(pipeline: capturedWiring.audioPipeline)
         do {
-            engine = try await TranscriptionEngine(
-                locale: locale,
-                audioBufferProvider: AudioPipelineBufferProvider(pipeline: capturedWiring.audioPipeline),
-                appleBackendFactory: capturedWiring.appleBackendFactory,
-                parakeetBackendFactory: capturedWiring.parakeetBackendFactory,
-                supportedLocalesProvider: capturedWiring.supportedLocalesProvider
-            )
+            try await capturedWiring.backend.start(locale: locale, audioProvider: audioProvider)
+            Logger.session.info("SessionCoordinator: backend started [\(locale.identifier)]")
         } catch {
             let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
             let rollbackStart = Date()
@@ -311,45 +304,34 @@ final class SessionCoordinator: ObservableObject {
             capturedWiring.audioPipeline.stop()
             activePipeline = nil
             let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
-            Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.init after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
+            Logger.session.error("SessionCoordinator: wiring failed at backend.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
             sessionStartTime = nil
             return
         }
 
-        // Step 4: TranscriptionEngine start
-        do {
-            try await engine.start()
-            Logger.session.info("SessionCoordinator: TranscriptionEngine started [\(locale.identifier)]")
-        } catch {
-            let elapsedMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
-            let rollbackStart = Date()
-            await engine.stop()
-            await capturedWiring.languageDetector.stop()
-            capturedWiring.audioPipeline.stop()
-            activePipeline = nil
-            let rollbackMs = Int(Date().timeIntervalSince(rollbackStart) * 1000)
-            Logger.session.error("SessionCoordinator: wiring failed at TranscriptionEngine.start after \(elapsedMs)ms: \(error). Rollback complete in \(rollbackMs)ms.")
-            sessionStartTime = nil
-            return
-        }
-
-        activeEngine = engine
         currentLocale = locale
 
-        // Spawn engineReadyTask in parallel with relay/locale/poll so runSession() exits
-        // immediately after engine.start() — relayTask and pollTask are not gated on engine-ready.
+        // Spawn monitoring tasks in parallel — none of these block runSession() from returning.
         engineReadyTask = Task { [weak self] in
-            for await _ in engine.engineReadyStream {
+            for await _ in capturedWiring.backend.engineReadyStream {
                 self?.handleEngineReadyEvent()
                 break
             }
         }
         localeMonitorTask = Task { [weak self] in await self?.monitorLocaleChanges() }
-        relayTask = Task { [weak self] in await self?.relayTokens(from: engine) }
+        relayTask = Task { [weak self] in
+            await self?.relayTokens(from: capturedWiring.backend.tokenStream)
+        }
+        vadMonitorTask = Task { [weak self] in
+            for await hasVoice in capturedWiring.backend.vadActivityStream {
+                if Task.isCancelled { break }
+                self?.isVoiceInactive = !hasVoice
+            }
+        }
         startPollTimer()
 
         let setupMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
-        Logger.session.info("SessionCoordinator: wiring complete in \(setupMs)ms — locale=\(locale.identifier), backend=\(engine.backendName)")
+        Logger.session.info("SessionCoordinator: wiring complete in \(setupMs)ms — locale=\(locale.identifier)")
     }
 
     private func monitorLocaleChanges() async {
@@ -362,11 +344,11 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
-    private func relayTokens(from engine: TranscriptionEngine) async {
+    private func relayTokens(from tokenStream: AsyncStream<TranscribedToken>) async {
         var windowStart = Date()
         var tokensInWindow = 0
 
-        for await token in engine.tokenStream {
+        for await token in tokenStream {
             if Task.isCancelled { break }
             Logger.session.debug("SessionCoordinator: token '\(token.token)' t=[\(token.startTime, format: .fixed(precision: 2))–\(token.endTime, format: .fixed(precision: 2))] final=\(token.isFinal)")
             sessionTokenCount += 1
@@ -412,11 +394,12 @@ final class SessionCoordinator: ObservableObject {
         engineReadyTask = nil
         localeMonitorTask?.cancel()
         relayTask?.cancel()
+        vadMonitorTask?.cancel()
+        vadMonitorTask = nil
 
-        // Stop engine first: engine.stop() finishes tokenStream, unblocking the relay loop.
+        // Stop backend first: stop() finishes tokenStream, unblocking the relay loop.
         // Then await relay completion so any in-flight consume() call drains before sessionEnded.
-        await activeEngine?.stop()
-        activeEngine = nil
+        await wiring?.backend.stop()
 
         await relayTask?.value
         relayTask = nil

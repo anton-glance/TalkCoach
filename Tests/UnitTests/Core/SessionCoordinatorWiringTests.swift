@@ -79,25 +79,20 @@ final class FakeLanguageDetector: LanguageDetecting, @unchecked Sendable {
     func simulateLocaleChange(_ locale: Locale) { cont.yield(locale) }
 }
 
-// MARK: - FailingTranscriberBackend / FailingAppleBackendFactory
+// MARK: - FailingTranscriberBackend
 
 final class FailingTranscriberBackend: TranscriberBackend, @unchecked Sendable {
     let tokenStream: AsyncStream<TranscribedToken> = AsyncStream { $0.finish() }
     let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.finish() }
-    func start(locale: Locale) async throws { throw TranscriberBackendError.modelUnavailable }
+    let vadActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
+    func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws {
+        throw TranscriberBackendError.modelUnavailable
+    }
     func stop() async {}
 }
 
-final class FailingAppleBackendFactory: AppleBackendFactory, @unchecked Sendable {
-    nonisolated(unsafe) var makeCallCount = 0
-    func make(audioBufferProvider: any AudioBufferProvider) -> any TranscriberBackend {
-        makeCallCount += 1
-        return FailingTranscriberBackend()
-    }
-}
-
-// MARK: - YieldingStubBackend / YieldingAppleBackendFactory
-// Internal so SessionCoordinatorIntegrationTests can reuse them.
+// MARK: - YieldingStubBackend
+// Internal so SessionCoordinatorIntegrationTests can reuse it.
 
 final class YieldingStubBackend: TranscriberBackend, @unchecked Sendable {
     nonisolated(unsafe) var startCallCount = 0
@@ -106,6 +101,7 @@ final class YieldingStubBackend: TranscriberBackend, @unchecked Sendable {
     private let cont: AsyncStream<TranscribedToken>.Continuation
     let tokenStream: AsyncStream<TranscribedToken>
     let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.yield(()); $0.finish() }
+    let vadActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
 
     init() {
         // swiftlint:disable:next identifier_name
@@ -114,27 +110,13 @@ final class YieldingStubBackend: TranscriberBackend, @unchecked Sendable {
         cont = c
     }
 
-    func start(locale: Locale) async throws { startCallCount += 1 }
+    func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws { startCallCount += 1 }
     func stop() async { stopCallCount += 1; cont.finish() }
     func yield(_ token: TranscribedToken) { cont.yield(token) }
 }
 
-final class YieldingAppleBackendFactory: AppleBackendFactory, @unchecked Sendable {
-    nonisolated(unsafe) var makeCallCount = 0
-    let stubbedBackend: YieldingStubBackend
-
-    init(backend: YieldingStubBackend = YieldingStubBackend()) {
-        self.stubbedBackend = backend
-    }
-
-    func make(audioBufferProvider: any AudioBufferProvider) -> any TranscriberBackend {
-        makeCallCount += 1
-        return stubbedBackend
-    }
-}
-
-// MARK: - NeverReadyStubBackend / NeverReadyAppleBackendFactory
-// Internal so SessionCoordinatorTests can use them for the V6 topology test.
+// MARK: - NeverReadyStubBackend
+// Internal so SessionCoordinatorTests can use it for the engine-ready topology test.
 
 final class NeverReadyStubBackend: TranscriberBackend, @unchecked Sendable {
     private let tokenCont: AsyncStream<TranscribedToken>.Continuation
@@ -143,6 +125,7 @@ final class NeverReadyStubBackend: TranscriberBackend, @unchecked Sendable {
     // engineReadyContinuation kept alive indefinitely — stream never yields, never finishes.
     private let engineReadyContinuation: AsyncStream<Void>.Continuation
     let engineReadyStream: AsyncStream<Void>
+    let vadActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
 
     init() {
         var tokenStreamCont: AsyncStream<TranscribedToken>.Continuation!
@@ -154,19 +137,12 @@ final class NeverReadyStubBackend: TranscriberBackend, @unchecked Sendable {
         engineReadyContinuation = erc
     }
 
-    func start(locale: Locale) async throws {}
+    func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws {}
     func stop() async {
         engineReadyContinuation.finish()
         tokenCont.finish()
     }
     func yield(_ token: TranscribedToken) { tokenCont.yield(token) }
-}
-
-final class NeverReadyAppleBackendFactory: AppleBackendFactory, @unchecked Sendable {
-    let stubbedBackend = NeverReadyStubBackend()
-    func make(audioBufferProvider: any AudioBufferProvider) -> any TranscriberBackend {
-        stubbedBackend
-    }
 }
 
 // MARK: - SessionCoordinatorWiringTests
@@ -184,21 +160,16 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         return SessionCoordinator(micMonitor: micMonitor, settingsStore: settingsStore)
     }
 
-    // swiftlint:disable large_tuple
     private func makeWiring(
         stubbedLocale: String = "en-US",
-        appleLocales: [String] = ["en-US"],
         langError: Error? = nil,
-        appleFactory: (any AppleBackendFactory)? = nil,
-        parakeetFactory: (any ParakeetBackendFactory)? = nil,
+        backend: (any TranscriberBackend)? = nil,
         engineStartShouldThrow: Bool = false
     ) -> (
         wiring: SessionWiring,
         engineProvider: WiringFakeAudioEngineProvider,
-        fakeLD: FakeLanguageDetector,
-        localesProvider: FakeSupportedLocalesProvider
+        fakeLD: FakeLanguageDetector
     ) {
-        // swiftlint:enable large_tuple
         let engineProvider = WiringFakeAudioEngineProvider()
         engineProvider.startShouldThrow = engineStartShouldThrow
         let pipeline = AudioPipeline(provider: engineProvider)
@@ -207,50 +178,37 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         fakeLD.stubbedLocale = Locale(identifier: stubbedLocale)
         fakeLD.stubbedError = langError
 
-        // swiftlint:disable:next identifier_name
-        let af = appleFactory ?? TestAppleBackendFactory()
-        // swiftlint:disable:next identifier_name
-        let pf = parakeetFactory ?? TestParakeetBackendFactory()
-
-        let localesProvider = FakeSupportedLocalesProvider()
-        localesProvider.locales = appleLocales.map { Locale(identifier: $0) }
-
         let wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: af,
-            parakeetBackendFactory: pf,
-            supportedLocalesProvider: localesProvider
+            backend: backend ?? YieldingStubBackend()
         )
-        return (wiring, engineProvider, fakeLD, localesProvider)
+        return (wiring, engineProvider, fakeLD)
     }
 
-    // MARK: - AC-W1: micActivated → pipeline starts, LD starts, TE starts
+    // MARK: - AC-W1: micActivated → pipeline starts, LD starts, backend starts
 
-    func testMicActivatedStartsPipelineThenLDThenTE() async throws {
+    func testMicActivatedStartsPipelineThenLDThenBackend() async throws {
         let sut = makeSUT()
-        let stub = SpeechStubBackend()
-        let apple = TestAppleBackendFactory()
-        apple.stubbedBackend = stub
+        let stub = YieldingStubBackend()
 
-        let (wiring, engineProvider, fakeLD, _) = makeWiring(appleFactory: apple)
+        let (wiring, engineProvider, fakeLD) = makeWiring(backend: stub)
         sut.wiring = wiring
         sut.micActivated()
         if let task = sut.sessionWiringTask { await task.value }
 
         XCTAssertTrue(engineProvider.callLog.contains("start"), "AudioPipeline must be started")
         XCTAssertEqual(fakeLD.startCallCount, 1, "LanguageDetector must be started once")
-        XCTAssertEqual(apple.makeCallCount, 1, "Apple backend factory must be called once")
-        XCTAssertEqual(stub.startCallCount, 1, "TranscriptionEngine backend must be started once")
+        XCTAssertEqual(stub.startCallCount, 1, "Backend must be started once")
     }
 
-    // MARK: - AC-W2: micDeactivated → teardown in order (engine.stop, LD.stop, consumer.sessionEnded)
+    // MARK: - AC-W2: micDeactivated → teardown in order (backend.stop, LD.stop, consumer.sessionEnded)
 
-    func testMicDeactivatedStopsEngineAndLD() async throws {
+    func testMicDeactivatedStopsBackendAndLD() async throws {
         let sut = makeSUT()
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
 
-        let (wiring, _, fakeLD, _) = makeWiring(appleFactory: yieldingFactory)
+        let (wiring, _, fakeLD) = makeWiring(backend: yieldingBackend)
         sut.wiring = wiring
 
         let consumer = FakeTokenConsumer()
@@ -265,61 +223,18 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         sut.micDeactivated()
         await fulfillment(of: [sessionEndedExp], timeout: 3.0)
 
-        XCTAssertEqual(yieldingFactory.stubbedBackend.stopCallCount, 1, "TE backend must be stopped")
+        XCTAssertEqual(yieldingBackend.stopCallCount, 1, "Backend must be stopped")
         XCTAssertEqual(fakeLD.stopCallCount, 1, "LanguageDetector must be stopped")
         XCTAssertEqual(consumer.sessionEndedCallCount, 1, "Consumer must receive sessionEnded()")
-    }
-
-    // MARK: - AC-W3: Apple locale → Apple factory used, Parakeet not called
-
-    func testAppleLocaleRoutesToAppleFactory() async throws {
-        let sut = makeSUT()
-        let apple = TestAppleBackendFactory()
-        let parakeet = TestParakeetBackendFactory()
-
-        let (wiring, _, _, _) = makeWiring(
-            stubbedLocale: "en-US",
-            appleLocales: ["en-US"],
-            appleFactory: apple,
-            parakeetFactory: parakeet
-        )
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        XCTAssertEqual(apple.makeCallCount, 1, "Apple factory must be called for Apple-supported locale")
-        XCTAssertEqual(parakeet.makeCallCount, 0, "Parakeet factory must NOT be called")
-    }
-
-    // MARK: - AC-W4: Parakeet locale → Parakeet factory used, Apple not called
-
-    func testParakeetLocaleRoutesToParakeetFactory() async throws {
-        let sut = makeSUT()
-        let apple = TestAppleBackendFactory()
-        let parakeet = TestParakeetBackendFactory()
-        parakeet.supportedIdentifiers = ["ru-RU"]
-
-        let (wiring, _, _, _) = makeWiring(
-            stubbedLocale: "ru-RU",
-            appleLocales: ["en-US"],
-            appleFactory: apple,
-            parakeetFactory: parakeet
-        )
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        XCTAssertEqual(apple.makeCallCount, 0, "Apple factory must NOT be called for Parakeet locale")
-        XCTAssertEqual(parakeet.makeCallCount, 1, "Parakeet factory must be called")
     }
 
     // MARK: - AC-W5: localeChange emitted → logged, no engine restart
 
     func testLocaleChangeIsLoggedButEngineNotRestarted() async throws {
         let sut = makeSUT()
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
 
-        let (wiring, _, fakeLD, _) = makeWiring(appleFactory: yieldingFactory)
+        let (wiring, _, fakeLD) = makeWiring(backend: yieldingBackend)
         sut.wiring = wiring
         sut.micActivated()
         if let task = sut.sessionWiringTask { await task.value }
@@ -327,17 +242,15 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         fakeLD.simulateLocaleChange(Locale(identifier: "fr-FR"))
         try await Task.sleep(for: .milliseconds(50))
 
-        XCTAssertEqual(yieldingFactory.stubbedBackend.startCallCount, 1,
-                       "Engine must NOT restart on locale change (deferred to M3.8)")
-        XCTAssertEqual(yieldingFactory.makeCallCount, 1,
-                       "Apple factory must be called exactly once")
+        XCTAssertEqual(yieldingBackend.startCallCount, 1,
+                       "Backend must NOT restart on locale change (deferred to M3.8)")
     }
 
     // MARK: - AC-W6: AudioPipeline.start() throws → LD never started, rollback
 
     func testAudioPipelineStartFailureNeverStartsLD() async throws {
         let sut = makeSUT()
-        let (wiring, _, fakeLD, _) = makeWiring(engineStartShouldThrow: true)
+        let (wiring, _, fakeLD) = makeWiring(engineStartShouldThrow: true)
         sut.wiring = wiring
         sut.micActivated()
         if let task = sut.sessionWiringTask { await task.value }
@@ -349,11 +262,11 @@ final class SessionCoordinatorWiringTests: XCTestCase {
 
     func testLanguageDetectorStartFailureStopsPipeline() async throws {
         let sut = makeSUT()
-        let apple = TestAppleBackendFactory()
+        let stub = YieldingStubBackend()
 
-        let (wiring, engineProvider, _, _) = makeWiring(
+        let (wiring, engineProvider, _) = makeWiring(
             langError: LanguageDetectorError.noLocalesDeclared,
-            appleFactory: apple
+            backend: stub
         )
         sut.wiring = wiring
         sut.micActivated()
@@ -361,50 +274,32 @@ final class SessionCoordinatorWiringTests: XCTestCase {
 
         XCTAssertTrue(engineProvider.callLog.contains("stop"),
                       "Pipeline must be stopped on LD failure; callLog=\(engineProvider.callLog)")
-        XCTAssertEqual(apple.makeCallCount, 0, "TE factory must NOT be called when LD fails")
+        XCTAssertEqual(stub.startCallCount, 0, "Backend must NOT be started when LD fails")
     }
 
-    // MARK: - AC-W8: TE.init throws unsupportedLocale → LD.stop + pipeline.stop
+    // MARK: - AC-W9: backend.start() throws → LD.stop + pipeline.stop
 
-    func testTranscriptionEngineInitFailureStopsLDAndPipeline() async throws {
+    func testBackendStartFailureStopsLDAndPipeline() async throws {
         let sut = makeSUT()
-        // "zz-ZZ" is not in Apple locales and Parakeet supports nothing → unsupportedLocale
-        let (wiring, engineProvider, fakeLD, _) = makeWiring(
-            stubbedLocale: "zz-ZZ",
-            appleLocales: ["en-US"]
-        )
+        let failingBackend = FailingTranscriberBackend()
+
+        let (wiring, engineProvider, fakeLD) = makeWiring(backend: failingBackend)
         sut.wiring = wiring
         sut.micActivated()
         if let task = sut.sessionWiringTask { await task.value }
 
-        XCTAssertEqual(fakeLD.stopCallCount, 1, "LD must be stopped on TE init failure")
+        XCTAssertEqual(fakeLD.stopCallCount, 1, "LD must be stopped on backend start failure")
         XCTAssertTrue(engineProvider.callLog.contains("stop"),
-                      "Pipeline must be stopped on TE init failure; callLog=\(engineProvider.callLog)")
-    }
-
-    // MARK: - AC-W9: TE.start() throws → LD.stop + pipeline.stop
-
-    func testTranscriptionEngineStartFailureStopsLDAndPipeline() async throws {
-        let sut = makeSUT()
-        let failingApple = FailingAppleBackendFactory()
-
-        let (wiring, engineProvider, fakeLD, _) = makeWiring(appleFactory: failingApple)
-        sut.wiring = wiring
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        XCTAssertEqual(fakeLD.stopCallCount, 1, "LD must be stopped on TE start failure")
-        XCTAssertTrue(engineProvider.callLog.contains("stop"),
-                      "Pipeline must be stopped on TE start failure; callLog=\(engineProvider.callLog)")
+                      "Pipeline must be stopped on backend start failure; callLog=\(engineProvider.callLog)")
     }
 
     // MARK: - AC-W10: token from backend → all registered consumers receive it
 
     func testTokenFromBackendReachesAllRegisteredConsumers() async throws {
         let sut = makeSUT()
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
 
-        let (wiring, _, _, _) = makeWiring(appleFactory: yieldingFactory)
+        let (wiring, _, _) = makeWiring(backend: yieldingBackend)
         sut.wiring = wiring
 
         let consumer1 = FakeTokenConsumer()
@@ -421,7 +316,7 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         consumer2.onReceiveToken = { exp2.fulfill() }
 
         let token = TranscribedToken(token: "hello", startTime: 0.0, endTime: 0.5, isFinal: true)
-        yieldingFactory.stubbedBackend.yield(token)
+        yieldingBackend.yield(token)
 
         await fulfillment(of: [exp1, exp2], timeout: 2.0)
 

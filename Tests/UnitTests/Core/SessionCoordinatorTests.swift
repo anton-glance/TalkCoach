@@ -372,18 +372,14 @@ final class SessionCoordinatorTests: XCTestCase {
     func testEngineReady_PublishesLastEngineReadyAt() async throws {
         let silenceScheduler = FakeTokenSilenceScheduler()
         makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
         sut.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: yieldingBackend
         )
 
         sut.start()
@@ -399,33 +395,29 @@ final class SessionCoordinatorTests: XCTestCase {
     func testEngineReadyTask_DoesNotBlockRelayTask_WhenEngineReadyNeverFires() async throws {
         let silenceScheduler = FakeTokenSilenceScheduler()
         makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let neverReadyFactory = NeverReadyAppleBackendFactory()
+        let neverReadyBackend = NeverReadyStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
 
         let consumer = FakeTokenConsumer()
         sut.addConsumer(consumer)
         sut.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: neverReadyFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: neverReadyBackend
         )
 
         sut.start()
         sut.micActivated()
-        // sessionWiringTask completes as soon as all four tasks are spawned —
+        // sessionWiringTask completes as soon as all tasks are spawned —
         // engineReadyStream never yielding must NOT block this.
         if let task = sut.sessionWiringTask { await task.value }
 
         // relayTask is running concurrently — verify it can receive and forward tokens
         let tokenExp = XCTestExpectation(description: "token relayed even without engine-ready")
         consumer.onReceiveToken = { tokenExp.fulfill() }
-        neverReadyFactory.stubbedBackend.yield(
+        neverReadyBackend.yield(
             TranscribedToken(token: "hi", startTime: 0, endTime: 0.1, isFinal: true)
         )
         await fulfillment(of: [tokenExp], timeout: 2.0)
@@ -434,19 +426,15 @@ final class SessionCoordinatorTests: XCTestCase {
     func testRelayTokens_ArmsTokenSilenceScheduler() async throws {
         let silenceScheduler = FakeTokenSilenceScheduler()
         makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
         let consumer = FakeTokenConsumer()
         sut.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: yieldingBackend
         )
         sut.addConsumer(consumer)
 
@@ -456,7 +444,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         let tokenExp = XCTestExpectation(description: "token consumed")
         consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
         )
         await fulfillment(of: [tokenExp], timeout: 2.0)
@@ -468,19 +456,15 @@ final class SessionCoordinatorTests: XCTestCase {
     func testTokenSilence_SetsIsInTokenSilenceTrue() async throws {
         let silenceScheduler = FakeTokenSilenceScheduler()
         makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
         let consumer = FakeTokenConsumer()
         sut.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: yieldingBackend
         )
         sut.addConsumer(consumer)
 
@@ -490,7 +474,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         let tokenExp = XCTestExpectation(description: "token consumed")
         consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
         )
         await fulfillment(of: [tokenExp], timeout: 2.0)
@@ -505,19 +489,15 @@ final class SessionCoordinatorTests: XCTestCase {
     func testTokenArrival_ClearsIsInTokenSilence() async throws {
         let silenceScheduler = FakeTokenSilenceScheduler()
         makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
         let consumer = FakeTokenConsumer()
         sut.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: yieldingBackend
         )
         sut.addConsumer(consumer)
 
@@ -531,7 +511,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         let tokenExp = XCTestExpectation(description: "token consumed after silence")
         consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "world", startTime: 1.0, endTime: 1.4, isFinal: true)
         )
         await fulfillment(of: [tokenExp], timeout: 2.0)
@@ -543,19 +523,15 @@ final class SessionCoordinatorTests: XCTestCase {
     func testEndSession_CancelsTokenSilenceToken() async throws {
         let silenceScheduler = FakeTokenSilenceScheduler()
         makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
         let consumer = FakeTokenConsumer()
         sut.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: yieldingBackend
         )
         sut.addConsumer(consumer)
 
@@ -565,7 +541,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         let tokenExp = XCTestExpectation(description: "token consumed")
         consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
         )
         await fulfillment(of: [tokenExp], timeout: 2.0)

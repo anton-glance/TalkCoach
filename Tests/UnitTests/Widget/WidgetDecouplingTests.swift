@@ -139,19 +139,14 @@ final class WidgetDecouplingTests: XCTestCase {
             alertPresenter: ConfirmingWidgetAlertPresenter()
         )
 
-        let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
 
         coordinator.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: YieldingStubBackend()
         )
 
         fpc.start()
@@ -186,19 +181,14 @@ final class WidgetDecouplingTests: XCTestCase {
             alertPresenter: ConfirmingWidgetAlertPresenter()
         )
 
-        let yieldingFactory = YieldingAppleBackendFactory()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
 
         coordinator.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: YieldingStubBackend()
         )
 
         fpc.start()
@@ -314,19 +304,15 @@ final class WidgetDecouplingTests: XCTestCase {
     func testTotalTokens_IncrementsPerToken_ResetsOnSessionEnd() async throws {
         let (coordinator, _, scheduler, fpc) = makeComponents()
 
-        let yieldingFactory = YieldingAppleBackendFactory()
+        let yieldingBackend = YieldingStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
         let fakeLD = FakeLanguageDetector()
-        let locales = FakeSupportedLocalesProvider()
-        locales.locales = [Locale(identifier: "en-US")]
 
         coordinator.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: fakeLD,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: locales
+            backend: yieldingBackend
         )
 
         fpc.start()
@@ -344,7 +330,7 @@ final class WidgetDecouplingTests: XCTestCase {
 
         let tokenExp1 = XCTestExpectation(description: "first token")
         consumer.onReceiveToken = { tokenExp1.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
         )
         await fulfillment(of: [tokenExp1], timeout: 2.0)
@@ -355,7 +341,7 @@ final class WidgetDecouplingTests: XCTestCase {
 
         let tokenExp2 = XCTestExpectation(description: "second token")
         consumer.onReceiveToken = { tokenExp2.fulfill() }
-        yieldingFactory.stubbedBackend.yield(
+        yieldingBackend.yield(
             TranscribedToken(token: "world", startTime: 0.5, endTime: 0.9, isFinal: true)
         )
         await fulfillment(of: [tokenExp2], timeout: 2.0)

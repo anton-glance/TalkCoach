@@ -58,16 +58,12 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         )
 
         // Fake backend that can yield tokens on demand
-        let yieldingFactory = YieldingAppleBackendFactory()
-        let localesProvider = FakeSupportedLocalesProvider()
-        localesProvider.locales = [Locale(identifier: "en_US")]
+        let yieldingBackend = YieldingStubBackend()
 
         sut.wiring = SessionWiring(
             audioPipeline: pipeline,
             languageDetector: ld,
-            appleBackendFactory: yieldingFactory,
-            parakeetBackendFactory: TestParakeetBackendFactory(),
-            supportedLocalesProvider: localesProvider
+            backend: yieldingBackend
         )
 
         let consumer = FakeTokenConsumer()
@@ -82,7 +78,7 @@ final class SessionCoordinatorIntegrationTests: XCTestCase {
         consumer.onReceiveToken = { tokenExpectation.fulfill() }
 
         let token = TranscribedToken(token: "integration", startTime: 0.0, endTime: 0.5, isFinal: true)
-        yieldingFactory.stubbedBackend.yield(token)
+        yieldingBackend.yield(token)
 
         await fulfillment(of: [tokenExpectation], timeout: 3.0)
 

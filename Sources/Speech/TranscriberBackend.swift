@@ -22,8 +22,9 @@ nonisolated enum TranscriberBackendError: Error, Sendable {
 // MARK: - TranscriberBackend
 
 nonisolated protocol TranscriberBackend: Sendable {
-    func start(locale: Locale) async throws
+    func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws
     func stop() async
     var tokenStream: AsyncStream<TranscribedToken> { get }
     var engineReadyStream: AsyncStream<Void> { get }
+    var vadActivityStream: AsyncStream<Bool> { get }
 }
