@@ -323,9 +323,20 @@ final class SessionCoordinator: ObservableObject {
             await self?.relayTokens(from: capturedWiring.backend.tokenStream)
         }
         vadMonitorTask = Task { [weak self] in
+            var silenceStartedAt: Date? = nil
             for await hasVoice in capturedWiring.backend.vadActivityStream {
                 if Task.isCancelled { break }
-                self?.isVoiceInactive = !hasVoice
+                guard let self else { break }
+                if hasVoice {
+                    silenceStartedAt = nil
+                    self.isVoiceInactive = false
+                } else {
+                    let now = Date()
+                    if silenceStartedAt == nil { silenceStartedAt = now }
+                    if let start = silenceStartedAt, now.timeIntervalSince(start) >= 0.2 {
+                        self.isVoiceInactive = true
+                    }
+                }
             }
         }
         startPollTimer()
