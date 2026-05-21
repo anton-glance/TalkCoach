@@ -582,7 +582,7 @@ final class FloatingPanelController {
         let prev = viewModel.activityState
         viewModel.activityState = state
         let timestamp = isoFormatter.string(from: now())
-        Logger.floatingPanel.info("widget-state: \(timestamp) \(String(describing: prev))→\(String(describing: state)) reason=\(reason)")
+        Logger.floatingPanel.info("widget-state: \(timestamp, privacy: .public) \(String(describing: prev), privacy: .public)→\(String(describing: state), privacy: .public) reason=\(reason, privacy: .public)")
         applyPanelOpacity(animated: true)
     }
 

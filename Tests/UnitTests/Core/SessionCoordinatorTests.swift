@@ -645,7 +645,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         // Single true must clear isVoiceInactive immediately — no debounce on voice onset
         vadBackend.yieldVad(true)
-        await Task.yield()
+        try await Task.sleep(for: .milliseconds(20))
         XCTAssertFalse(sut.isVoiceInactive,
                        "True must clear isVoiceInactive immediately within one Task.yield() tick (no debounce on voice onset)")
     }

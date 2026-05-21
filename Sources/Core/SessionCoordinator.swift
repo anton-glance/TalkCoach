@@ -63,6 +63,8 @@ final class SessionCoordinator: ObservableObject {
     private(set) var lastEndReason: SessionEndReason?
     private(set) var isRunning: Bool = false
 
+    private static let isoFormatter = ISO8601DateFormatter()
+
     private let micMonitor: MicMonitor
     private let settingsStore: SettingsStore
     private let tokenSilenceScheduler: any HideScheduler
@@ -330,11 +332,15 @@ final class SessionCoordinator: ObservableObject {
                 if hasVoice {
                     silenceStartedAt = nil
                     self.isVoiceInactive = false
+                    let ts = Self.isoFormatter.string(from: Date())
+                    Logger.session.info("voice-active: \(ts, privacy: .public) true reason=voice-onset")
                 } else {
                     let now = Date()
                     if silenceStartedAt == nil { silenceStartedAt = now }
                     if let start = silenceStartedAt, now.timeIntervalSince(start) >= 0.2 {
                         self.isVoiceInactive = true
+                        let ts = Self.isoFormatter.string(from: now)
+                        Logger.session.info("voice-active: \(ts, privacy: .public) false reason=debounced-silence")
                     }
                 }
             }
