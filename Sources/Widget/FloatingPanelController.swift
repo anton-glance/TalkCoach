@@ -36,6 +36,7 @@ final class FloatingPanelController {
     private var tokenArrivalSubscription: AnyCancellable?
     private var engineReadySubscription: AnyCancellable?
     private var tokenSilenceSubscription: AnyCancellable?
+    private var voiceInactiveSubscription: AnyCancellable?
     private var recoverySubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
     private var dragDebounceToken: HideSchedulerToken?
@@ -117,6 +118,13 @@ final class FloatingPanelController {
                 self.setActivityState(.waiting, reason: "token-silence")
             }
 
+        voiceInactiveSubscription = sessionCoordinator.$isVoiceInactive
+            .dropFirst()
+            .sink { [weak self] isInactive in
+                guard let self, isInactive else { return }
+                self.setActivityState(.waiting, reason: "vad-inactive")
+            }
+
         recoverySubscription = sessionCoordinator.$isRecovering
             .dropFirst()
             .sink { [weak self] isRecovering in
@@ -138,6 +146,7 @@ final class FloatingPanelController {
         tokenArrivalSubscription = nil
         engineReadySubscription = nil
         tokenSilenceSubscription = nil
+        voiceInactiveSubscription = nil
         recoverySubscription = nil
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
