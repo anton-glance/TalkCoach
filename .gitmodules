@@ -1,0 +1,3 @@
+[submodule "Spike/Spike17.2_WhisperCppVAD/whisper.cpp"]
+	path = Spike/Spike17.2_WhisperCppVAD/whisper.cpp
+	url = https://github.com/ggerganov/whisper.cpp

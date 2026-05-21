@@ -1,0 +1,6 @@
+build/
+models/*.bin
+results/*.csv
+results/*.json
+.build/
+SMOKE_BASELINE.json
