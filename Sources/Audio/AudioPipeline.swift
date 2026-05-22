@@ -1,4 +1,5 @@
 import AVFAudio
+import CoreAudio
 import os
 import OSLog
 
@@ -135,6 +136,7 @@ final class AudioPipeline {
             throw AudioPipelineError.engineStartFailed(underlying: error)
         }
 
+        logInputDeviceIdentity()
         isStarted = true
     }
 
@@ -153,6 +155,63 @@ final class AudioPipeline {
         // The next start() will recreate both stream and continuation.
         continuation.finish()
         isStarted = false
+    }
+
+    private func logInputDeviceIdentity() {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID
+        ) == noErr, deviceID != kAudioObjectUnknown else {
+            logger.warning("input-device: could not determine default input device")
+            return
+        }
+
+        let name = audioStringProperty(deviceID, selector: kAudioObjectPropertyName)
+        let uid  = audioStringProperty(deviceID, selector: kAudioDevicePropertyDeviceUID)
+
+        var nominalRate: Float64 = 0
+        var rateSize = UInt32(MemoryLayout<Float64>.size)
+        var rateAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(deviceID, &rateAddr, 0, nil, &rateSize, &nominalRate)
+
+        var volume: Float32 = 0
+        var volSize = UInt32(MemoryLayout<Float32>.size)
+        var volAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let volOK = AudioObjectGetPropertyData(deviceID, &volAddr, 0, nil, &volSize, &volume) == noErr
+        let volStr = volOK ? String(format: "%.3f", volume) : "n/a"
+
+        logger.info("input-device: id=\(deviceID, privacy: .public) name=\(name, privacy: .public) uid=\(uid, privacy: .public) rate=\(nominalRate, privacy: .public) inputVol=\(volStr, privacy: .public)")
+    }
+
+    // Core Audio returns a new-retained CFStringRef (pointer value) via outData.
+    // Capture it as Int (same size as pointer on 64-bit) to avoid ARC touching
+    // uninitialized reference storage, then take ownership via Unmanaged.fromOpaque.
+    private func audioStringProperty(_ deviceID: AudioObjectID, selector: AudioObjectPropertySelector) -> String {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var ptrValue: Int = 0
+        var propSize = UInt32(MemoryLayout<Int>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &propSize, &ptrValue)
+        guard status == noErr, ptrValue != 0,
+              let rawPtr = UnsafeRawPointer(bitPattern: ptrValue) else { return "unknown" }
+        return Unmanaged<CFString>.fromOpaque(rawPtr).takeRetainedValue() as String
     }
 
     func recover() {
