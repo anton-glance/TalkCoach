@@ -160,9 +160,18 @@ actor WhisperCppBackend: TranscriberBackend {
     private func runInferenceLoop(provider: any AudioBufferProvider, locale: Locale) async {
         var accumulated: [Float] = []
         var audioPositionMs = 0
+        var bufferCount = 0
 
         for await capturedBuffer in provider.bufferStream() {
             if Task.isCancelled { break }
+            bufferCount += 1
+
+            // A1+A2: RMS and format at AudioPipeline output — first 3 buffers then every 50th (~4s intervals).
+            if bufferCount <= 3 || bufferCount % 50 == 0 {
+                let tapRms = capturedBuffer.samples.first.map { rms($0) } ?? 0
+                let rmsStr = String(format: "%.4f", tapRms)
+                Self.logger.info("A1/A2 buf#\(bufferCount, privacy: .public) sr=\(capturedBuffer.sampleRate, privacy: .public) ch=\(capturedBuffer.channelCount, privacy: .public) frames=\(capturedBuffer.frameLength, privacy: .public) rms=\(rmsStr, privacy: .public)")
+            }
 
             let mono = toMono(capturedBuffer)
             let samples16k = resampleLinear(mono, fromRate: capturedBuffer.sampleRate, toRate: 16_000.0)
@@ -180,6 +189,11 @@ actor WhisperCppBackend: TranscriberBackend {
                 let hasVoice = cwhisper_vad_detect_speech_threshold(
                     vCtx, chunk, Int32(Self.kLengthSamples), Self.vadThreshold
                 )
+                // A3+A4: resampled RMS and Silero max prob per 1s chunk.
+                let chunkRmsStr = String(format: "%.4f", rms(chunk))
+                let vadProbStr  = String(format: "%.3f", cwhisper_vad_last_max_prob(vCtx))
+                Self.logger.info("A3/A4 pos=\(chunkStartMs, privacy: .public)ms chunkRms=\(chunkRmsStr, privacy: .public) vadProb=\(vadProbStr, privacy: .public) voice=\(hasVoice, privacy: .public)")
+
                 vadActivityContinuation.yield(hasVoice)
 
                 if hasVoice {
@@ -227,6 +241,12 @@ actor WhisperCppBackend: TranscriberBackend {
             guard idx + 1 < samples.count else { return samples[min(idx, samples.count - 1)] }
             return samples[idx] * (1 - frac) + samples[idx + 1] * frac
         }
+    }
+
+    private func rms(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        let sumSq = samples.reduce(0.0) { $0 + $1 * $1 }
+        return (sumSq / Float(samples.count)).squareRoot()
     }
 
     // Reads all tokens from the whisper context after a successful cwhisper_full call.

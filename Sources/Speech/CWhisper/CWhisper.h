@@ -65,3 +65,8 @@ bool cwhisper_vad_detect_speech_threshold(
     int                  n_samples,
     float                threshold
 );
+
+// Returns the max probability from the probs buffer populated by the most recent
+// cwhisper_vad_detect_speech_threshold call. No additional inference is performed.
+// Call immediately after cwhisper_vad_detect_speech_threshold on the same ctx.
+float cwhisper_vad_last_max_prob(CWhisperVadContext * ctx);

@@ -156,3 +156,14 @@ bool cwhisper_vad_detect_speech_threshold(
     }
     return max_prob >= threshold;
 }
+
+float cwhisper_vad_last_max_prob(CWhisperVadContext * ctx) {
+    int     n_probs = whisper_vad_n_probs((struct whisper_vad_context *)ctx);
+    float * probs   = whisper_vad_probs((struct whisper_vad_context *)ctx);
+    if (!probs || n_probs <= 0) return 0.0f;
+    float max_prob = 0.0f;
+    for (int i = 0; i < n_probs; i++) {
+        if (probs[i] > max_prob) max_prob = probs[i];
+    }
+    return max_prob;
+}
