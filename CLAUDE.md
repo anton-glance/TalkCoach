@@ -8,7 +8,7 @@
 
 A macOS menu bar app that runs silently in background, shows a translucent floating widget when the mic activates, and gives real-time speaking-pace + filler-word feedback. Local only, no cloud.
 
-**Current state (Session 033 close):** M3.7 widget close-out shipped at commit `7670867` (7-state widget model). Four-spike STT engine search completed (Spikes #16, #17.1, #17.1.5, #17.2, #17.3 — all FAIL with architectural root causes). **Architecture Z locked (Session 033):** whisper.cpp v1.8.4 + Silero VAD v5.1.2 + whisper-small (multilingual) at `kLengthMs=1000`, per-mic Silero threshold. Replaces prior Architecture Y (Apple SpeechAnalyzer + Parakeet dual backend). **Active frontier:** M3.7.4 whisper.cpp integration into production transcriber stack on `spike/13.5-hal-stop-settling`, gated by 14-step smoke gate UX validation. See `@docs/03_ARCHITECTURE.md` Section 4 (Architecture Z) and `01_PROJECT_JOURNAL.md` Session 033 for the full engine-search history.
+**Current state (Session 034 close):** M3.7 widget close-out shipped at commit `7670867` (7-state widget model). **Engine LOCKED (Session 034, Spike #18): Parakeet TDT v3 int8 via `parakeet-rs` (Rust/ONNX/CPU), 10s rolling window / 3s hop — Architecture AA.** This REVERSED Session 033's Architecture Z (whisper.cpp + Silero), which was never shipped: whisper transcribes meaning and drops words; Parakeet keeps the words, which is what a WPM product needs. Spike #18 proved word-fidelity (EN 0–3.8%), multilingual word-count (RU 0.8–8.8%), and CPU cadence headroom (3–19×). Load-bearing constraint: a per-inference token ceiling means production must use a ≥10s window and never full-buffer inference. **Active frontier:** M3.7.4 — Parakeet `parakeet-rs` integration into the production transcriber stack on `spike/13.5-hal-stop-settling`. See `@docs/03_ARCHITECTURE.md` Section 4 (Architecture AA) and `01_PROJECT_JOURNAL.md` Session 034.
 
 Full product spec: `@docs/02_PRODUCT_SPEC.md`
 Architecture: `@docs/03_ARCHITECTURE.md`
@@ -55,7 +55,7 @@ These are not negotiable. Every change is evaluated against them.
 - **FM1 — No destructive UI.** No flashing, no jitter, no animated reordering. Smooth color transitions only. Glanceable in <500ms peripheral vision.
 - **FM2 — No unreliable data.** WPM must reflect speed-up/slow-down within ~3s. Pauses for breath must NOT crash the WPM number.
 - **FM3 — Minimal setup.** Settings window auto-opens on first launch with language picker (1–2 languages from ~50 supported, system locale pre-checked). Mic permission grant at first session start. Model downloads require user confirmation in Settings. No tutorials, no further configuration. See `@docs/02_PRODUCT_SPEC.md`.
-- **FM4 — No performance impact.** <5% sustained CPU during 1hr active session on Apple Silicon. <1 GB RSS (revised Session 033 — was 150 MB; relaxed for whisper-small on laptop deployment; re-evaluate before V1 ship). No mic dropouts in Zoom.
+- **FM4 — No performance impact.** <5% sustained CPU during 1hr active session on Apple Silicon. <1 GB RSS (revised Session 033; Parakeet int8 per Spike #18 is comfortably under — model load ~1s, per-batch CPU bursts ≈2.5 cores then idle between 3s hops; re-confirm on production builds before V1 ship). No mic dropouts in Zoom.
 
 ---
 
@@ -78,10 +78,10 @@ These are not negotiable. Every change is evaluated against them.
 - **Use `print()`** in production code. `os.Logger` only.
 - **Add new dependencies** without flagging in the plan first.
 - **Enable Voice Processing IO** (`isVoiceProcessingEnabled`) on `AVAudioEngine.inputNode`. It must stay `false` to coexist with Zoom (see Spike #4 outcome in `@docs/05_SPIKES.md`).
-- **Use the legacy `SFSpeechRecognizer`.** Use `SpeechAnalyzer` + `SpeechTranscriber` (macOS 26+ API) for Apple-supported locales, route Russian (and other Apple-unsupported locales) to `ParakeetTranscriberBackend` per Architecture Y.
+- **Use Apple `SpeechAnalyzer`/`SpeechTranscriber`, `SFSpeechRecognizer`, whisper.cpp, or FluidAudio for transcription.** V1 transcription is Parakeet TDT v3 int8 via the Rust `parakeet-rs` crate (Architecture AA, Session 034). Apple Speech was dropped (token stream is commit-batched, not real-time); whisper.cpp was dropped (drops words / 30s-mel latency floor); FluidAudio Parakeet was dropped (batch API / encoder cache warmup). Do NOT reintroduce any of them without a new spike.
 - **Assume Apple supports a locale based on `supportedLocale(equivalentTo:)`.** That helper returns misleadingly successful results for locales like `ru_RU` that are NOT actually in `SpeechTranscriber.supportedLocales`. Always check the explicit enumeration. (Session 006 lesson.)
 - **Write transcripts to disk.** v1 schema stores metrics only — `Session` schema in `@docs/02_PRODUCT_SPEC.md`.
-- **Use the network during a session.** App entitlements have `com.apple.security.network.client = true` ONLY for one-time model downloads at first use of a declared language: Apple `AssetInventory` locale models, Parakeet model from CDN (Architecture Y, Session 006), and Whisper-tiny LID model for Latin↔CJK pairs (Session 010). NEVER call the network during a session — no telemetry, no transcripts uploaded, no remote config, no analytics. Audio never leaves the device.
+- **Use the network during a session.** App entitlements have `com.apple.security.network.client = true` ONLY for one-time model downloads at first launch: the Parakeet TDT v3 int8 ONNX model from HuggingFace `istupakov/parakeet-tdt-0.6b-v3-onnx` (Architecture AA, Session 034), and the Whisper-tiny LID model for Latin↔CJK language detection (Session 010). NEVER call the network during a session — no telemetry, no transcripts uploaded, no remote config, no analytics. Audio never leaves the device.
 - **Add UI for things parked to v1.x** (acoustic non-words, smart fillers, pitch, pauses as user-visible metric, monologue detector, UI localization).
 - **Add UI for things parked to v2** (per-app blocklist, StatsWindow/session history, hotkey, session-end summary, shouting detector, trail-off detector).
 - **Use `localStorage`, `sessionStorage`, or any web-storage APIs** in any embedded WebViews.
@@ -155,7 +155,7 @@ TalkCoach/
 - **Min target:** macOS 26.0 (Apple Silicon only)
 - **UI:** SwiftUI (with AppKit interop where needed for `NSPanel`)
 - **Audio:** `AVFoundation` (`AVAudioEngine`)
-- **Speech:** `Speech` framework — `SpeechAnalyzer`, `SpeechTranscriber` (Apple path); FluidAudio + Parakeet Core ML (non-Apple locales like Russian); WhisperKit + Whisper-tiny (LID for Latin↔CJK pairs)
+- **Speech:** Parakeet TDT v3 int8 via `parakeet-rs` (Rust/ONNX Runtime, CPU) wrapped behind a Swift FFI bridge — single multilingual backend (Architecture AA, Session 034). WhisperKit + Whisper-tiny retained ONLY for language detection (LID) on Latin↔CJK pairs (Session 010), not for transcription.
 - **Persistence:** SwiftData
 - **Logging:** `os.Logger`
 - **Testing:** XCTest (Swift Testing acceptable for new code)

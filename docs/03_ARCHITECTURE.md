@@ -121,7 +121,46 @@ The audio tap callback runs on Core Audio's `RealtimeMessenger.mServiceQueue`. I
 
 ---
 
-### 4. `TranscriptionEngine` — V1 locked to whisper.cpp + Silero VAD (Session 033, Architecture Z)
+### 4. `TranscriptionEngine` — V1 locked to Parakeet TDT v3 int8 via `parakeet-rs` (Session 034, Architecture AA)
+
+**Job:** Convert audio buffers to timestamped word tokens. Produces a unified token stream consumed by `SpeakingActivityTracker` and `Analyzer`.
+
+**V1 architectural decision (Session 034, Spike #18 — see Session 034 in `01_PROJECT_JOURNAL.md`):**
+
+Architecture Z (whisper.cpp + Silero VAD, locked Session 033) is REPLACED by **Architecture AA (Parakeet TDT v3 int8 via `parakeet-rs`, CPU, single-engine multilingual)** — _before Architecture Z ever shipped_. The whisper.cpp integration (M3.7.4) was never built.
+
+**Why the reversal:** Architecture Z was the least-bad survivor of a four-spike latency tournament (Spikes #16, #17.1, #17.1.5, #17.2, #17.3) run under a 200ms first-token budget that was then retired. No spike had ever scored Parakeet for transcript WORD-FIDELITY — the FluidAudio Parakeet spikes died on latency/architecture before anyone measured the words. whisper transcribes _meaning_ and drops/changes words; Parakeet keeps the actual words (fillers, numbers, structure, disfluencies). For a WPM product, word-count fidelity IS the product. Spike #18 reopened Parakeet via the Rust `parakeet-rs` path (CPU/int8 ONNX — NOT the FluidAudio Swift path that #17.1/#17.1.5 disproved) and proved it. CPU/int8 is also the Windows-port foundation (no Metal).
+
+**Architecture AA — Parakeet TDT v3 int8 (single multilingual backend, CPU):**
+
+- **`parakeet-rs` v0.3.5** (altunenes; Rust crate, ONNX Runtime via `ort` 2.0.0-rc.12). On macOS arm64 the ORT dylib ships inside `ort-sys` — no manual `ORT_DYLIB_PATH`. Production wraps the crate behind a Rust static lib + Swift FFI bridge (the integration path; the spike used a pure-Rust CLI to validate the engine, not the bridge).
+- **Model: Parakeet TDT v3 multilingual, int8 quantized.** `encoder-model.int8.onnx` (~652 MB, self-contained — no separate `.onnx.data`), `decoder_joint-model.int8.onnx` (~18 MB), `vocab.txt`. Downloaded from HuggingFace `istupakov/parakeet-tdt-0.6b-v3-onnx` on first launch via `hf download <repo> <files> --local-dir <dir>` (the `hf` CLI; `huggingface-cli` is deprecated). `nemo128.onnx` is downloaded as a completeness sentinel but NOT loaded — `parakeet-rs` does mel feature-extraction in Rust internally (128 mel, hop 160). 25-language multilingual coverage.
+- **Inference pattern (locked, Spike #18): repeated short-batch over a rolling window.** Maintain a rolling audio buffer; every ~3s (hop), run `transcribe_samples()` on the last **10s** of audio (window), count words. NOT token-streaming. The WPM metric is a ~10s sliding average; the windowed word-count is exactly what it needs. Talk-vs-silence detection is a SEPARATE signal (existing HAL/VAD work) — the transcription engine does not double as the activity detector (that conflation drove the failed four-spike search).
+- **Per-inference token ceiling (THE load-bearing constraint).** `parakeet-rs` TDT int8 truncates mid-buffer below ~10s of _dense_ speech and on full-buffer inference of long dense clips (Spike #18: en_fast full-buffer stopped at 54% coverage; 6s windows lost 23% on dense speech). At ≥10s windows it clears. **Hard rules: (1) production window ≥10s — 6s is disqualified; (2) NEVER call full-buffer inference on a long clip; (3) re-transcribe a bounded rolling window only.** This is the inverse of whisper's 30s-mel latency floor: whisper pads short input up to a fixed context; Parakeet truncates long/dense input down past a token ceiling. Both are model-architecture properties, not runtime bugs.
+
+**Performance (Spike #18, measured on Apple Silicon, CPU/int8):**
+- Per-batch inference 146–549ms for 10–15s windows vs a 2–3s refresh cadence → **3–19× cadence headroom**. CPU ~232% mean / ~300% peak in inference bursts (≈2.5 cores), idle between hops. Model load 964ms. RSS modest (int8 self-contained, no fp32 weight blob). FM4 (<5% sustained, <1GB RSS) to be re-confirmed on production builds but the spike margins are comfortable.
+- Risk #3 (CPU cannot hold cadence — estimated >50% likely pre-spike) did NOT materialize.
+
+**Accuracy (Spike #18, 10s window / 3s hop):**
+- English word-fidelity: en_slow 0.0%, en_normal 3.0–3.8%, en_fast 3.8% (15s: 0.4%) — verbatim-faithful, keeps fillers and spoken-number forms. Holds over a 108s multi-window session.
+- Russian count-only vs ground-truth JSON: 0.8% / 1.8% / 8.8% — multilingual spine counts non-English accurately (validates TDT over English-only CTC).
+- Engine self-consistency on overlapping windows ~0.13–0.62 wps at 10–15s (smooth WPM, FM2 clean); 6s is ~1.5 wps (jitter risk → disqualified).
+- A breath pause produces a sane low word-count, no hallucinated spike (FM2 clean).
+
+**Quality signal — NOT available in v0.3.5.** `TimedToken` exposes text/start/end only; NO per-token confidence/log_prob. Fine for WPM. A real constraint for v1.x smart-filler work — that will require a newer `parakeet-rs` version or `transcribe-rs` (which exposes a `Quantization` param and may surface confidence). Do NOT assume confidence is available.
+
+**Cross-platform (the strategic reason for this path):** `parakeet-rs` + ONNX Runtime is pure Rust, no Metal/CoreML dependency (the crate notes CoreML is unstable for these models; CPU is the target and is faster than whisper Metal per third-party reports and our spike). The engine layer ports to Windows/Linux unchanged; only the Swift FFI bridge and UI are platform-specific. Locto V1 ships macOS-only; V1.5+ cross-platform is a UI rewrite plus an FFI re-bind, not an engine rewrite.
+
+**Outputs:** Stream of timestamped word tokens consumed by `SpeakingActivityTracker` and `Analyzer`. Downstream schema unchanged — the `TokenEvent`/token surface is engine-agnostic, so the Analyzer and tracker are unaware of the engine swap.
+
+**Mid-session language switching** deferred to V1.5+ (see M3.8). TDT v3 auto-detects across its 25 languages; V1 ships single-language sessions (language set in Settings or detected at session start).
+
+---
+
+### 4-archive-Z. `TranscriptionEngine` — Architecture Z (whisper.cpp + Silero VAD) — SUPERSEDED Session 034, NEVER SHIPPED
+
+> **SUPERSEDED (Session 034, Spike #18):** Architecture Z was never built into production. Replaced by Architecture AA (Parakeet TDT v3 int8 via `parakeet-rs`, CPU) above. Retained for history and for the whisper-specific findings (30s-mel latency floor, Metal hang handling) that remain valid prior-art. Do NOT implement anything in this subsection.
 
 **Job:** Convert audio buffers to timestamped word tokens. Produces a unified token stream consumed by `SpeakingActivityTracker` and `Analyzer`.
 

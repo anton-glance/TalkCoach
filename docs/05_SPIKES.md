@@ -1309,6 +1309,37 @@ If 14-step smoke produces acceptable UX, ship whisper-small + Silero VAD as Loct
 
 ---
 
+## Spike #18 — Parakeet TDT v3 int8 via `parakeet-rs` (Rust/ONNX, CPU) — word-fidelity + rolling-window-batch feasibility
+
+**Status:** ✅ PASS (Session 034) — Gates 0–3 PASS, Gate 4 abandoned-by-design. **Engine LOCKED: Parakeet TDT v3 int8, CPU, 10s window / 3s hop.** Supersedes Architecture Z (whisper.cpp) before it shipped.
+
+### Question
+Does NVIDIA Parakeet, run via a Rust ONNX crate on CPU, transcribe our real English recordings with high enough WORD-COUNT fidelity to drive a shippable WPM number, and what does one inference cost on CPU? Explicitly NOT a streaming spike (the WPM metric is a ~10s sliding average refreshed ~every 3s; repeated short-batch is the target, not token-streaming) and NOT a latency-budget spike (the 200ms budget was retired Session 033 — latency is a measurement here, not a gate).
+
+### Why reopened (and why this is NOT a re-tread of #17.1 / #17.1.5)
+The FluidAudio Parakeet spikes died on latency/architecture (SlidingWindow = 15s batch API; StreamingEou = ~2s encoder cache warmup) BEFORE anyone scored transcript word-fidelity. The S033 whisper choice was by elimination under a latency budget that was then thrown out. The product owner's reference work found the distinction that matters for a WPM product: **whisper transcribes meaning and drops words; Parakeet keeps the words.** This spike measures word-fidelity (never measured before) via a DIFFERENT wrapper — `parakeet-rs` (Rust/ONNX/CPU/int8), not the FluidAudio Swift path. CPU/int8 is also the Windows-port foundation (no Metal).
+
+### Crate
+`parakeet-rs` (altunenes) v0.3.5, chosen over `transcribe-rs` (cjpais) for smallest integration surface. ORT 2.0.0-rc.12 links with NO manual `ORT_DYLIB_PATH` (dylib ships in `ort-sys` for arm64-darwin). Spine model: **TDT v3 int8** (`encoder-model.int8.onnx` self-contained + `decoder_joint-model.int8.onnx`; `nemo128.onnx` is a download-completeness sentinel — `parakeet-rs` does mel feature-extraction in Rust, never loads it). EOU model FORBIDDEN (= the 120M model #17.1.5 killed on cache warmup).
+
+### Result (production cell: 10s window / 3s hop)
+- **Gate 0 (build/load):** PASS. Load 964ms. Per-token timestamps PRESENT; per-token confidence NOT exposed (`TimedToken` = text/start/end only).
+- **Gate 1 (word-fidelity kill gate):** PASS. en_slow 0.0% (122/122), en_normal 3.8% — verbatim-faithful (keeps fillers, structure). en_fast initially 41.4% but diagnosed as full-buffer TRUNCATION (engine got full 69.7s buffer, stopped emitting at 37.85s = 54% coverage), recovered to 0.4% when chunked. NOT an accuracy failure.
+- **Gate 2 (accuracy + cost sweep):** PASS all dimensions. **Cost / Risk #3 (>50% estimated to fail): resolved** — all cells hr_min > 1.0 (worst 2.818), per-batch 146–549ms vs 2–3s cadence, CPU ~232%/300% bursts. Accuracy (after architect-caught re-score from invalid clip-average to tile-reconciliation + same-span self-consistency): en_fast 10s 3.8% / 15s 0.4%; **6s disqualified** (dense-speech truncation → 23% loss, ~1.5wps self-inconsistency). Pause stress: 4s pause → 2 words, no hallucination spike (FM2 clean).
+- **Gate 3 (robustness):** PASS. EN reconciled to Gate 2 (en_normal 3.0% over 108s/11 windows). RU count-only vs JSON: ru_slow 0.8%, ru_normal 1.8%, ru_fast 8.8% — multilingual TDT spine counts Russian accurately, validating TDT-over-CTC.
+- **Gate 4 (Nemotron streaming probe):** ABANDONED BY DESIGN. Buys "continuous WPM" the product owner specced as unnecessary and mockup-tested as distracting (fights FM1); EN-only, costs multilingual coverage. Negative EV for v1. Future-version option, not pursued.
+
+### THE load-bearing finding — per-inference token ceiling
+`parakeet-rs` TDT int8 has a per-inference TOKEN ceiling, not a duration limit. Below ~10s of dense speech (and on full-buffer inference of long dense clips) it truncates mid-buffer. At ≥10s windows it clears. **Production constraints (measured): (1) ≥10s rolling window, 6s disqualified; (2) NEVER full-buffer inference on a long clip; (3) no per-token confidence in v0.3.5.**
+
+### In-session corrections (failures)
+1. fp32-vs-int8 download confusion (deprecated `huggingface-cli`→`hf`; new CLI ignores `--include` with positional filenames; first pull was incomplete fp32). 2. Binary hardcoded fp32 filenames → diagnostic expected-vs-found precondition. 3. `groundTruthWPM` serde rename bug. 4. Gate 2 accuracy metric invalid (clip-average confounds speaker rate-variation) → re-scored. 5. Remainder-tile bug in TWO paths (Gate 2 + Gate 3) → single shared `transcribe_tiles()`.
+
+### Forward note
+The token-ceiling is the inverse of whisper's 30s-mel floor: whisper pads short input UP to a fixed context (latency floor); Parakeet truncates long/dense input DOWN past a token ceiling (coverage ceiling). Both are properties of the model architecture, not the runtime. For Parakeet the mitigation is the windowed approach we ship anyway. For future smart-filler work (v1.x), the no-confidence gap in `parakeet-rs` v0.3.5 means evaluating either a newer crate version or `transcribe-rs` (which exposed a Quantization param and may surface confidence).
+
+---
+
 ## Spike status summary (Session 033)
 
 Phase 0 spikes (locked Session 014):
@@ -1324,6 +1355,8 @@ Spikes #14 / #15 — closed Session 031 (engine-always-warm + 1Hz HAL polling lo
 
 Spike #16 — closed Session 033 (energy-based VAD architecturally dead on far-field mic).
 
-Spikes #17.1 / #17.1.5 / #17.2 / #17.3 — closed Session 033 (FluidAudio's SlidingWindow batches, FluidAudio's StreamingEou has cache warmup, whisper.cpp has 30s mel context floor; all four engines fail 200ms budget; product owner relaxed budget pending 14-step smoke gate UX validation).
+Spikes #17.1 / #17.1.5 / #17.2 / #17.3 — closed Session 033 (FluidAudio's SlidingWindow batches, FluidAudio's StreamingEou has cache warmup, whisper.cpp has 30s mel context floor; all four engines fail 200ms budget; product owner relaxed budget pending 14-step smoke gate UX validation). **NOTE (Session 034): whisper.cpp was never shipped — Spike #18 reopened Parakeet via the Rust `parakeet-rs` path (NOT FluidAudio) and proved word-fidelity + CPU viability; engine reversed to Parakeet.**
 
-**No active spikes at Session 033 close.** Next session: whisper.cpp integration into production transcriber stack.
+Spike #18 — closed Session 034 (Parakeet TDT v3 int8 via `parakeet-rs` Rust/ONNX/CPU: word-fidelity PASS, 10s-window rolling-batch PASS, CPU holds cadence 3–19×, multilingual RU validated; per-inference token-ceiling is the load-bearing constraint). **Engine REVERSED: whisper.cpp OUT, Parakeet IN.** Architecture Z superseded by Architecture AA.
+
+**No active spikes at Session 034 close.** Next: M3.7.4 — Parakeet `parakeet-rs` integration into the production transcriber stack (10s window / 3s hop), replacing the never-shipped whisper.cpp plan.
