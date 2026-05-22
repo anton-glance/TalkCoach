@@ -17,3 +17,9 @@ WPMSpike/recordings/*.m4a
 WPMSpike/recordings/m4a/
 WPMSpike/recordings/m4a/
 
+
+ParakeetRustSpike/target/
+ParakeetRustSpike/models/
+ParakeetRustSpike/recordings/*.wav
+ParakeetRustSpike/results/
+ParakeetRustSpike/Cargo.lock
