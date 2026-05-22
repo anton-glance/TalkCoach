@@ -184,15 +184,21 @@ actor WhisperCppBackend: TranscriberBackend {
                 let chunkStartMs = audioPositionMs
                 audioPositionMs += 1_000
 
-                guard let vCtx = vadCtx, let wCtx = whisperCtx else { break }
+                // A3: resampled 16kHz chunk RMS — unconditional, fires whenever a chunk forms.
+                let chunkRmsStr = String(format: "%.4f", rms(chunk))
+                Self.logger.info("A3 pos=\(chunkStartMs, privacy: .public)ms chunkRms=\(chunkRmsStr, privacy: .public)")
+
+                guard let vCtx = vadCtx, let wCtx = whisperCtx else {
+                    Self.logger.warning("A3: contexts nil at pos=\(chunkStartMs, privacy: .public)ms — models not loaded for this session")
+                    break
+                }
 
                 let hasVoice = cwhisper_vad_detect_speech_threshold(
                     vCtx, chunk, Int32(Self.kLengthSamples), Self.vadThreshold
                 )
-                // A3+A4: resampled RMS and Silero max prob per 1s chunk.
-                let chunkRmsStr = String(format: "%.4f", rms(chunk))
-                let vadProbStr  = String(format: "%.3f", cwhisper_vad_last_max_prob(vCtx))
-                Self.logger.info("A3/A4 pos=\(chunkStartMs, privacy: .public)ms chunkRms=\(chunkRmsStr, privacy: .public) vadProb=\(vadProbStr, privacy: .public) voice=\(hasVoice, privacy: .public)")
+                // A4: Silero max probability per chunk — fires when models are loaded.
+                let vadProbStr = String(format: "%.3f", cwhisper_vad_last_max_prob(vCtx))
+                Self.logger.info("A4 pos=\(chunkStartMs, privacy: .public)ms vadProb=\(vadProbStr, privacy: .public) voice=\(hasVoice, privacy: .public)")
 
                 vadActivityContinuation.yield(hasVoice)
 
