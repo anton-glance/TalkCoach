@@ -1,0 +1,60 @@
+{
+  "calibrationFallbackUsed" : false,
+  "clip" : "distractors_mac",
+  "distractorIntervals" : [
+    {
+      "end_ms" : 9000,
+      "incorrectStateDuration_ms" : 0,
+      "incorrectStateRate_pct" : 0,
+      "latencyToCorrect_ms" : 1670,
+      "start_ms" : 5000,
+      "type" : "typing"
+    },
+    {
+      "end_ms" : 13000,
+      "incorrectStateDuration_ms" : 0,
+      "incorrectStateRate_pct" : 0,
+      "latencyToCorrect_ms" : 9030,
+      "start_ms" : 12000,
+      "type" : "door_slam"
+    },
+    {
+      "end_ms" : 23000,
+      "incorrectStateDuration_ms" : 350,
+      "incorrectStateRate_pct" : 8.75,
+      "latencyToCorrect_ms" : 3640,
+      "start_ms" : 19000,
+      "type" : "notification"
+    }
+  ],
+  "distractorSilenceFalsePositive_ms" : 1060,
+  "effectiveThresholdDB_at_calibration" : -50,
+  "endLatencies_ms" : [
+
+  ],
+  "endLatency_max_ms" : 0,
+  "endLatency_median_ms" : 0,
+  "endLatency_p95_ms" : 0,
+  "mic" : "mac",
+  "onsetLatencies_ms" : [
+    500
+  ],
+  "onsetLatency_max_ms" : 500,
+  "onsetLatency_median_ms" : 500,
+  "onsetLatency_p95_ms" : 500,
+  "silenceIntervals" : [
+    {
+      "end_ms" : 29000,
+      "falsePositiveDuration_ms" : 1060,
+      "start_ms" : 25000
+    }
+  ],
+  "speechIntervals" : [
+    {
+      "end_ms" : 34665,
+      "falseNegativeDuration_ms" : 5580,
+      "falseNegativeRate_pct" : 16.094606287856937,
+      "start_ms" : 0
+    }
+  ]
+}

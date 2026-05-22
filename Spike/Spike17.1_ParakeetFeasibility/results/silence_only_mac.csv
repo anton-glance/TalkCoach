@@ -1,0 +1,4 @@
+update_index,emission_ms,gap_from_previous_ms,text,is_confirmed,confidence
+0,20196.1,20196.1,"",false,0.1000
+1,40547.8,20351.7,"",false,0.1000
+2,40627.7,79.9,"",false,0.1000

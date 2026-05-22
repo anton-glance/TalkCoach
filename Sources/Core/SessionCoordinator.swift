@@ -55,9 +55,7 @@ final class SessionCoordinator: ObservableObject {
     // Production code: only SessionCoordinator sets this property.
     @Published var lastTokenArrival: Date?
     @Published var lastEngineReadyAt: Date?
-    @Published var isInTokenSilence: Bool = false
     // VAD-driven silence signal: set true when Silero reports continuous voice inactivity.
-    // Drives widget .waiting state in Architecture Z (replaces token-silence timer in sub-commit 4).
     @Published var isVoiceInactive: Bool = false
     @Published private(set) var isRecovering: Bool = false
     private(set) var lastEndReason: SessionEndReason?
@@ -67,8 +65,6 @@ final class SessionCoordinator: ObservableObject {
 
     private let micMonitor: MicMonitor
     private let settingsStore: SettingsStore
-    private let tokenSilenceScheduler: any HideScheduler
-    private var tokenSilenceToken: HideSchedulerToken?
     private var endedSessionHandlers: [@MainActor (EndedSession) -> Void] = []
     private var coachingEnabledCancellable: AnyCancellable?
 
@@ -110,14 +106,12 @@ final class SessionCoordinator: ObservableObject {
         micMonitor: MicMonitor,
         settingsStore: SettingsStore,
         audioProcessProber: (any AudioProcessProber)? = nil,
-        systemEventObserver: (any SystemEventObserving)? = nil,
-        tokenSilenceScheduler: any HideScheduler = DispatchHideScheduler()
+        systemEventObserver: (any SystemEventObserving)? = nil
     ) {
         self.micMonitor = micMonitor
         self.settingsStore = settingsStore
         self.audioProcessProber = audioProcessProber
         self.systemEventObserver = systemEventObserver
-        self.tokenSilenceScheduler = tokenSilenceScheduler
     }
 
     // MARK: Coordinator lifecycle
@@ -228,11 +222,6 @@ final class SessionCoordinator: ObservableObject {
 
     private func endCurrentSession(reason: SessionEndReason = .micOffListener) {
         stopPollTimer()
-        if let token = tokenSilenceToken {
-            tokenSilenceScheduler.cancel(token)
-            tokenSilenceToken = nil
-        }
-        isInTokenSilence = false
         isRecovering = false
         guard case .active(let ctx) = state else { return }
         let ended = EndedSession(id: ctx.id, startedAt: ctx.startedAt, endedAt: Date())
@@ -372,13 +361,6 @@ final class SessionCoordinator: ObservableObject {
             tokensInWindow += 1
             let t0Ns = DispatchTime.now().uptimeNanoseconds
             lastTokenArrival = Date()
-            isInTokenSilence = false
-
-            // Cancel old silence timer, arm new 2s one.
-            if let prev = tokenSilenceToken { tokenSilenceScheduler.cancel(prev) }
-            tokenSilenceToken = tokenSilenceScheduler.schedule(delay: 2.0) { [weak self] in
-                self?.isInTokenSilence = true
-            }
 
             Logger.session.info("Token observed at coordinator: t0=\(t0Ns)ns token='\(token.token)' isFinal=\(token.isFinal)")
 

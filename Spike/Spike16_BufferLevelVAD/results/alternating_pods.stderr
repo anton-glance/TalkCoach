@@ -1,0 +1,2 @@
+INFO: sampleRate=16000.0 channels=1 totalFrames=636565 duration_ms=39785
+INFO: calibration fallback — ceiling breach at -24.8 dBFS (ceiling: -25.0 dBFS), static threshold: -40.0 dBFS

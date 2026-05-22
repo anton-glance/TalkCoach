@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 160px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;">
+  <div style="height:100px;background:#FAF8F2;color:#1F2937;border:0.5px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:12px;font-weight:500;">Background</div><div style="font-family:var(--font-mono);font-size:10px;">#FAF8F2</div></div>
+  <div style="height:100px;background:#FFFFFF;color:#1F2937;border:0.5px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:12px;font-weight:500;">Surface</div><div style="font-family:var(--font-mono);font-size:10px;">#FFFFFF</div></div>
+  <div style="height:100px;background:#F5F3EC;color:#1F2937;border:0.5px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:12px;font-weight:500;">Surface-2</div><div style="font-family:var(--font-mono);font-size:10px;">#F5F3EC</div></div>
+  <div style="height:100px;background:#1F2937;color:#FAF8F2;border-radius:8px;padding:12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:12px;font-weight:500;">Text · primary</div><div style="font-family:var(--font-mono);font-size:10px;">#1F2937</div></div>
+  <div style="height:80px;background:#5F5E5A;color:#FAF8F2;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:11px;font-weight:500;">Text · secondary</div><div style="font-family:var(--font-mono);font-size:10px;">#5F5E5A</div></div>
+  <div style="height:80px;background:#9C9A93;color:#fff;border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:11px;font-weight:500;">Text · tertiary</div><div style="font-family:var(--font-mono);font-size:10px;">#9C9A93</div></div>
+  <div style="height:80px;background:#fff;color:#1F2937;border:0.5px solid rgba(15,110,86,0.12);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:11px;font-weight:500;">Border · hairline</div><div style="font-family:var(--font-mono);font-size:10px;">rgba(0F6E56, .12)</div></div>
+  <div style="height:80px;background:#fff;color:#1F2937;border:0.5px solid rgba(15,110,86,0.22);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;"><div style="font-size:11px;font-weight:500;">Border · strong</div><div style="font-family:var(--font-mono);font-size:10px;">rgba(0F6E56, .22)</div></div>
+</div>
+</div></body></html>

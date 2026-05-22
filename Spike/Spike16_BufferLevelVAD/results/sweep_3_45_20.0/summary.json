@@ -1,0 +1,588 @@
+{
+  "aggregate" : {
+    "calibration_fallback_correctness" : [
+      {
+        "actual" : false,
+        "clip" : "alternating_mac",
+        "expected" : true,
+        "pass" : false
+      },
+      {
+        "actual" : true,
+        "clip" : "alternating_pods",
+        "expected" : true,
+        "pass" : true
+      },
+      {
+        "actual" : false,
+        "clip" : "distractors_mac",
+        "expected" : true,
+        "pass" : false
+      },
+      {
+        "actual" : false,
+        "clip" : "distractors_pods",
+        "expected" : true,
+        "pass" : false
+      },
+      {
+        "actual" : false,
+        "clip" : "silence_only_mac",
+        "expected" : false,
+        "pass" : true
+      },
+      {
+        "actual" : false,
+        "clip" : "silence_only_pods",
+        "expected" : false,
+        "pass" : true
+      }
+    ],
+    "distractor_max_incorrect_pct" : 22.75,
+    "end_latency_max_ms" : 880,
+    "end_latency_median_ms" : 530,
+    "end_latency_p95_ms" : 590,
+    "fallback_fn_max_pct" : 11.200000000000001,
+    "onset_latency_max_ms" : 500,
+    "onset_latency_median_ms" : 150,
+    "onset_latency_p95_ms" : 500,
+    "silence_only_mac_fp_ms" : 0,
+    "silence_only_pods_fp_ms" : 0,
+    "speech_fn_max_pct" : 72.53333333333333
+  },
+  "clips" : [
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "alternating_mac",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -39.1,
+      "endLatencies_ms" : [
+        520,
+        230,
+        590
+      ],
+      "endLatency_max_ms" : 590,
+      "endLatency_median_ms" : 520,
+      "endLatency_p95_ms" : 520,
+      "mic" : "mac",
+      "onsetLatencies_ms" : [
+        500,
+        150,
+        -120
+      ],
+      "onsetLatency_max_ms" : 500,
+      "onsetLatency_median_ms" : 150,
+      "onsetLatency_p95_ms" : 150,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 10000,
+          "falsePositiveDuration_ms" : 510,
+          "start_ms" : 5000
+        },
+        {
+          "end_ms" : 20000,
+          "falsePositiveDuration_ms" : 350,
+          "start_ms" : 15000
+        },
+        {
+          "end_ms" : 39828,
+          "falsePositiveDuration_ms" : 6310,
+          "start_ms" : 25000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 5000,
+          "falseNegativeDuration_ms" : 780,
+          "falseNegativeRate_pct" : 15.6,
+          "start_ms" : 0
+        },
+        {
+          "end_ms" : 15000,
+          "falseNegativeDuration_ms" : 0,
+          "falseNegativeRate_pct" : 0,
+          "start_ms" : 10000
+        },
+        {
+          "end_ms" : 25000,
+          "falseNegativeDuration_ms" : 0,
+          "falseNegativeRate_pct" : 0,
+          "start_ms" : 20000
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : true,
+      "clip" : "alternating_pods",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -40,
+      "endLatencies_ms" : [
+        880,
+        530,
+        120
+      ],
+      "endLatency_max_ms" : 880,
+      "endLatency_median_ms" : 530,
+      "endLatency_p95_ms" : 530,
+      "mic" : "pods",
+      "onsetLatencies_ms" : [
+        500,
+        -80,
+        60
+      ],
+      "onsetLatency_max_ms" : 500,
+      "onsetLatency_median_ms" : 60,
+      "onsetLatency_p95_ms" : 60,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 10000,
+          "falsePositiveDuration_ms" : 960,
+          "start_ms" : 5000
+        },
+        {
+          "end_ms" : 20000,
+          "falsePositiveDuration_ms" : 520,
+          "start_ms" : 15000
+        },
+        {
+          "end_ms" : 39785,
+          "falsePositiveDuration_ms" : 5260,
+          "start_ms" : 25000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 5000,
+          "falseNegativeDuration_ms" : 560,
+          "falseNegativeRate_pct" : 11.200000000000001,
+          "start_ms" : 0
+        },
+        {
+          "end_ms" : 15000,
+          "falseNegativeDuration_ms" : 0,
+          "falseNegativeRate_pct" : 0,
+          "start_ms" : 10000
+        },
+        {
+          "end_ms" : 25000,
+          "falseNegativeDuration_ms" : 0,
+          "falseNegativeRate_pct" : 0,
+          "start_ms" : 20000
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "cafe_noise_mac",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -24.4,
+      "endLatencies_ms" : [
+        2000
+      ],
+      "endLatency_max_ms" : 2000,
+      "endLatency_median_ms" : 2000,
+      "endLatency_p95_ms" : 2000,
+      "mic" : "mac",
+      "onsetLatencies_ms" : [
+        500
+      ],
+      "onsetLatency_max_ms" : 500,
+      "onsetLatency_median_ms" : 500,
+      "onsetLatency_p95_ms" : 500,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 32425,
+          "falsePositiveDuration_ms" : 0,
+          "start_ms" : 30000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 30000,
+          "falseNegativeDuration_ms" : 20810,
+          "falseNegativeRate_pct" : 69.36666666666666,
+          "start_ms" : 0
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "cafe_noise_pods",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -23.7,
+      "endLatencies_ms" : [
+        2000
+      ],
+      "endLatency_max_ms" : 2000,
+      "endLatency_median_ms" : 2000,
+      "endLatency_p95_ms" : 2000,
+      "mic" : "pods",
+      "onsetLatencies_ms" : [
+        120
+      ],
+      "onsetLatency_max_ms" : 120,
+      "onsetLatency_median_ms" : 120,
+      "onsetLatency_p95_ms" : 120,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 32639,
+          "falsePositiveDuration_ms" : 0,
+          "start_ms" : 30000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 30000,
+          "falseNegativeDuration_ms" : 21760,
+          "falseNegativeRate_pct" : 72.53333333333333,
+          "start_ms" : 0
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "distractors_mac",
+      "distractorIntervals" : [
+        {
+          "end_ms" : 9000,
+          "incorrectStateDuration_ms" : 0,
+          "incorrectStateRate_pct" : 0,
+          "latencyToCorrect_ms" : 1700,
+          "start_ms" : 5000,
+          "type" : "typing"
+        },
+        {
+          "end_ms" : 13000,
+          "incorrectStateDuration_ms" : 0,
+          "incorrectStateRate_pct" : 0,
+          "latencyToCorrect_ms" : 2030,
+          "start_ms" : 12000,
+          "type" : "door_slam"
+        },
+        {
+          "end_ms" : 23000,
+          "incorrectStateDuration_ms" : 910,
+          "incorrectStateRate_pct" : 22.75,
+          "latencyToCorrect_ms" : 440,
+          "start_ms" : 19000,
+          "type" : "notification"
+        }
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -40,
+      "endLatencies_ms" : [
+
+      ],
+      "endLatency_max_ms" : 0,
+      "endLatency_median_ms" : 0,
+      "endLatency_p95_ms" : 0,
+      "mic" : "mac",
+      "onsetLatencies_ms" : [
+        500
+      ],
+      "onsetLatency_max_ms" : 500,
+      "onsetLatency_median_ms" : 500,
+      "onsetLatency_p95_ms" : 500,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 29000,
+          "falsePositiveDuration_ms" : 0,
+          "start_ms" : 25000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 34665,
+          "falseNegativeDuration_ms" : 9040,
+          "falseNegativeRate_pct" : 26.074415921546006,
+          "start_ms" : 0
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "distractors_pods",
+      "distractorIntervals" : [
+        {
+          "end_ms" : 16000,
+          "incorrectStateDuration_ms" : 0,
+          "incorrectStateRate_pct" : 0,
+          "latencyToCorrect_ms" : 2220,
+          "start_ms" : 7000,
+          "type" : "typing"
+        },
+        {
+          "end_ms" : 23000,
+          "incorrectStateDuration_ms" : 0,
+          "incorrectStateRate_pct" : 0,
+          "latencyToCorrect_ms" : 14850,
+          "start_ms" : 21000,
+          "type" : "door_slam"
+        },
+        {
+          "end_ms" : 31000,
+          "incorrectStateDuration_ms" : 0,
+          "incorrectStateRate_pct" : 0,
+          "latencyToCorrect_ms" : 6850,
+          "start_ms" : 28000,
+          "type" : "notification"
+        }
+      ],
+      "distractorSilenceFalsePositive_ms" : 790,
+      "effectiveThresholdDB_at_calibration" : -40,
+      "endLatencies_ms" : [
+
+      ],
+      "endLatency_max_ms" : 0,
+      "endLatency_median_ms" : 0,
+      "endLatency_p95_ms" : 0,
+      "mic" : "pods",
+      "onsetLatencies_ms" : [
+        500
+      ],
+      "onsetLatency_max_ms" : 500,
+      "onsetLatency_median_ms" : 500,
+      "onsetLatency_p95_ms" : 500,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 38000,
+          "falsePositiveDuration_ms" : 790,
+          "start_ms" : 33000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 40404,
+          "falseNegativeDuration_ms" : 7490,
+          "falseNegativeRate_pct" : 18.53501608512744,
+          "start_ms" : 0
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "quiet_speech_mac",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -40,
+      "endLatencies_ms" : [
+        370
+      ],
+      "endLatency_max_ms" : 370,
+      "endLatency_median_ms" : 370,
+      "endLatency_p95_ms" : 370,
+      "mic" : "mac",
+      "onsetLatencies_ms" : [
+        500
+      ],
+      "onsetLatency_max_ms" : 500,
+      "onsetLatency_median_ms" : 500,
+      "onsetLatency_p95_ms" : 500,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 32084,
+          "falsePositiveDuration_ms" : 360,
+          "start_ms" : 30000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 30000,
+          "falseNegativeDuration_ms" : 3630,
+          "falseNegativeRate_pct" : 12.1,
+          "start_ms" : 0
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "quiet_speech_pods",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -40,
+      "endLatencies_ms" : [
+        -170
+      ],
+      "endLatency_max_ms" : -170,
+      "endLatency_median_ms" : -170,
+      "endLatency_p95_ms" : -170,
+      "mic" : "pods",
+      "onsetLatencies_ms" : [
+        500
+      ],
+      "onsetLatency_max_ms" : 500,
+      "onsetLatency_median_ms" : 500,
+      "onsetLatency_p95_ms" : 500,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 35156,
+          "falsePositiveDuration_ms" : 970,
+          "start_ms" : 30000
+        }
+      ],
+      "speechIntervals" : [
+        {
+          "end_ms" : 30000,
+          "falseNegativeDuration_ms" : 3800,
+          "falseNegativeRate_pct" : 12.666666666666668,
+          "start_ms" : 0
+        }
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "silence_only_mac",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -40,
+      "endLatencies_ms" : [
+
+      ],
+      "endLatency_max_ms" : 0,
+      "endLatency_median_ms" : 0,
+      "endLatency_p95_ms" : 0,
+      "mic" : "mac",
+      "onsetLatencies_ms" : [
+
+      ],
+      "onsetLatency_max_ms" : 0,
+      "onsetLatency_median_ms" : 0,
+      "onsetLatency_p95_ms" : 0,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 30121,
+          "falsePositiveDuration_ms" : 0,
+          "start_ms" : 0
+        }
+      ],
+      "speechIntervals" : [
+
+      ]
+    },
+    {
+      "calibrationFallbackUsed" : false,
+      "clip" : "silence_only_pods",
+      "distractorIntervals" : [
+
+      ],
+      "distractorSilenceFalsePositive_ms" : 0,
+      "effectiveThresholdDB_at_calibration" : -39.2,
+      "endLatencies_ms" : [
+
+      ],
+      "endLatency_max_ms" : 0,
+      "endLatency_median_ms" : 0,
+      "endLatency_p95_ms" : 0,
+      "mic" : "pods",
+      "onsetLatencies_ms" : [
+
+      ],
+      "onsetLatency_max_ms" : 0,
+      "onsetLatency_median_ms" : 0,
+      "onsetLatency_p95_ms" : 0,
+      "silenceIntervals" : [
+        {
+          "end_ms" : 30697,
+          "falsePositiveDuration_ms" : 0,
+          "start_ms" : 0
+        }
+      ],
+      "speechIntervals" : [
+
+      ]
+    }
+  ],
+  "verdict" : "FAIL",
+  "verdictReasons" : [
+    {
+      "actual" : "150ms",
+      "criterion" : "onset_latency_median",
+      "disposition" : "FAIL",
+      "expected" : "≤ 100ms"
+    },
+    {
+      "actual" : "500ms",
+      "criterion" : "onset_latency_p95",
+      "disposition" : "FAIL",
+      "expected" : "≤ 200ms"
+    },
+    {
+      "actual" : "500ms",
+      "criterion" : "onset_latency_max",
+      "disposition" : "PASS",
+      "expected" : "≤ 500ms"
+    },
+    {
+      "actual" : "530ms",
+      "criterion" : "end_latency_median",
+      "disposition" : "FAIL",
+      "expected" : "≤ 500ms"
+    },
+    {
+      "actual" : "590ms",
+      "criterion" : "end_latency_p95",
+      "disposition" : "PASS",
+      "expected" : "≤ 1000ms"
+    },
+    {
+      "actual" : "880ms",
+      "criterion" : "end_latency_max",
+      "disposition" : "PASS",
+      "expected" : "≤ 2000ms"
+    },
+    {
+      "actual" : "0ms",
+      "criterion" : "silence_only_pods_false_positive",
+      "disposition" : "PASS",
+      "expected" : "≤ 100ms"
+    },
+    {
+      "actual" : "0ms",
+      "criterion" : "silence_only_mac_false_positive",
+      "disposition" : "PASS",
+      "expected" : "≤ 100ms"
+    },
+    {
+      "actual" : "72.53%",
+      "criterion" : "speech_fn_max",
+      "disposition" : "FAIL",
+      "expected" : "≤ 5.0%"
+    },
+    {
+      "actual" : "22.75%",
+      "criterion" : "distractor_max_incorrect",
+      "disposition" : "FAIL",
+      "expected" : "≤ 20.0%"
+    },
+    {
+      "actual" : "incorrect: alternating_mac, distractors_mac, distractors_pods",
+      "criterion" : "calibration_fallback_correctness",
+      "disposition" : "FAIL",
+      "expected" : "alternating_*+distractors_*=true, silence_only_*=false"
+    },
+    {
+      "actual" : "22.75%",
+      "criterion" : "distractor_latency_correctness",
+      "disposition" : "FAIL",
+      "expected" : "covered by distractor_max_incorrect ≤ 20%"
+    }
+  ]
+}

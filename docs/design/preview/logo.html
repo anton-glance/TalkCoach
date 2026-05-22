@@ -1,0 +1,38 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 170px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:center;">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px;background:var(--surface-2);border-radius:12px;">
+    <img src="../brand/logo/mark.svg" style="width:56px;height:56px;color:var(--brand);" alt="mark">
+    <div class="label">Mark</div>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px;background:var(--surface-2);border-radius:12px;">
+    <img src="../brand/logo/wordmark.svg" style="height:38px;" alt="wordmark">
+    <div class="label">Wordmark</div>
+  </div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px;background:var(--surface-2);border-radius:12px;">
+    <img src="../brand/logo/lockup.svg" style="height:38px;" alt="lockup">
+    <div class="label">Lockup</div>
+  </div>
+</div>
+</div></body></html>

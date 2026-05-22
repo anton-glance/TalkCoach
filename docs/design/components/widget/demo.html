@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Locto · UI kit</title>
+  <link rel="stylesheet" href="../../tokens.css">
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    body {
+      font-family: 'Inter Display', 'Inter', -apple-system, system-ui, sans-serif;
+    }
+
+    /* ── Scene · vibrant wallpaper so glass refraction reads ──────── */
+    .desktop {
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(900px 700px at 10% 10%, rgba(56,189,248,0.55) 0%, transparent 60%),
+        radial-gradient(800px 700px at 80% 30%, rgba(245,158,11,0.55) 0%, transparent 60%),
+        radial-gradient(1000px 800px at 60% 90%, rgba(190,80,180,0.55) 0%, transparent 60%),
+        radial-gradient(700px 500px at 0% 100%, rgba(20,184,166,0.5) 0%, transparent 55%),
+        linear-gradient(135deg, #2a1a4a 0%, #4a2270 35%, #b1465f 70%, #f59e0b 100%);
+      z-index: 0;
+    }
+
+    /* ── Mock app window (so widget sits on its edge) ─────────────── */
+    .mock-window {
+      position: fixed;
+      top: 110px; left: 80px;
+      width: 720px; height: 360px;
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      border: 0.5px solid rgba(0, 0, 0, 0.16);
+      border-radius: 12px;
+      box-shadow:
+        0 24px 64px rgba(0, 0, 0, 0.32),
+        0 4px 12px rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+      z-index: 10;
+    }
+    .mock-window-titlebar {
+      height: 36px;
+      background: linear-gradient(180deg, #F0EDE5, #E6E3DC);
+      border-bottom: 0.5px solid rgba(0, 0, 0, 0.1);
+      display: flex; align-items: center; padding: 0 14px; gap: 8px;
+      position: relative;
+    }
+    .mock-window-titlebar .light {
+      width: 12px; height: 12px; border-radius: 50%; border: 0.5px solid rgba(0, 0, 0, 0.1);
+    }
+    .mock-window-titlebar .title {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 500; color: #1F2937;
+      pointer-events: none;
+    }
+    .mock-window-body {
+      padding: 24px 32px; color: #1F2937; font-size: 14px; line-height: 1.6;
+      height: calc(100% - 36px); box-sizing: border-box;
+      display: grid; grid-template-columns: 200px 1fr; gap: 32px;
+    }
+    .mock-window-body h2 {
+      font-size: 22px; font-weight: 500; letter-spacing: -0.6px; margin-bottom: 12px; color: #1F2937;
+    }
+    .mock-window-body p { color: #5F5E5A; margin-bottom: 10px; max-width: 380px; }
+    .sidebar-item {
+      padding: 6px 10px; border-radius: 6px; font-size: 13px;
+      color: #5F5E5A; margin-bottom: 2px;
+    }
+    .sidebar-item.active { background: rgba(15, 110, 86, 0.12); color: #0F6E56; font-weight: 500; }
+
+    /* ── Photo placeholder ────────────────────────────────────────── */
+    .photo {
+      position: fixed;
+      top: 200px; right: 100px;
+      width: 280px; height: 200px;
+      background:
+        radial-gradient(60% 50% at 30% 30%, #ffd84a 0%, transparent 65%),
+        radial-gradient(70% 60% at 80% 70%, #f87171 0%, transparent 60%),
+        linear-gradient(135deg, #fb923c, #ec4899, #8b5cf6);
+      border-radius: 14px;
+      border: 0.5px solid rgba(0, 0, 0, 0.08);
+      box-shadow:
+        0 16px 40px rgba(0, 0, 0, 0.28),
+        0 4px 10px rgba(0, 0, 0, 0.12);
+      z-index: 8;
+    }
+
+    /* ── Dock with app icons ──────────────────────────────────────── */
+    .dock {
+      position: fixed;
+      bottom: 96px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 12px; padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.32);
+      backdrop-filter: blur(28px) saturate(160%);
+      -webkit-backdrop-filter: blur(28px) saturate(160%);
+      border: 0.5px solid rgba(255, 255, 255, 0.35);
+      border-radius: 20px;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.4),
+        0 16px 40px rgba(0, 0, 0, 0.18);
+      z-index: 12;
+    }
+    .icon {
+      width: 52px; height: 52px; border-radius: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+      display: flex; align-items: center; justify-content: center;
+      color: #fff;
+    }
+    .icon svg { width: 28px; height: 28px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .icon.cal { background: linear-gradient(135deg, #fff, #f5f5f0); color: #ec4444; }
+    .icon.mail { background: linear-gradient(135deg, #38bdf8, #2563eb); }
+    .icon.notes { background: linear-gradient(135deg, #facc15, #f59e0b); color: #5b3000; }
+    .icon.photos { background: linear-gradient(135deg, #ec4899, #f59e0b, #a855f7); }
+    .icon.music { background: linear-gradient(135deg, #ec4899, #ef4444); }
+    .icon.code { background: linear-gradient(135deg, #1F2937, #0F6E56); color: #5DCAA5; }
+    .icon.terminal { background: #0a0a0a; color: #f0f0f0; }
+
+    /* ── Dock helper bar ──────────────────────────────────────────── */
+    .helper {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 14px;
+      background: rgba(255,255,255,0.82);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border: 0.5px solid rgba(0,0,0,0.12);
+      border-radius: 999px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+      font-size: 12px; color: #1F2937; z-index: 100;
+    }
+    .helper .kbd {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      padding: 2px 6px; background: rgba(0,0,0,0.06); border-radius: 4px; color: #5F5E5A;
+    }
+
+    .badge {
+      position: fixed; top: 44px; left: 24px;
+      padding: 6px 12px;
+      background: rgba(255,255,255,0.72);
+      backdrop-filter: saturate(180%) blur(16px);
+      -webkit-backdrop-filter: saturate(180%) blur(16px);
+      border: 0.5px solid rgba(0,0,0,0.12);
+      border-radius: 999px;
+      font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: #1F2937; z-index: 40;
+    }
+    .badge .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #0F6E56; margin-right: 8px; vertical-align: middle; }
+
+    .drag-hint {
+      position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
+      padding: 6px 14px;
+      background: rgba(0,0,0,0.4);
+      color: #fff; font-size: 11px;
+      border-radius: 999px;
+      z-index: 50;
+      letter-spacing: 0.02em;
+      pointer-events: none;
+      backdrop-filter: blur(10px);
+    }
+
+    .widget-anchor {
+      position: fixed;
+      z-index: 30;
+      touch-action: none;
+    }
+  </style>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script src="tokens.js"></script>
+</head>
+<body>
+
+<div class="desktop"></div>
+
+<!-- Scene: a window so the widget can sit on its edge -->
+<div class="mock-window">
+  <div class="mock-window-titlebar">
+    <span class="light" style="background:#FF5F57;"></span>
+    <span class="light" style="background:#FEBC2E;"></span>
+    <span class="light" style="background:#28C840;"></span>
+    <span class="title">Notes — Pitch deck</span>
+  </div>
+  <div class="mock-window-body">
+    <div>
+      <div class="sidebar-item active">All Notes</div>
+      <div class="sidebar-item">Pitch deck</div>
+      <div class="sidebar-item">Sprint plan</div>
+      <div class="sidebar-item">Reading list</div>
+      <div class="sidebar-item">Quotes</div>
+      <div class="sidebar-item">Trip ideas</div>
+    </div>
+    <div>
+      <h2>Pitch deck — opening minute</h2>
+      <p>Open with the moment we discovered Maya scrolling through her transcripts at 11pm. Make the audience feel her stuck-ness before showing them the product.</p>
+      <p>Don't read from the slide. Don't hide behind data. Tell the story, then earn the right to put a number on the screen.</p>
+      <p style="color:#0F6E56; font-weight:500;">Pace target: 140–160 wpm. Aim to land the open in 60 seconds.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Scene: a vivid photo so glass refracts colour -->
+<div class="photo"></div>
+
+<!-- Scene: a dock at the bottom with app icons -->
+<div class="dock">
+  <div class="icon cal"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg></div>
+  <div class="icon mail"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,6 12,13 2,6"/></svg></div>
+  <div class="icon notes"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg></div>
+  <div class="icon photos"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg></div>
+  <div class="icon music"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+  <div class="icon code"><svg viewBox="0 0 24 24"><polyline points="16,18 22,12 16,6"/><polyline points="8,6 2,12 8,18"/></svg></div>
+  <div class="icon terminal"><svg viewBox="0 0 24 24"><polyline points="4,17 10,11 4,5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></div>
+</div>
+
+<div class="badge"><span class="dot"></span>Locto widget · drag to explore</div>
+<div class="drag-hint">↑ try dragging the widget over the window edge, the photo, and the dock icons</div>
+
+<div id="root"></div>
+
+<script type="text/babel" src="Widget.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// Draggable wrapper — the widget can be moved with the cursor so the user
+// can see how Liquid Glass refracts the content beneath it.
+function DraggableWidget({ children }) {
+  const initial = () => ({ x: window.innerWidth - 144 - 24, y: 60 });
+  const [pos, setPos] = useState(initial);
+  const dragRef = useRef({ active: false, offX: 0, offY: 0 });
+
+  const handlePointerDown = useCallback((e) => {
+    if (e.button !== 0) return;
+    dragRef.current.active = true;
+    dragRef.current.offX = e.clientX - pos.x;
+    dragRef.current.offY = e.clientY - pos.y;
+    e.target.setPointerCapture?.(e.pointerId);
+  }, [pos]);
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!dragRef.current.active) return;
+      const x = Math.max(0, Math.min(window.innerWidth - 144, e.clientX - dragRef.current.offX));
+      const y = Math.max(28, Math.min(window.innerHeight - 144, e.clientY - dragRef.current.offY));
+      setPos({ x, y });
+    };
+    const onUp = () => { dragRef.current.active = false; };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, []);
+
+  return (
+    <div className="widget-anchor" style={{ left: pos.x, top: pos.y }}>
+      {React.cloneElement(children, { onPointerDown: handlePointerDown })}
+    </div>
+  );
+}
+
+function DebugDock({
+  wpm, setWpm,
+  idle, setIdle,
+  monologueSeconds, setMonologueSeconds,
+  monologueRunning, setMonologueRunning,
+}) {
+  return (
+    <div className="helper">
+      <span style={{ fontWeight: 500 }}>Pace</span>
+      <input type="range" min="80" max="240" value={wpm}
+        onChange={e => { setWpm(+e.target.value); setIdle(false); }}
+        style={{ width: 130 }} />
+      <span className="kbd" style={{ minWidth: 36, textAlign: 'center' }}>{idle ? '---' : wpm}</span>
+      <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(0,0,0,0.1)', margin: '0 2px' }} />
+      <button onClick={() => setIdle(i => !i)} style={{
+        padding: '4px 10px', fontSize: 11,
+        background: idle ? '#5F5E5A' : 'transparent',
+        color: idle ? '#fff' : '#1F2937',
+        border: '0.5px solid rgba(0,0,0,0.16)',
+        borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit',
+      }}>{idle ? 'Idle' : 'Go idle'}</button>
+      <span style={{ width: 1, alignSelf: 'stretch', background: 'rgba(0,0,0,0.1)', margin: '0 2px' }} />
+      <span style={{ fontWeight: 500 }}>Monologue</span>
+      <input type="range" min="0" max="120" value={Math.round(monologueSeconds)}
+        onChange={e => { setMonologueSeconds(+e.target.value); setMonologueRunning(false); }}
+        style={{ width: 110 }} />
+      <span className="kbd" style={{ minWidth: 30, textAlign: 'center' }}>{Math.round(monologueSeconds)}s</span>
+      <button onClick={() => setMonologueRunning(r => !r)} style={{
+        padding: '4px 10px', fontSize: 11,
+        background: monologueRunning ? '#0F6E56' : 'transparent',
+        color: monologueRunning ? '#fff' : '#1F2937',
+        border: '0.5px solid rgba(0,0,0,0.16)',
+        borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit',
+      }}>{monologueRunning ? '■' : '▶'}</button>
+    </div>
+  );
+}
+
+function App() {
+  const [wpm, setWpm] = useState(152);
+  const [idle, setIdle] = useState(false);
+  const [monologueSeconds, setMonologueSeconds] = useState(0);
+  const [monologueRunning, setMonologueRunning] = useState(false);
+
+  useEffect(() => {
+    if (idle) return;
+    const id = setInterval(() => {
+      setWpm(w => {
+        const delta = (Math.random() - 0.5) * 16;
+        return Math.max(80, Math.min(240, Math.round(w + delta)));
+      });
+    }, 2500);
+    return () => clearInterval(id);
+  }, [idle]);
+
+  useEffect(() => {
+    if (!monologueRunning || idle) return;
+    const id = setInterval(() => setMonologueSeconds(s => Math.min(120, s + 1)), 1000);
+    return () => clearInterval(id);
+  }, [monologueRunning, idle]);
+
+  useEffect(() => {
+    if (idle) { setMonologueSeconds(0); setMonologueRunning(false); }
+  }, [idle]);
+
+  return (
+    <>
+      <DraggableWidget>
+        <window.LoctoWidget wpm={wpm} idle={idle} monologueSeconds={monologueSeconds} />
+      </DraggableWidget>
+      <DebugDock
+        wpm={wpm} setWpm={setWpm}
+        idle={idle} setIdle={setIdle}
+        monologueSeconds={monologueSeconds} setMonologueSeconds={setMonologueSeconds}
+        monologueRunning={monologueRunning} setMonologueRunning={setMonologueRunning}
+      />
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+// Hide the drag hint after the first drag.
+let hintHidden = false;
+window.addEventListener('pointerdown', () => {
+  if (hintHidden) return;
+  hintHidden = true;
+  const h = document.querySelector('.drag-hint');
+  if (h) { h.style.transition = 'opacity 800ms ease-out'; h.style.opacity = '0'; }
+});
+</script>
+</body>
+</html>

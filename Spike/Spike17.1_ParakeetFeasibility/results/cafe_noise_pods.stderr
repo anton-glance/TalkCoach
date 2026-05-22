@@ -1,0 +1,20 @@
+INFO: loading Parakeet TDT v3 model...
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Preprocessor.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Encoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Decoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling JointDecisionv3.mlmodelc
+INFO: model progress: compiling 
+INFO: model loaded in 117ms — RSS 36.2MB (before-load: 7.6MB)
+INFO: processing cafe_noise_pods.caf...
+[+18373ms] "Play confine noise, YouTube click from your iPhone or anothe" confirmed=true conf=0.95
+[+36618ms] "YouTube clip from the iPhone to another laptop nearby. Speak" confirmed=true conf=0.98
+[+39741ms] "" confirmed=false conf=0.10
+INFO: done — 3 updates, peak RSS 80.9MB
+INFO: wrote /Users/antonglance/coding/TalkCoach/Spike/Spike17.1_ParakeetFeasibility/results/cafe_noise_pods.csv

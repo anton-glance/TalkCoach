@@ -1,0 +1,22 @@
+{
+  "audioDurationMs" : 67855.7,
+  "clip" : "real_world",
+  "confirmedUpdateCount" : 4,
+  "confirmedUpdateGapsMs" : [
+    20761.3,
+    20177.5,
+    20133.9,
+    6282.9
+  ],
+  "firstConfirmedEmissionMs" : 20761.3,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 20761.3,
+  "fixture" : "real_world_test",
+  "mic" : "test",
+  "sampleTexts" : [
+    "One two three one two three one two three one two three one two three one two three one two three one two three one two three one two three",
+    "one two three one two three one two three one two three one two three one two three one two three one",
+    "two three one two three one two"
+  ],
+  "totalUpdateCount" : 4
+}

@@ -10,6 +10,36 @@ struct RawWhisperToken {
     let prob: Float
 }
 
+// MARK: - WhisperInferenceConfig
+
+/// Per-session whisper inference configuration. Read once from UserDefaults at the start of
+/// each inference loop so Anton can sweep configs with `defaults write` + relaunch, no rebuild.
+/// Keys use UserDefaults.standard; omitting a key (or setting it to the zero value) falls back
+/// to the whisper.cpp default, which reproduces the prior cwhisper_full behavior exactly.
+struct WhisperInferenceConfig {
+    var suppressBlank: Bool
+    var suppressNst: Bool
+    var noSpeechThold: Float
+    var temperature: Float
+    var temperatureInc: Float
+    var initialPrompt: String?
+    var windowMs: Int
+
+    nonisolated static func current() -> WhisperInferenceConfig {
+        let d = UserDefaults.standard
+        return WhisperInferenceConfig(
+            suppressBlank:    (d.object(forKey: "whisperSuppressBlank")    as? Bool)   ?? true,
+            suppressNst:      (d.object(forKey: "whisperSuppressNst")      as? Bool)   ?? false,
+            noSpeechThold:    Float((d.object(forKey: "whisperNoSpeechThold") as? Double) ?? 0.6),
+            temperature:      Float((d.object(forKey: "whisperTemperature")   as? Double) ?? 0.0),
+            temperatureInc:   Float((d.object(forKey: "whisperTemperatureInc") as? Double) ?? 0.2),
+            initialPrompt:    d.string(forKey: "whisperInitialPrompt"),
+            windowMs:         d.integer(forKey: "whisperWindowMs") == 0
+                                  ? 1_000 : d.integer(forKey: "whisperWindowMs")
+        )
+    }
+}
+
 // MARK: - WhisperCppBackend
 
 /// Transcriber backend backed by whisper.cpp + Silero VAD (Architecture Z).
@@ -27,9 +57,6 @@ actor WhisperCppBackend: TranscriberBackend {
 
     // Number of CPU threads used for both whisper and Silero inference.
     private static let inferenceThreads: Int32 = 4
-
-    // 1-second inference window at 16 kHz.
-    private static let kLengthSamples: Int = 16_000
 
     // Silero VAD probability threshold (0.5 = default from Spike #17.3 tuning).
     nonisolated(unsafe) static var vadThreshold: Float = 0.5
@@ -158,6 +185,10 @@ actor WhisperCppBackend: TranscriberBackend {
     // MARK: - Inference loop
 
     private func runInferenceLoop(provider: any AudioBufferProvider, locale: Locale) async {
+        let config = WhisperInferenceConfig.current()
+        let windowSamples = config.windowMs * 16  // 16 samples per ms at 16 kHz
+        let promptStorage: String? = config.initialPrompt
+
         var accumulated: [Float] = []
         var audioPositionMs = 0
         var bufferCount = 0
@@ -177,12 +208,12 @@ actor WhisperCppBackend: TranscriberBackend {
             let samples16k = resampleLinear(mono, fromRate: capturedBuffer.sampleRate, toRate: 16_000.0)
             accumulated.append(contentsOf: samples16k)
 
-            while accumulated.count >= Self.kLengthSamples {
-                let chunk = Array(accumulated.prefix(Self.kLengthSamples))
-                accumulated.removeFirst(Self.kLengthSamples)
+            while accumulated.count >= windowSamples {
+                let chunk = Array(accumulated.prefix(windowSamples))
+                accumulated.removeFirst(windowSamples)
 
                 let chunkStartMs = audioPositionMs
-                audioPositionMs += 1_000
+                audioPositionMs += config.windowMs
 
                 // A3: resampled 16kHz chunk RMS — unconditional, fires whenever a chunk forms.
                 let chunkRmsStr = String(format: "%.4f", rms(chunk))
@@ -194,7 +225,7 @@ actor WhisperCppBackend: TranscriberBackend {
                 }
 
                 let hasVoice = cwhisper_vad_detect_speech_threshold(
-                    vCtx, chunk, Int32(Self.kLengthSamples), Self.vadThreshold
+                    vCtx, chunk, Int32(windowSamples), Self.vadThreshold
                 )
                 // A4: Silero max probability per chunk — fires when models are loaded.
                 let vadProbStr = String(format: "%.3f", cwhisper_vad_last_max_prob(vCtx))
@@ -204,10 +235,39 @@ actor WhisperCppBackend: TranscriberBackend {
 
                 if hasVoice {
                     let langCode = locale.language.languageCode?.identifier ?? "en"
-                    let ret = cwhisper_full(
-                        wCtx, chunk, Int32(Self.kLengthSamples),
-                        Self.inferenceThreads, langCode, false, nil, nil
-                    )
+                    let ret: Int32
+                    if let prompt = promptStorage {
+                        // withCString keeps the UTF-8 buffer alive for the duration of the C call.
+                        ret = prompt.withCString { cStr in
+                            var vp = CWhisperVerbatimParams(
+                                suppress_blank: config.suppressBlank,
+                                suppress_nst: config.suppressNst,
+                                no_speech_thold: config.noSpeechThold,
+                                temperature: config.temperature,
+                                temperature_inc: config.temperatureInc,
+                                initial_prompt: cStr,
+                                carry_initial_prompt: true
+                            )
+                            return cwhisper_full_verbatim(
+                                wCtx, chunk, Int32(windowSamples),
+                                Self.inferenceThreads, langCode, &vp, nil, nil
+                            )
+                        }
+                    } else {
+                        var vp = CWhisperVerbatimParams(
+                            suppress_blank: config.suppressBlank,
+                            suppress_nst: config.suppressNst,
+                            no_speech_thold: config.noSpeechThold,
+                            temperature: config.temperature,
+                            temperature_inc: config.temperatureInc,
+                            initial_prompt: nil,
+                            carry_initial_prompt: false
+                        )
+                        ret = cwhisper_full_verbatim(
+                            wCtx, chunk, Int32(windowSamples),
+                            Self.inferenceThreads, langCode, &vp, nil, nil
+                        )
+                    }
                     guard ret == 0 else { continue }
 
                     let rawTokens = extractRawTokens(from: wCtx, audioSamplePositionMs: chunkStartMs)

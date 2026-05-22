@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 150px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div class="label" style="margin-bottom:14px;">Pace gradient · the rule for any pace visualization</div>
+<div style="height:14px;border-radius:7px;background:linear-gradient(90deg,#6E94BD 0%,#6BA079 50%,#C58968 100%);"></div>
+<div style="display:flex;justify-content:space-between;margin-top:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
+  <span>#6E94BD · slow</span>
+  <span>#6BA079 · ideal</span>
+  <span>#C58968 · fast</span>
+</div>
+<div class="mono" style="margin-top:14px;">Same stops, same direction, every time. Never substitute another gradient.</div>
+</div></body></html>

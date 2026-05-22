@@ -1,0 +1,4 @@
+update_index,emission_ms,gap_from_previous_ms,text,is_confirmed,confidence
+0,18386.1,18386.1,"Start speaking continuously and at around so 5 seconds start typing rapidly on the keyboard while still speaking and then around the 12 seconds make some noise and",true,0.9713
+1,36697.6,18311.5,"the sound that can be so like a node and then and then continue.",true,0.9144
+2,42344.0,5646.4,"",false,0.1000

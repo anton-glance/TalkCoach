@@ -1,0 +1,37 @@
+{
+  "calibrationFallbackUsed" : false,
+  "clip" : "cafe_noise_mac",
+  "distractorIntervals" : [
+
+  ],
+  "distractorSilenceFalsePositive_ms" : 0,
+  "effectiveThresholdDB_at_calibration" : -34.4,
+  "endLatencies_ms" : [
+    -140
+  ],
+  "endLatency_max_ms" : -140,
+  "endLatency_median_ms" : -140,
+  "endLatency_p95_ms" : -140,
+  "mic" : "mac",
+  "onsetLatencies_ms" : [
+    500
+  ],
+  "onsetLatency_max_ms" : 500,
+  "onsetLatency_median_ms" : 500,
+  "onsetLatency_p95_ms" : 500,
+  "silenceIntervals" : [
+    {
+      "end_ms" : 32425,
+      "falsePositiveDuration_ms" : 1060,
+      "start_ms" : 30000
+    }
+  ],
+  "speechIntervals" : [
+    {
+      "end_ms" : 30000,
+      "falseNegativeDuration_ms" : 4920,
+      "falseNegativeRate_pct" : 16.400000000000002,
+      "start_ms" : 0
+    }
+  ]
+}

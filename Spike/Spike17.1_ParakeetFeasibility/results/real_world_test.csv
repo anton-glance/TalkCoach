@@ -1,0 +1,5 @@
+update_index,emission_ms,gap_from_previous_ms,text,is_confirmed,confidence
+0,20761.3,20761.3,"One two three one two three one two three one two three one two three one two three one two three one two three one two three one two three",true,0.9852
+1,40938.9,20177.5,"one two three one two three one two three one two three one two three one two three one two three one",true,0.9919
+2,61072.8,20133.9,"two three one two three one two",true,0.9907
+3,67355.7,6282.9,"three one",true,0.9930

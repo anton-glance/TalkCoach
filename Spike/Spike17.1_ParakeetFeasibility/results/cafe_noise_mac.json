@@ -1,0 +1,20 @@
+{
+  "audioDurationMs" : 39931.8,
+  "clip" : "cafe_noise",
+  "confirmedUpdateCount" : 2,
+  "confirmedUpdateGapsMs" : [
+    18411.9,
+    18183.3
+  ],
+  "firstConfirmedEmissionMs" : 18411.9,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 18411.9,
+  "fixture" : "cafe_noise_mac",
+  "mic" : "mac",
+  "sampleTexts" : [
+    "Play cafe noise YouTube clip from your phone or another laptop nearby. Speak normally for 30 seconds, background noise should be loud enough to be obviously present, but not louder than",
+    "conversational but low volume for 30 seconds. Don't whisper, just speak softly, test the noise floor margin and option B fallback behavior if option A is rejected.",
+    ""
+  ],
+  "totalUpdateCount" : 3
+}

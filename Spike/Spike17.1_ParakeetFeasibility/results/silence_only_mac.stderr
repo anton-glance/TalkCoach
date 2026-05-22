@@ -1,0 +1,20 @@
+INFO: loading Parakeet TDT v3 model...
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Preprocessor.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Encoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Decoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling JointDecisionv3.mlmodelc
+INFO: model progress: compiling 
+INFO: model loaded in 127ms — RSS 36.2MB (before-load: 7.5MB)
+INFO: processing silence_only_mac.caf...
+[+20196ms] "" confirmed=false conf=0.10
+[+40547ms] "" confirmed=false conf=0.10
+[+40627ms] "" confirmed=false conf=0.10
+INFO: done — 3 updates, peak RSS 66.3MB
+INFO: wrote /Users/antonglance/coding/TalkCoach/Spike/Spike17.1_ParakeetFeasibility/results/silence_only_mac.csv

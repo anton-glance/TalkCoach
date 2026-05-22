@@ -31,6 +31,32 @@ int  cwhisper_full(
     void                     * user_data
 );
 
+// ----- Verbatim inference parameters -----
+// Fields map 1:1 to whisper_full_params fields. Passing the library defaults reproduces
+// cwhisper_full behavior exactly: suppress_blank=true, suppress_nst=false,
+// no_speech_thold=0.6, temperature=0.0, temperature_inc=0.2, initial_prompt=NULL,
+// carry_initial_prompt=false.
+typedef struct {
+    bool        suppress_blank;       // whisper default true; false retains blank-slot tokens
+    bool        suppress_nst;         // whisper default false; non-speech token suppression
+    float       no_speech_thold;      // whisper default 0.6; raise toward 1.0 to keep more speech
+    float       temperature;          // whisper default 0.0; non-zero adds decoding variation
+    float       temperature_inc;      // whisper default 0.2; temperature fallback increment
+    const char *initial_prompt;       // whisper default NULL; priming text for the decoder
+    bool        carry_initial_prompt; // whisper default false; repeat prompt every decode window
+} CWhisperVerbatimParams;
+
+int  cwhisper_full_verbatim(
+    CWhisperContext              * ctx,
+    const float                  * samples,
+    int                            n_samples,
+    int                            n_threads,
+    const char                   * language,
+    const CWhisperVerbatimParams * verbatim,
+    CWhisperSegmentCallback        callback,
+    void                         * user_data
+);
+
 // ----- Segment accessors (call from segment callback or after cwhisper_full) -----
 int          cwhisper_n_segments   (CWhisperContext * ctx);
 const char * cwhisper_segment_text (CWhisperContext * ctx, int i_segment);

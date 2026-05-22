@@ -1,0 +1,20 @@
+INFO: loading Parakeet TDT v3 model...
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Preprocessor.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Encoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Decoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling JointDecisionv3.mlmodelc
+INFO: model progress: compiling 
+INFO: model loaded in 125ms — RSS 36.2MB (before-load: 7.5MB)
+INFO: processing distractors_mac.caf...
+[+18386ms] "Start speaking continuously and at around so 5 seconds start" confirmed=true conf=0.97
+[+36697ms] "the sound that can be so like a node and then and then conti" confirmed=true conf=0.91
+[+42344ms] "" confirmed=false conf=0.10
+INFO: done — 3 updates, peak RSS 79.8MB
+INFO: wrote /Users/antonglance/coding/TalkCoach/Spike/Spike17.1_ParakeetFeasibility/results/distractors_mac.csv

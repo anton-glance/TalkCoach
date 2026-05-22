@@ -1,0 +1,20 @@
+{
+  "audioDurationMs" : 49117.1,
+  "clip" : "alternating",
+  "confirmedUpdateCount" : 2,
+  "confirmedUpdateGapsMs" : [
+    18495.6,
+    18208.7
+  ],
+  "firstConfirmedEmissionMs" : 18495.6,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 18495.6,
+  "fixture" : "alternating_pods",
+  "mic" : "pods",
+  "sampleTexts" : [
+    "One two three one two three one two three one two three one two three one two three one two three one two three one two",
+    "three one",
+    ""
+  ],
+  "totalUpdateCount" : 3
+}

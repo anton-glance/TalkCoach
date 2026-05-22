@@ -1,0 +1,337 @@
+/* ----------------------------------------------------------------------------
+ * Locto · colors + type
+ *
+ * Two parallel palettes:
+ *   • Brand teal — logo, marketing, web, brand surfaces
+ *   • State inks — in-product pace feedback (slow / ideal / fast)
+ *
+ * One typeface: Inter. Weights 300 / 400 / 500 / 600. Tabular figures
+ * required for any numerical display.
+ * --------------------------------------------------------------------------*/
+
+/* ── Local font files ─────────────────────────────────────────────────
+ * Sources in `docs/design/fonts/` (not pushed to git). All weights ship
+ * as WOFF2 for the web; variable .ttf files are also available for
+ * native / Figma use. Path is resolved relative to this stylesheet so
+ * it works from preview/, ui_kits/*, and the project root.
+ * --------------------------------------------------------------------*/
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('fonts/inter/Inter-Light.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/inter/Inter-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/inter/Inter-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('fonts/inter/Inter-SemiBold.woff2') format('woff2');
+}
+
+/* Inter Display — optimised for display sizes (≥28px). Use on hero / H1. */
+@font-face {
+  font-family: 'Inter Display';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('fonts/inter-display/InterDisplay-Light.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter Display';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/inter-display/InterDisplay-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter Display';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('fonts/inter-display/InterDisplay-SemiBold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('fonts/jetbrains-mono/JetBrainsMono-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/jetbrains-mono/JetBrainsMono-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('fonts/jetbrains-mono/JetBrainsMono-SemiBold.woff2') format('woff2');
+}
+
+:root {
+  /* ── Brand · teal ────────────────────────────────────────────────────── */
+  --teal-50:  #E1F5EE;   /* light surface, halo */
+  --teal-100: #9FE1CB;
+  --teal-200: #5DCAA5;   /* ink on dark teal */
+  --teal-400: #1D9E75;
+  --teal-600: #0F6E56;   /* primary brand */
+  --teal-800: #085041;
+  --teal-900: #04342C;   /* ink on light surfaces */
+
+  --brand:        var(--teal-600);
+  --brand-dark:   var(--teal-800);
+  --brand-light:  var(--teal-50);
+  --brand-ink:    var(--teal-900);
+
+  /* ── State · slow (slate blue) ───────────────────────────────────────── */
+  --slow-bg-1: #AAC3DF;
+  --slow-bg-2: #80A5D5;
+  --slow-ink:  #1E3A5F;
+  --slow-stop: #6E94BD;   /* pace gradient stop */
+  --slow-base: rgb(86, 135, 197);  /* SwiftUI ColorStops.slowBase */
+  --slow-deep: rgb(29, 68, 118);
+
+  /* ── State · ideal (sage green) ──────────────────────────────────────── */
+  --ideal-bg-1: #ACD9C0;
+  --ideal-bg-2: #86C3A5;
+  --ideal-ink:  #1F4A3A;
+  --ideal-stop: #6BA079;
+  --ideal-base: rgb(108, 207, 160);
+  --ideal-deep: rgb(31, 90, 64);
+
+  /* ── State · fast (warm coral) ───────────────────────────────────────── */
+  --fast-bg-1: #E6AFA2;
+  --fast-bg-2: #DC8E7A;
+  --fast-ink:  #5C2C1F;
+  --fast-stop: #C58968;
+  --fast-base: rgb(216, 98, 90);
+  --fast-deep: rgb(110, 50, 32);
+
+  /* ── Neutrals ────────────────────────────────────────────────────────── */
+  --bg:           #FAF8F2;   /* page background — warm bone */
+  --surface:      #FFFFFF;   /* card surface */
+  --surface-2:    #F5F3EC;   /* recessed surface, code blocks */
+  --text-primary:   #1F2937;
+  --text-secondary: #5F5E5A;
+  --text-tertiary:  #9C9A93;
+
+  --border:         rgba(15, 110, 86, 0.12);
+  --border-strong:  rgba(15, 110, 86, 0.22);
+  --border-hairline: 0.5px solid var(--border);
+
+  /* ── Pace gradient (the visual rule for any pace viz) ────────────────── */
+  --gradient-pace: linear-gradient(90deg,
+    var(--slow-stop) 0%,
+    var(--ideal-stop) 50%,
+    var(--fast-stop) 100%);
+
+  /* ── State backgrounds (reference / dashboard / marketing — NOT widget)  *
+   *    The shipping macOS widget uses Liquid Glass tint over these inks,  *
+   *    not solid gradients. These remain valid for web + reference UI.    */
+  --gradient-slow:  linear-gradient(160deg, var(--slow-bg-1)  0%, var(--slow-bg-2)  100%);
+  --gradient-ideal: linear-gradient(160deg, var(--ideal-bg-1) 0%, var(--ideal-bg-2) 100%);
+  --gradient-fast:  linear-gradient(160deg, var(--fast-bg-1)  0%, var(--fast-bg-2)  100%);
+
+  /* ── Spacing · 4pt base unit ─────────────────────────────────────────── */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ── Radii ───────────────────────────────────────────────────────────── */
+  --radius-sm:   6px;   /* small chips, menu-bar pill */
+  --radius-md:   8px;   /* swatches, inputs */
+  --radius-lg:   12px;  /* small cards, banners */
+  --radius-xl:   16px;  /* default card */
+  --radius-2xl:  24px;  /* reference widget (320pt) */
+  --radius-3xl:  32px;  /* shipping widget (144pt) */
+  --radius-pill: 999px;
+
+  /* ── Shadows · used sparingly. Only floating panel + hover lift. ─────── */
+  --shadow-none: none;
+  --shadow-widget:        0 8px 28px rgba(0, 0, 0, 0.18);
+  --shadow-widget-hover:  0 14px 42px rgba(0, 0, 0, 0.26);
+
+  /* ── Motion ──────────────────────────────────────────────────────────── */
+  --ease-in-out: cubic-bezier(0.42, 0, 0.58, 1);
+  --ease-out:    cubic-bezier(0, 0, 0.2, 1);
+  --dur-fast:    200ms;
+  --dur-base:    350ms;
+  --dur-slow:    600ms;
+
+  /* ── Type · ramp ─────────────────────────────────────────────────────── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  --fs-hero:     88px;   /* hero number — wpm display */
+  --fs-h1:       40px;
+  --fs-h2:       24px;
+  --fs-h3:       19px;
+  --fs-body:     15px;
+  --fs-caption:  13px;
+  --fs-tab:      11px;   /* tabular label, uppercase */
+  --fs-mono:     12px;
+
+  --fw-light:   300;
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semibold: 600;
+
+  --tracking-hero: -3px;
+  --tracking-h1:   -1.4px;
+  --tracking-h2:   -0.6px;
+  --tracking-body: 0;
+  --tracking-tab:  0.12em;
+}
+
+/* ----------------------------------------------------------------------------
+ * Base
+ * --------------------------------------------------------------------------*/
+
+html, body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-regular);
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Inter ss01 + cv11 are on by default. */
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* ----------------------------------------------------------------------------
+ * Semantic type roles
+ *   Use these on actual elements; numerical tokens above are the source.
+ * --------------------------------------------------------------------------*/
+
+.t-hero, .hero-num {
+  font-family: var(--font-sans);
+  font-size: var(--fs-hero);
+  font-weight: var(--fw-light);
+  letter-spacing: var(--tracking-hero);
+  line-height: 1;
+  font-feature-settings: 'tnum', 'cv11', 'ss01';
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+h1, .t-h1 {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-h1);
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+h2, .t-h2 {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-h2);
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+h3, .t-h3 {
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-medium);
+  letter-spacing: -0.4px;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+
+p, .t-body {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-regular);
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.t-caption {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Uppercase tabular label — section nums, state strings, tab labels */
+.t-tab {
+  font-size: var(--fs-tab);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-tab);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* Monospaced specs — hex codes, dimensions, file paths */
+code, .spec, .t-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-feature-settings: 'tnum';
+  color: var(--text-secondary);
+  letter-spacing: 0;
+}
+
+/* Tabular numerals helper — apply on any element showing a number */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* ----------------------------------------------------------------------------
+ * Surfaces
+ * --------------------------------------------------------------------------*/
+
+.surface-card {
+  background: var(--surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-xl);
+  padding: var(--space-8);
+}
+
+.surface-recessed {
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+}
+
+/* ----------------------------------------------------------------------------
+ * Reduced motion — honor system preference globally
+ * --------------------------------------------------------------------------*/
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

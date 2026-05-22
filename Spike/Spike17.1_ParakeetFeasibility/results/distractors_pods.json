@@ -1,0 +1,20 @@
+{
+  "audioDurationMs" : 49743.5,
+  "clip" : "distractors",
+  "confirmedUpdateCount" : 2,
+  "confirmedUpdateGapsMs" : [
+    18424.5,
+    18234.7
+  ],
+  "firstConfirmedEmissionMs" : 18424.5,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 18424.5,
+  "fixture" : "distractors_pods",
+  "mic" : "pods",
+  "sampleTexts" : [
+    "Press records, stand still, don't talk and just uh like don't breathe near the mic and so for 30 seconds and uh so type rapidly",
+    "also like making the notification sound and uh",
+    "."
+  ],
+  "totalUpdateCount" : 3
+}

@@ -1,0 +1,115 @@
+{
+  "aggregateMedianFirstUpdateMs" : 18424.5,
+  "aggregateP95GapMs" : 20761.3,
+  "bootstrapModelLoadSuccess" : true,
+  "bootstrapPeakRSSMB" : 78.9375,
+  "criteria" : [
+    {
+      "budget" : "clean build, zero errors",
+      "disposition" : "PASS",
+      "id" : 1,
+      "measured" : "build succeeded (bootstrap.json present)",
+      "name" : "Build\/install",
+      "notes" : ""
+    },
+    {
+      "budget" : "pipeline returned, no throw",
+      "disposition" : "PASS",
+      "id" : 2,
+      "measured" : "loaded in 119ms",
+      "name" : "Model load",
+      "notes" : ""
+    },
+    {
+      "budget" : "at least one update emitted before audio feed completes",
+      "disposition" : "PASS",
+      "id" : 3,
+      "measured" : "all 9 speech clips emitted first update before audio end",
+      "name" : "Streaming behavior",
+      "notes" : ""
+    },
+    {
+      "budget" : "≤ 200ms",
+      "disposition" : "FAIL",
+      "id" : 4,
+      "measured" : "18424ms median across 9 clips",
+      "name" : "First-update latency median ≤ 200ms",
+      "notes" : "Time from session start (first audio buffer fed) to first update emission"
+    },
+    {
+      "budget" : "≤ 400ms",
+      "disposition" : "FAIL",
+      "id" : 5,
+      "measured" : "20761ms p95 across 21 gaps",
+      "name" : "Inter-update p95 ≤ 400ms",
+      "notes" : "Gap between consecutive isConfirmed=true updates; drives widget refresh cadence"
+    },
+    {
+      "budget" : "zero hallucination-pattern matches",
+      "disposition" : "PASS",
+      "id" : 6,
+      "measured" : "0 matches across all fixtures",
+      "name" : "No catastrophic hallucinations",
+      "notes" : ""
+    },
+    {
+      "budget" : "0 updates on silence_only clips (or 1 empty end-of-stream token)",
+      "disposition" : "PASS",
+      "id" : 7,
+      "measured" : "silence_only clips produced 0–1 non-empty updates",
+      "name" : "Silence handling",
+      "notes" : ""
+    },
+    {
+      "budget" : "≥ 90%",
+      "disposition" : "FAIL",
+      "id" : 8,
+      "measured" : "2\/6 windows detected (33%)",
+      "name" : "VAD heuristic accuracy ≥ 90%",
+      "notes" : "Heuristic: no update for >300ms → silence. Ground truth: 3 silence windows per clip."
+    },
+    {
+      "budget" : "confidence (0.0-1.0) populated ≥95% of updates; isConfirmed present",
+      "disposition" : "PASS",
+      "id" : 9,
+      "measured" : "34\/34 updates have confidence; median conf=0.94; 21 confirmed, 13 unconfirmed",
+      "name" : "Confidence score + isConfirmed accessible",
+      "notes" : "FluidAudio 0.14.7 exposes SlidingWindowTranscriptionUpdate.confidence: Float (0-1). Anton's Q2\/Q3 answer that 'no per-token confidence exists' was based on TiltTalk's wrapper abstraction, not FluidAudio's raw API. Actual API has confidence."
+    },
+    {
+      "budget" : "≥ 1 update per clip; recognisable speech in first 2 updates",
+      "disposition" : "PASS",
+      "id" : 10,
+      "measured" : "cafe_noise_pods: 3 updates — sample: \"Play confine noise, YouTube click from y\"; \"YouTube clip from the iPhone to another \" | cafe_noise_mac: 3 updates — sample: \"Play cafe noise YouTube clip from your p\"; \"conversational but low volume for 30 sec\"",
+      "name" : "Cafe noise resilience",
+      "notes" : "Qualitative spot-check; WER not computed at spike scope."
+    },
+    {
+      "budget" : "≤ 200 MB resident",
+      "disposition" : "PASS",
+      "id" : 11,
+      "measured" : "78.9 MB peak RSS",
+      "name" : "Memory footprint ≤ 200 MB",
+      "notes" : "TiltTalk measured 116 MB on iOS. macOS baseline may differ."
+    },
+    {
+      "budget" : "incremental updates during audio (not batched at end)",
+      "disposition" : "PASS",
+      "id" : 12,
+      "measured" : "4 updates from real_world_test; first 10s: 0 updates",
+      "name" : "Real-world cross-validation",
+      "notes" : "Timeline (first 10s):\n  "
+    }
+  ],
+  "generatedAt" : "2026-05-20T19:00:20Z",
+  "v7NativeVADAvailable" : false,
+  "v8NativeVADExposedViaVADSubmodule" : true,
+  "v9ConfidenceAvailable" : true,
+  "v9IsConfirmedAvailable" : true,
+  "verdict" : "FAIL",
+  "verdictReasons" : [
+    "C4 First-update latency median ≤ 200ms: FAIL — 18424ms median across 9 clips",
+    "C5 Inter-update p95 ≤ 400ms: FAIL — 20761ms p95 across 21 gaps",
+    "C8 VAD heuristic accuracy ≥ 90%: FAIL — 2\/6 windows detected (33%)"
+  ]
+}

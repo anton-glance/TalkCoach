@@ -1,0 +1,21 @@
+{
+  "audioDurationMs" : 49024,
+  "clip" : "alternating",
+  "confirmedUpdateCount" : 3,
+  "confirmedUpdateGapsMs" : [
+    18407.5,
+    18141.8,
+    11974.7
+  ],
+  "firstConfirmedEmissionMs" : 18407.5,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 18407.5,
+  "fixture" : "alternating_mac",
+  "mic" : "mac",
+  "sampleTexts" : [
+    "One two three one two three one two three one two three one two three one two three one two three one two three one",
+    "two three one two three one",
+    "two three"
+  ],
+  "totalUpdateCount" : 3
+}

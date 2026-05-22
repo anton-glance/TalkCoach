@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 280px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div class="label" style="margin-bottom:12px;">Settings · standalone AppKit window · 520 × 600 pt</div>
+<div style="background:var(--surface);border:0.5px solid var(--border-strong);border-radius:10px;overflow:hidden;width:520px;max-width:100%;">
+  <div style="height:32px;background:var(--surface-2);border-bottom:0.5px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:6px;">
+    <div style="width:11px;height:11px;border-radius:50%;background:#FF5F57;"></div>
+    <div style="width:11px;height:11px;border-radius:50%;background:#FEBC2E;"></div>
+    <div style="width:11px;height:11px;border-radius:50%;background:#28C840;"></div>
+    <div style="flex:1;text-align:center;font-size:12px;font-weight:500;color:var(--text-primary);">Locto Settings</div>
+  </div>
+  <div style="padding:24px;">
+    <div style="font-size:11px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;">Languages</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;">
+      <span style="padding:5px 10px;background:var(--brand);color:#fff;border-radius:14px;font-size:12px;">English (US) ×</span>
+      <span style="padding:5px 10px;background:var(--surface-2);border:0.5px solid var(--border);color:var(--text-primary);border-radius:14px;font-size:12px;">Add language…</span>
+    </div>
+    <div style="font-size:11px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;">Speaking pace</div>
+    <div style="font-size:13px;color:var(--text-secondary);">Default band: <span class="mono" style="font-size:12px;color:var(--text-primary);">130–170 wpm</span></div>
+  </div>
+</div>
+</div></body></html>

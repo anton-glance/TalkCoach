@@ -35,7 +35,6 @@ final class FloatingPanelController {
     private var stateSubscription: AnyCancellable?
     private var tokenArrivalSubscription: AnyCancellable?
     private var engineReadySubscription: AnyCancellable?
-    private var tokenSilenceSubscription: AnyCancellable?
     private var voiceInactiveSubscription: AnyCancellable?
     private var recoverySubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
@@ -111,13 +110,6 @@ final class FloatingPanelController {
                 self.handleEngineReady()
             }
 
-        tokenSilenceSubscription = sessionCoordinator.$isInTokenSilence
-            .dropFirst()
-            .sink { [weak self] isSilent in
-                guard let self, isSilent else { return }
-                self.setActivityState(.waiting, reason: "token-silence")
-            }
-
         voiceInactiveSubscription = sessionCoordinator.$isVoiceInactive
             .dropFirst()
             .sink { [weak self] isInactive in
@@ -145,7 +137,6 @@ final class FloatingPanelController {
         stateSubscription = nil
         tokenArrivalSubscription = nil
         engineReadySubscription = nil
-        tokenSilenceSubscription = nil
         voiceInactiveSubscription = nil
         recoverySubscription = nil
         if let observer = moveObserver {

@@ -1,0 +1,83 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../tokens.css"><style>
+html,body{background:transparent;margin:0;}
+.card{width:700px;padding:28px;background:var(--surface);border:0.5px solid var(--border);border-radius:16px;box-sizing:border-box;font-family:'Inter Display',Inter,var(--font-sans);color:var(--text-primary);}
+.mono{font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);letter-spacing:0;}
+.dot{display:inline-block;width:8px;height:8px;background:var(--brand);border-radius:50%;margin-right:8px;vertical-align:middle;}
+
+.stage{
+  flex-shrink:0;width:240px;height:240px;border-radius:24px;
+  display:flex;align-items:center;justify-content:center;
+  background:
+    radial-gradient(70% 60% at 20% 100%, rgba(56,189,248,0.55) 0%, transparent 60%),
+    radial-gradient(60% 50% at 80% 0%, rgba(245,158,11,0.45) 0%, transparent 60%),
+    linear-gradient(135deg, #312e81 0%, #6d28d9 45%, #be185d 100%);
+}
+
+.w{
+  position:relative;
+  width:200px;height:200px;border-radius:44px;
+  padding:16px 18px;box-sizing:border-box;
+  display:flex;flex-direction:column;justify-content:space-between;gap:8px;
+  background:linear-gradient(180deg, rgba(108,207,160,0.78) 0%, rgba(108,207,160,0.78) 32%, rgba(220,175,80,0.78) 68%, rgba(220,175,80,0.78) 100%);
+  border:0.5px solid rgba(255,255,255,0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.55),
+    inset 0 0 0 0.5px rgba(255,255,255,0.18),
+    inset 0 -0.5px 0 rgba(0,0,0,0.04),
+    0 18px 48px rgba(0,0,0,0.26),
+    0 5px 16px rgba(0,0,0,0.12),
+    0 1px 3px rgba(0,0,0,0.08);
+  font-family:'Inter Display',Inter,system-ui;
+}
+.w::before{
+  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:
+    radial-gradient(140% 60% at 50% -10%, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0) 55%),
+    radial-gradient(120% 50% at 50% 110%, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0) 60%);
+}
+
+.cluster{display:flex;flex-direction:column;align-items:center;gap:3px;}
+.numrow{display:inline-flex;align-items:baseline;}
+.num{font-size:36px;font-weight:300;letter-spacing:-1.8px;line-height:1;font-variant-numeric:tabular-nums;color:rgba(255,255,255,0.94);}
+.colon{display:inline-block;transform:translateY(-0.09em);}
+.unit{font-size:9px;font-weight:500;letter-spacing:0.04em;text-transform:uppercase;line-height:1;color:rgba(255,255,255,0.55);margin-left:1px;white-space:nowrap;}
+.unit-ghost{visibility:hidden;margin-right:1px;}
+.lbl{font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.68);line-height:1.1;}
+
+.bar-region{position:relative;width:100%;height:16px;}
+.bar{position:absolute;top:7px;left:0;right:0;height:2.5px;border-radius:1.25px;background:rgba(255,255,255,0.62);}
+.caret-down{position:absolute;top:0;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid rgba(255,255,255,0.82);transform:translateX(-50%);}
+.caret-up{position:absolute;top:10px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:6px solid rgba(255,255,255,0.82);transform:translateX(-50%);}
+</style></head><body><div class="card">
+<div style="display:flex;gap:32px;align-items:center;">
+  <div class="stage">
+    <div class="w">
+      <div class="cluster">
+        <div class="numrow"><span class="unit unit-ghost">wpm</span><span class="num">152</span><span class="unit">wpm</span></div>
+        <div class="lbl">Ideal</div>
+      </div>
+      <div class="bar-region">
+        <div class="caret-down" style="left:50%;"></div>
+        <div class="bar"></div>
+        <div class="caret-up" style="left:75%;"></div>
+      </div>
+      <div class="cluster">
+        <div class="num">1<span class="colon">:</span>08</div>
+        <div class="lbl">monologue</div>
+      </div>
+    </div>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text-secondary);line-height:1.55;">
+    <div><span class="dot"></span><b style="color:var(--text-primary);">Top zone · pace</b></div>
+    <div style="margin-left:16px;color:var(--text-tertiary);font-size:11px;">tint: blue → green → red, driven by WPM</div>
+    <div style="margin-left:16px;color:var(--text-tertiary);font-size:11px;">number + small <code>wpm</code> unit · state label · caret above bar</div>
+    <div style="margin-top:8px;"><span class="dot"></span><b style="color:var(--text-primary);">Single shared bar</b> · white at 0.62 alpha</div>
+    <div style="margin-left:16px;color:var(--text-tertiary);font-size:11px;">visual axis · WPM caret on top, mono caret below — both white</div>
+    <div style="margin-top:8px;"><span class="dot"></span><b style="color:var(--text-primary);">Bottom zone · monologue</b></div>
+    <div style="margin-left:16px;color:var(--text-tertiary);font-size:11px;">tint: green (0–60s) → gold (60–90s) → coral (90–120s)</div>
+    <div style="margin-left:16px;color:var(--text-tertiary);font-size:11px;">mono caret slides 0 → 100 % across 90 s · colon nudged up for optical center</div>
+    <div style="margin-left:16px;color:var(--text-tertiary);font-size:11px;">past 1:30 cluster pulses; past 2:00 pulse widens</div>
+    <div class="mono" style="margin-top:8px;">144 × 144 pt · r 32 · Liquid Glass · white content @ 0.94 / 0.68 / 0.55</div>
+  </div>
+</div>
+</div></body></html>

@@ -1,0 +1,4 @@
+update_index,emission_ms,gap_from_previous_ms,text,is_confirmed,confidence
+0,18424.5,18424.5,"Press records, stand still, don't talk and just uh like don't breathe near the mic and so for 30 seconds and uh so type rapidly",true,0.9471
+1,36659.2,18234.7,"also like making the notification sound and uh",true,0.9314
+2,49243.5,12584.3,".",false,0.2454

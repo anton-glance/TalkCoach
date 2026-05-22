@@ -1,0 +1,20 @@
+{
+  "audioDurationMs" : 47686.5,
+  "clip" : "quiet_speech",
+  "confirmedUpdateCount" : 2,
+  "confirmedUpdateGapsMs" : [
+    19586.4,
+    20534.1
+  ],
+  "firstConfirmedEmissionMs" : 19586.4,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 19586.4,
+  "fixture" : "quiet_speech_pods",
+  "mic" : "pods",
+  "sampleTexts" : [
+    "Continuously speaking at conversation but low volume for thirty seconds. Don't whisper, just speak softly. Test the noise floor margin and option B fallback. Behavior in option A is reduced.",
+    "speech one speech and assumes continuous. Record stopwatch timestamp for each translation. Example manifest row once and one set and",
+    ""
+  ],
+  "totalUpdateCount" : 3
+}

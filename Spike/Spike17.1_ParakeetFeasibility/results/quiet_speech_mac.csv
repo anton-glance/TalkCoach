@@ -1,0 +1,4 @@
+update_index,emission_ms,gap_from_previous_ms,text,is_confirmed,confidence
+0,21269.9,21269.9,"For each you record naturally in quick time, then stopwatch, the speech onset and a speech and transition on playback. Note the time. This becomes the manifesto for a CSV.",true,0.9400
+1,41798.0,20528.1,"Example Manifesto. Continuous speaking at conversational but low volume for 30 seconds. Don't whisper, just speak softly.",true,0.9376
+2,44584.6,2786.6,"",false,0.1000

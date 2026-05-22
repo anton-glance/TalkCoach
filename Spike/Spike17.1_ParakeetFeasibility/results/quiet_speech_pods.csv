@@ -1,0 +1,4 @@
+update_index,emission_ms,gap_from_previous_ms,text,is_confirmed,confidence
+0,19586.4,19586.4,"Continuously speaking at conversation but low volume for thirty seconds. Don't whisper, just speak softly. Test the noise floor margin and option B fallback. Behavior in option A is reduced.",true,0.9637
+1,40120.6,20534.1,"speech one speech and assumes continuous. Record stopwatch timestamp for each translation. Example manifest row once and one set and",true,0.9164
+2,47186.5,7065.9,"",false,0.1000

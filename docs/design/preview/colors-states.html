@@ -1,0 +1,38 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 180px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div class="grid" style="grid-template-columns:1fr 1fr 1fr;gap:12px;">
+  <div style="height:130px;background:linear-gradient(160deg,#AAC3DF 0%,#80A5D5 100%);color:#1E3A5F;border-radius:14px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;">
+    <div><div style="font-size:10px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;">Too slow</div><div style="font-size:13px;font-weight:500;margin-top:2px;">Slate blue</div></div>
+    <div style="font-family:var(--font-mono);font-size:10px;line-height:1.7;">bg-1 · #AAC3DF<br>bg-2 · #80A5D5<br>ink &nbsp; · #1E3A5F</div>
+  </div>
+  <div style="height:130px;background:linear-gradient(160deg,#ACD9C0 0%,#86C3A5 100%);color:#1F4A3A;border-radius:14px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;">
+    <div><div style="font-size:10px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;">Ideal</div><div style="font-size:13px;font-weight:500;margin-top:2px;">Sage green</div></div>
+    <div style="font-family:var(--font-mono);font-size:10px;line-height:1.7;">bg-1 · #ACD9C0<br>bg-2 · #86C3A5<br>ink &nbsp; · #1F4A3A</div>
+  </div>
+  <div style="height:130px;background:linear-gradient(160deg,#E6AFA2 0%,#DC8E7A 100%);color:#5C2C1F;border-radius:14px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;">
+    <div><div style="font-size:10px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;">Too fast</div><div style="font-size:13px;font-weight:500;margin-top:2px;">Warm coral</div></div>
+    <div style="font-family:var(--font-mono);font-size:10px;line-height:1.7;">bg-1 · #E6AFA2<br>bg-2 · #DC8E7A<br>ink &nbsp; · #5C2C1F</div>
+  </div>
+</div>
+</div></body></html>

@@ -1,0 +1,20 @@
+{
+  "audioDurationMs" : 40241.7,
+  "clip" : "cafe_noise",
+  "confirmedUpdateCount" : 2,
+  "confirmedUpdateGapsMs" : [
+    18373.3,
+    18244.9
+  ],
+  "firstConfirmedEmissionMs" : 18373.3,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 18373.3,
+  "fixture" : "cafe_noise_pods",
+  "mic" : "pods",
+  "sampleTexts" : [
+    "Play confine noise, YouTube click from your iPhone or another laptop nearby. Speak normally for 30 seconds. Background noise should be loud enough to be obviously present, but not louder than your voice.",
+    "YouTube clip from the iPhone to another laptop nearby. Speak normally for 30 seconds. The ground noise should be loud enough to be obviously present but not louder than your voice.",
+    ""
+  ],
+  "totalUpdateCount" : 3
+}

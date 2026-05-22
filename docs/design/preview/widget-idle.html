@@ -1,0 +1,100 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../tokens.css"><style>
+html,body{background:transparent;margin:0;}
+.card{width:700px;padding:24px 28px;background:var(--surface);border:0.5px solid var(--border);border-radius:16px;box-sizing:border-box;font-family:'Inter Display',Inter,var(--font-sans);color:var(--text-primary);}
+.label{font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-tertiary);}
+.mono{font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);letter-spacing:0;}
+
+.stage{
+  display:flex;gap:24px;align-items:center;justify-content:center;
+  padding:30px 24px;border-radius:18px;
+  background:
+    radial-gradient(70% 60% at 20% 100%, rgba(56,189,248,0.45) 0%, transparent 60%),
+    radial-gradient(60% 50% at 80% 0%, rgba(245,158,11,0.35) 0%, transparent 60%),
+    linear-gradient(135deg, #312e81 0%, #6d28d9 45%, #be185d 100%);
+}
+
+.col{display:flex;flex-direction:column;align-items:center;gap:10px;}
+
+.w{
+  position:relative;
+  width:160px;height:160px;border-radius:36px;
+  padding:11px 15px;box-sizing:border-box;
+  display:flex;flex-direction:column;justify-content:space-between;gap:8px;
+  border:0.5px solid rgba(255,255,255,0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.55),
+    inset 0 0 0 0.5px rgba(255,255,255,0.18),
+    inset 0 -0.5px 0 rgba(0,0,0,0.04),
+    0 16px 44px rgba(0,0,0,0.22),
+    0 4px 14px rgba(0,0,0,0.10),
+    0 1px 2px rgba(0,0,0,0.06);
+  font-family:'Inter Display',Inter,system-ui;
+}
+.w::before{
+  content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:
+    radial-gradient(140% 60% at 50% -10%, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0) 55%),
+    radial-gradient(120% 50% at 50% 110%, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 60%);
+}
+
+.bg-active{background:linear-gradient(180deg, rgba(108,207,160,0.78) 0%, rgba(108,207,160,0.78) 32%, rgba(108,207,160,0.78) 68%, rgba(108,207,160,0.78) 100%);}
+
+.cluster{display:flex;flex-direction:column;align-items:center;gap:2px;}
+.numrow{display:inline-flex;align-items:baseline;}
+.num{font-size:26px;font-weight:300;letter-spacing:-1.3px;line-height:1;font-variant-numeric:tabular-nums;color:rgba(255,255,255,0.94);}
+.colon{display:inline-block;transform:translateY(-0.09em);}
+.unit{font-size:6.5px;font-weight:500;letter-spacing:0.04em;text-transform:uppercase;line-height:1;color:rgba(255,255,255,0.55);margin-left:1px;white-space:nowrap;}
+.unit-ghost{visibility:hidden;margin-right:1px;}
+.lbl{font-size:9px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.68);line-height:1.1;}
+
+.bar-region{position:relative;width:100%;height:14px;}
+.bar{position:absolute;top:6px;left:0;right:0;height:2px;border-radius:1px;background:rgba(255,255,255,0.62);}
+.caret-down{position:absolute;top:0;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid rgba(255,255,255,0.82);transform:translateX(-50%);}
+.caret-up{position:absolute;top:9px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid rgba(255,255,255,0.82);transform:translateX(-50%);}
+
+.arrow{font-size:24px;color:rgba(255,255,255,0.5);}
+</style></head><body><div class="card">
+<div class="label" style="margin-bottom:14px;">Idle · whole widget fades to 50 % over 700 ms · layout preserved</div>
+<div class="stage">
+
+  <div class="col">
+    <div class="w bg-active">
+      <div class="cluster">
+        <div class="numrow"><span class="unit unit-ghost">wpm</span><span class="num">152</span><span class="unit">wpm</span></div>
+        <div class="lbl">Ideal</div>
+      </div>
+      <div class="bar-region">
+        <div class="caret-down" style="left:50%;"></div>
+        <div class="bar"></div>
+        <div class="caret-up" style="left:50%;"></div>
+      </div>
+      <div class="cluster">
+        <div class="num">0<span class="colon">:</span>45</div>
+        <div class="lbl">monologue</div>
+      </div>
+    </div>
+    <div class="mono">Active · speaking</div>
+  </div>
+
+  <div class="arrow">→</div>
+
+  <div class="col">
+    <div class="w bg-active" style="opacity:0.5;">
+      <div class="cluster">
+        <div class="numrow"><span class="num">---</span></div>
+        <div class="lbl" style="visibility:hidden;">Ideal</div>
+      </div>
+      <div class="bar-region">
+        <div class="bar"></div>
+      </div>
+      <div class="cluster">
+        <div class="num">-<span class="colon">:</span>--</div>
+        <div class="lbl" style="visibility:hidden;">monologue</div>
+      </div>
+    </div>
+    <div class="mono">Idle · listening</div>
+  </div>
+
+</div>
+<div class="mono" style="margin-top:12px;text-align:center;">WPM → <code>---</code>, monologue → <code>-:--</code>, labels and carets hidden (layout reserved). Cross-fades back to colour on the next syllable.</div>
+</div></body></html>

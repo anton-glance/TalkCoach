@@ -72,6 +72,38 @@ int cwhisper_full(
     return whisper_full((struct whisper_context *)ctx, params, samples, n_samples);
 }
 
+int cwhisper_full_verbatim(
+    CWhisperContext              * ctx,
+    const float                  * samples,
+    int                            n_samples,
+    int                            n_threads,
+    const char                   * language,
+    const CWhisperVerbatimParams * verbatim,
+    CWhisperSegmentCallback        callback,
+    void                         * user_data
+) {
+    BridgeCallbackCtx bctx = { callback, user_data };
+    struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    params.language                       = language;
+    params.translate                      = false;
+    params.no_timestamps                  = false;
+    params.print_special                  = false;
+    params.print_realtime                 = false;
+    params.print_progress                 = false;
+    params.print_timestamps               = false;
+    params.n_threads                      = n_threads;
+    params.suppress_blank                 = verbatim->suppress_blank;
+    params.suppress_nst                   = verbatim->suppress_nst;
+    params.no_speech_thold                = verbatim->no_speech_thold;
+    params.temperature                    = verbatim->temperature;
+    params.temperature_inc                = verbatim->temperature_inc;
+    params.initial_prompt                 = verbatim->initial_prompt;
+    params.carry_initial_prompt           = verbatim->carry_initial_prompt;
+    params.new_segment_callback           = whisper_segment_bridge;
+    params.new_segment_callback_user_data = &bctx;
+    return whisper_full((struct whisper_context *)ctx, params, samples, n_samples);
+}
+
 // ----- Segment accessors -----
 
 int cwhisper_n_segments(CWhisperContext * ctx) {

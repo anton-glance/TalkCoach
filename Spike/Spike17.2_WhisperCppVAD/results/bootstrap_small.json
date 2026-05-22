@@ -1,0 +1,1 @@
+{"metalSystemInfo":"see loadModels output above","rssAfterFirstInferenceMB":814.09375,"warmupInferenceMs":47746.16599082947,"vadPath":"models\/ggml-silero-v5.1.2.bin","modelPath":"models\/ggml-small.bin","c4FirstTokenMs":668.7430143356323,"rssAfterLoadMB":678.078125,"sileroVadJitMs":335.01899242401123}

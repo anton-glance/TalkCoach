@@ -1,0 +1,20 @@
+INFO: loading Parakeet TDT v3 model...
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Preprocessor.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Encoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Decoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling JointDecisionv3.mlmodelc
+INFO: model progress: compiling 
+INFO: model loaded in 120ms — RSS 36.1MB (before-load: 7.5MB)
+INFO: processing quiet_speech_pods.caf...
+[+19586ms] "Continuously speaking at conversation but low volume for thi" confirmed=true conf=0.96
+[+40120ms] "speech one speech and assumes continuous. Record stopwatch t" confirmed=true conf=0.92
+[+47186ms] "" confirmed=false conf=0.10
+INFO: done — 3 updates, peak RSS 69.4MB
+INFO: wrote /Users/antonglance/coding/TalkCoach/Spike/Spike17.1_ParakeetFeasibility/results/quiet_speech_pods.csv

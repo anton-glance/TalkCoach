@@ -1,0 +1,32 @@
+{
+  "calibrationFallbackUsed" : false,
+  "clip" : "silence_only_pods",
+  "distractorIntervals" : [
+
+  ],
+  "distractorSilenceFalsePositive_ms" : 0,
+  "effectiveThresholdDB_at_calibration" : -49.2,
+  "endLatencies_ms" : [
+
+  ],
+  "endLatency_max_ms" : 0,
+  "endLatency_median_ms" : 0,
+  "endLatency_p95_ms" : 0,
+  "mic" : "pods",
+  "onsetLatencies_ms" : [
+
+  ],
+  "onsetLatency_max_ms" : 0,
+  "onsetLatency_median_ms" : 0,
+  "onsetLatency_p95_ms" : 0,
+  "silenceIntervals" : [
+    {
+      "end_ms" : 30697,
+      "falsePositiveDuration_ms" : 120,
+      "start_ms" : 0
+    }
+  ],
+  "speechIntervals" : [
+
+  ]
+}

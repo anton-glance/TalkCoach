@@ -1,0 +1,18 @@
+{
+  "audioDurationMs" : 41127.7,
+  "clip" : "silence_only",
+  "confirmedUpdateCount" : 0,
+  "confirmedUpdateGapsMs" : [
+
+  ],
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 20196.1,
+  "fixture" : "silence_only_mac",
+  "mic" : "mac",
+  "sampleTexts" : [
+    "",
+    "",
+    ""
+  ],
+  "totalUpdateCount" : 3
+}

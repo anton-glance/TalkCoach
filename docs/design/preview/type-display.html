@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 200px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div style="display:grid;grid-template-columns:120px 1fr;gap:20px;align-items:baseline;padding-bottom:14px;border-bottom:0.5px solid var(--border);">
+  <div class="mono" style="line-height:1.6;"><div class="label" style="color:var(--text-primary);margin-bottom:4px;">Hero</div>88·96·160px<br>w 300 · -3px<br>tnum</div>
+  <div style="font-size:80px;font-weight:300;letter-spacing:-3px;line-height:1;font-variant-numeric:tabular-nums;">152</div>
+</div>
+<div style="display:grid;grid-template-columns:120px 1fr;gap:20px;align-items:baseline;padding-top:14px;">
+  <div class="mono" style="line-height:1.6;"><div class="label" style="color:var(--text-primary);margin-bottom:4px;">Heading 1</div>40px<br>w 500 · -1.4px</div>
+  <div style="font-size:36px;font-weight:500;letter-spacing:-1.4px;line-height:1.1;">Speak in your sweet spot</div>
+</div>
+</div></body></html>

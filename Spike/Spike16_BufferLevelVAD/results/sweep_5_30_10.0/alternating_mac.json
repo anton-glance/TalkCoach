@@ -1,0 +1,63 @@
+{
+  "calibrationFallbackUsed" : false,
+  "clip" : "alternating_mac",
+  "distractorIntervals" : [
+
+  ],
+  "distractorSilenceFalsePositive_ms" : 0,
+  "effectiveThresholdDB_at_calibration" : -49.1,
+  "endLatencies_ms" : [
+    710,
+    490,
+    520
+  ],
+  "endLatency_max_ms" : 710,
+  "endLatency_median_ms" : 520,
+  "endLatency_p95_ms" : 520,
+  "mic" : "mac",
+  "onsetLatencies_ms" : [
+    500,
+    150,
+    -120
+  ],
+  "onsetLatency_max_ms" : 500,
+  "onsetLatency_median_ms" : 150,
+  "onsetLatency_p95_ms" : 150,
+  "silenceIntervals" : [
+    {
+      "end_ms" : 10000,
+      "falsePositiveDuration_ms" : 2930,
+      "start_ms" : 5000
+    },
+    {
+      "end_ms" : 20000,
+      "falsePositiveDuration_ms" : 1220,
+      "start_ms" : 15000
+    },
+    {
+      "end_ms" : 39828,
+      "falsePositiveDuration_ms" : 6230,
+      "start_ms" : 25000
+    }
+  ],
+  "speechIntervals" : [
+    {
+      "end_ms" : 5000,
+      "falseNegativeDuration_ms" : 800,
+      "falseNegativeRate_pct" : 16,
+      "start_ms" : 0
+    },
+    {
+      "end_ms" : 15000,
+      "falseNegativeDuration_ms" : 0,
+      "falseNegativeRate_pct" : 0,
+      "start_ms" : 10000
+    },
+    {
+      "end_ms" : 25000,
+      "falseNegativeDuration_ms" : 0,
+      "falseNegativeRate_pct" : 0,
+      "start_ms" : 20000
+    }
+  ]
+}

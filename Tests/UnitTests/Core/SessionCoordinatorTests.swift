@@ -29,32 +29,6 @@ private final class VadStubBackend: TranscriberBackend, @unchecked Sendable {
     func yieldVad(_ hasVoice: Bool) { vadCont.yield(hasVoice) }
 }
 
-// MARK: - FakeTokenSilenceScheduler
-
-private final class FakeTokenSilenceScheduler: HideScheduler, @unchecked Sendable {
-    nonisolated(unsafe) private(set) var scheduledAction: (@MainActor @Sendable () -> Void)?
-    nonisolated(unsafe) private(set) var scheduledDelay: TimeInterval?
-    nonisolated(unsafe) private(set) var cancelCallCount = 0
-
-    @MainActor func schedule(
-        delay: TimeInterval, action: @escaping @MainActor @Sendable () -> Void
-    ) -> HideSchedulerToken {
-        scheduledDelay = delay
-        scheduledAction = action
-        return HideSchedulerToken()
-    }
-
-    @MainActor func cancel(_ token: HideSchedulerToken) {
-        cancelCallCount += 1
-        scheduledAction = nil
-    }
-
-    @MainActor func fire() {
-        scheduledAction?()
-        scheduledAction = nil
-    }
-}
-
 // MARK: - Fake Provider (duplicated from MicMonitorTests — Convention 6: drive real MicMonitor)
 
 private final class FakeCoreAudioDeviceProvider: CoreAudioDeviceProvider, @unchecked Sendable {
@@ -113,8 +87,7 @@ final class SessionCoordinatorTests: XCTestCase {
     private func makeSUT(
         coachingEnabled: Bool = true,
         isRunning: Bool = false,
-        defaultDeviceID: AudioObjectID? = 42,
-        tokenSilenceScheduler: (any HideScheduler)? = nil
+        defaultDeviceID: AudioObjectID? = 42
     ) {
         defaults = UserDefaults(suiteName: "SessionCoordinatorTests.\(name)")!
         defaults.removePersistentDomain(forName: "SessionCoordinatorTests.\(name)")
@@ -126,8 +99,7 @@ final class SessionCoordinatorTests: XCTestCase {
         let micMonitor = MicMonitor(provider: fake)
         sut = SessionCoordinator(
             micMonitor: micMonitor,
-            settingsStore: settingsStore,
-            tokenSilenceScheduler: tokenSilenceScheduler ?? DispatchHideScheduler()
+            settingsStore: settingsStore
         )
     }
 
@@ -392,11 +364,10 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertNotEqual(sut.state, .idle, "Session should start after coaching re-enabled")
     }
 
-    // MARK: - Token silence detection (AC-fix6)
+    // MARK: - Engine-ready behavior
 
     func testEngineReady_PublishesLastEngineReadyAt() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
+        makeSUT()
         let yieldingBackend = YieldingStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
@@ -418,8 +389,7 @@ final class SessionCoordinatorTests: XCTestCase {
     }
 
     func testEngineReadyTask_DoesNotBlockRelayTask_WhenEngineReadyNeverFires() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
+        makeSUT()
         let neverReadyBackend = NeverReadyStubBackend()
         let engineProvider = ProbeTestEngineProvider()
         let pipeline = AudioPipeline(provider: engineProvider)
@@ -448,142 +418,10 @@ final class SessionCoordinatorTests: XCTestCase {
         await fulfillment(of: [tokenExp], timeout: 2.0)
     }
 
-    func testRelayTokens_ArmsTokenSilenceScheduler() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingBackend = YieldingStubBackend()
-        let engineProvider = ProbeTestEngineProvider()
-        let pipeline = AudioPipeline(provider: engineProvider)
-        let fakeLD = FakeLanguageDetector()
-        let consumer = FakeTokenConsumer()
-        sut.wiring = SessionWiring(
-            audioPipeline: pipeline,
-            languageDetector: fakeLD,
-            backend: yieldingBackend
-        )
-        sut.addConsumer(consumer)
-
-        sut.start()
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        let tokenExp = XCTestExpectation(description: "token consumed")
-        consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingBackend.yield(
-            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
-        )
-        await fulfillment(of: [tokenExp], timeout: 2.0)
-
-        XCTAssertEqual(silenceScheduler.scheduledDelay, 2.0,
-                       "Token arrival must arm tokenSilenceScheduler with 2.0s delay")
-    }
-
-    func testTokenSilence_SetsIsInTokenSilenceTrue() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingBackend = YieldingStubBackend()
-        let engineProvider = ProbeTestEngineProvider()
-        let pipeline = AudioPipeline(provider: engineProvider)
-        let fakeLD = FakeLanguageDetector()
-        let consumer = FakeTokenConsumer()
-        sut.wiring = SessionWiring(
-            audioPipeline: pipeline,
-            languageDetector: fakeLD,
-            backend: yieldingBackend
-        )
-        sut.addConsumer(consumer)
-
-        sut.start()
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        let tokenExp = XCTestExpectation(description: "token consumed")
-        consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingBackend.yield(
-            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
-        )
-        await fulfillment(of: [tokenExp], timeout: 2.0)
-
-        // Fire the 2s silence timer
-        silenceScheduler.fire()
-
-        XCTAssertTrue(sut.isInTokenSilence,
-                      "Firing the 2s token-silence timer must set isInTokenSilence=true")
-    }
-
-    func testTokenArrival_ClearsIsInTokenSilence() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingBackend = YieldingStubBackend()
-        let engineProvider = ProbeTestEngineProvider()
-        let pipeline = AudioPipeline(provider: engineProvider)
-        let fakeLD = FakeLanguageDetector()
-        let consumer = FakeTokenConsumer()
-        sut.wiring = SessionWiring(
-            audioPipeline: pipeline,
-            languageDetector: fakeLD,
-            backend: yieldingBackend
-        )
-        sut.addConsumer(consumer)
-
-        sut.start()
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        // Force isInTokenSilence = true
-        sut.isInTokenSilence = true
-        XCTAssertTrue(sut.isInTokenSilence)
-
-        let tokenExp = XCTestExpectation(description: "token consumed after silence")
-        consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingBackend.yield(
-            TranscribedToken(token: "world", startTime: 1.0, endTime: 1.4, isFinal: true)
-        )
-        await fulfillment(of: [tokenExp], timeout: 2.0)
-
-        XCTAssertFalse(sut.isInTokenSilence,
-                       "Token arrival must clear isInTokenSilence back to false")
-    }
-
-    func testEndSession_CancelsTokenSilenceToken() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
-        let yieldingBackend = YieldingStubBackend()
-        let engineProvider = ProbeTestEngineProvider()
-        let pipeline = AudioPipeline(provider: engineProvider)
-        let fakeLD = FakeLanguageDetector()
-        let consumer = FakeTokenConsumer()
-        sut.wiring = SessionWiring(
-            audioPipeline: pipeline,
-            languageDetector: fakeLD,
-            backend: yieldingBackend
-        )
-        sut.addConsumer(consumer)
-
-        sut.start()
-        sut.micActivated()
-        if let task = sut.sessionWiringTask { await task.value }
-
-        let tokenExp = XCTestExpectation(description: "token consumed")
-        consumer.onReceiveToken = { tokenExp.fulfill() }
-        yieldingBackend.yield(
-            TranscribedToken(token: "hello", startTime: 0, endTime: 0.4, isFinal: true)
-        )
-        await fulfillment(of: [tokenExp], timeout: 2.0)
-        XCTAssertNotNil(silenceScheduler.scheduledAction, "Silence timer must be armed after token")
-
-        sut.micDeactivated()
-        await Task.yield()
-
-        XCTAssertGreaterThan(silenceScheduler.cancelCallCount, 0,
-                             "Session end must cancel the token-silence timer")
-    }
-
     // MARK: - VAD debounce (AC-4.5)
 
     func testDebounceVadFalseFor200msSetsIsVoiceInactive() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
+        makeSUT()
         let vadBackend = VadStubBackend()
         sut.wiring = SessionWiring(
             audioPipeline: AudioPipeline(provider: ProbeTestEngineProvider()),
@@ -617,8 +455,7 @@ final class SessionCoordinatorTests: XCTestCase {
     }
 
     func testVadTrueImmediatelyClearsIsVoiceInactive() async throws {
-        let silenceScheduler = FakeTokenSilenceScheduler()
-        makeSUT(tokenSilenceScheduler: silenceScheduler)
+        makeSUT()
         let vadBackend = VadStubBackend()
         sut.wiring = SessionWiring(
             audioPipeline: AudioPipeline(provider: ProbeTestEngineProvider()),

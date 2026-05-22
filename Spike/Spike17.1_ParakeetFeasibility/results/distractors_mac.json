@@ -1,0 +1,20 @@
+{
+  "audioDurationMs" : 42844,
+  "clip" : "distractors",
+  "confirmedUpdateCount" : 2,
+  "confirmedUpdateGapsMs" : [
+    18386.1,
+    18311.5
+  ],
+  "firstConfirmedEmissionMs" : 18386.1,
+  "firstUpdateBeforeAudioEnd" : true,
+  "firstUpdateEmissionMs" : 18386.1,
+  "fixture" : "distractors_mac",
+  "mic" : "mac",
+  "sampleTexts" : [
+    "Start speaking continuously and at around so 5 seconds start typing rapidly on the keyboard while still speaking and then around the 12 seconds make some noise and",
+    "the sound that can be so like a node and then and then continue.",
+    ""
+  ],
+  "totalUpdateCount" : 3
+}

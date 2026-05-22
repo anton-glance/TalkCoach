@@ -1,42 +1,87 @@
-# docs/design — Locto visual + brand reference
+# Locto · Design System
 
-This folder is the visual and brand reference for the Locto v1 widget and Settings surfaces. Adopted Session 018 (see `01_PROJECT_JOURNAL.md`).
+> An ambient AI speech coach for Mac. *Speak in your sweet spot.*
 
-## Files
+A complete, self-contained design system for **Locto** — a calm, peripheral-vision macOS app that lives in the menu bar and shows a tiny floating widget while your mic is active. This package contains everything a designer, agent, or engineer needs to build for Locto: brand assets, fonts, design tokens, focused guides, and a canonical UI component kit.
 
-- **`01-design-spec.md`** — behavior, IA, motion, accessibility, edge-case treatments. Implementation-facing companion to the brand guidelines HTML. Read this when implementing the widget, Settings, or any user-facing surface.
-- **`02-brand-guidelines.html`** — visual identity (colors, type, components in isolation). Open in any browser. Visual source of truth for hex values, type ramp, and brand component specs.
-- **Brand SVG assets** — `locto-mark.svg`, `locto-menubar.svg`, `locto-app-icon.svg`, `locto-wordmark.svg`, `locto-lockup.svg`. Vector sources; export to PNG/PDF/ICNS as needed for production use.
+The brand is **Locto**; the codebase, Xcode scheme, and bundle id (`com.talkcoach.app`) keep the working name **TalkCoach** for v1. Any user-visible string says Locto.
 
-## Naming
+---
 
-The user-facing product name is **Locto**. The repository, Xcode scheme, and bundle identifier (`com.talkcoach.app`) retain the working name `TalkCoach` for v1; renaming the codebase is deferred until after v1 launch. Any user-visible string (App name in About, Info.plist usage descriptions, menu items, Settings titles, marketing copy) uses Locto. Any internal reference (build settings, source code identifiers, signing identity) uses TalkCoach.
+## Repository map
 
-## Precedence (locked Session 018)
+```
+locto-design-system/
+├── README.md                 ← this file (index + how to use)
+├── SKILL.md                  ← agent skill manifest
+├── tokens.css                ← all design tokens + @font-face
+│
+├── brand/                    ← brand identity assets
+│   ├── README.md
+│   ├── logo/                 ← mark, wordmark, lockup (SVG)
+│   └── icons/                ← app icon, menu-bar template
+│
+├── fonts/                    ← brand typefaces
+│   ├── README.md
+│   ├── inter/                ← Inter (UI body) — WOFF2 + variable + desktop OTF
+│   ├── inter-display/        ← Inter Display (headlines + hero numbers)
+│   └── jetbrains-mono/       ← JetBrains Mono (docs/code only)
+│
+├── guides/                   ← focused topical guides
+│   ├── README.md             ← guide index
+│   ├── 01-overview.md        ← what Locto is, scope, what to read next
+│   ├── 02-voice-and-copy.md  ← voice, tone, casing, copy patterns
+│   ├── 03-color-and-type.md  ← palette + type system (refs tokens.css)
+│   ├── 04-spacing-radii-motion.md
+│   ├── 05-widget-design.md   ← the canonical Liquid Glass widget spec
+│   └── 06-iconography.md     ← icon rules + substitutions
+│
+├── components/               ← shippable UI components
+│   └── widget/
+│       ├── README.md         ← widget reference
+│       ├── Widget.jsx        ← the 144 pt floating tile
+│       ├── tokens.js         ← paceColors + monoColors helpers
+│       └── demo.html         ← Liquid Glass demo on a draggable macOS scene
+│
+└── preview/                  ← Design System tab reference cards (one per concept)
+```
 
-When this folder's content conflicts with another project doc, resolve as follows:
+---
 
-1. `02_PRODUCT_SPEC.md` wins on **content scope** — what features ship in v1, what's deferred. This folder includes Locto reference components for fillers, coach notes, dashboard tabs, etc.; those are deferred to v2.0 per the spec and are NOT in v1 scope. Each is annotated in `02-brand-guidelines.html` with a "deferred to v2.0" banner.
-2. `03_ARCHITECTURE.md` wins on **technical architecture** — modules, data flow, persistence, transcription. This folder may reference architectural choices (e.g., SQLite/GRDB) carried over from the source Locto package; those are overridden by our Architecture Y (SwiftData, Apple SpeechAnalyzer + Parakeet via Core ML).
-3. `01-design-spec.md` and `02-brand-guidelines.html` win on **visual and brand specifics** — palette ink colors, type ramp, motion timings, voice/tone for user-facing copy, brand component visual rules.
+## Quickstart by goal
 
-## What's superseded
+| What you want to do | Read this |
+|---|---|
+| Understand Locto's brand and scope | `guides/01-overview.md` |
+| Write any user-facing copy | `guides/02-voice-and-copy.md` |
+| Pick the right colors / fonts | `guides/03-color-and-type.md` + `tokens.css` |
+| Get spacing, radii, motion right | `guides/04-spacing-radii-motion.md` |
+| Build the widget (or anything that uses it) | `guides/05-widget-design.md` + `components/widget/` |
+| Use icons | `guides/06-iconography.md` |
+| Pull brand assets | `brand/README.md` |
+| Wire up the fonts | `fonts/README.md` |
+| See visual reference for a concept | `preview/<concept>.html` |
 
-The earlier `design/` directory at the project root (referenced in `03_ARCHITECTURE.md` before Session 018) is superseded by this folder for visual specifics. The visual decisions that survive from Session 014 and remain authoritative are kept in `03_ARCHITECTURE.md` §8 (FloatingPanel) and §Design Reference:
+---
 
-- **Widget size: 144 × 144 pt** (NOT the 320 × 320 pt the Locto reference suggests)
-- **Widget material: Liquid Glass with state ink tint and hover saturation shift** (NOT solid pastel gradients)
-- **Widget visibility: persistent during mic-active session with "Listening…" placeholder** (NOT show-on-first-token / hide-on-mic-off)
-- **Monologue indicator** (v1.x feature — extension to the brand component set, not in the Locto reference)
+## For coding agents
 
-Anything else from the prior `design/` directory is superseded by the Locto-derived design tokens (palette ink colors, Inter type stack, motion principles, voice rules) in `02-brand-guidelines.html`.
+1. **Start at `SKILL.md`** for the agent contract — what this skill is and how to invoke it.
+2. **Read `guides/01-overview.md`** for context (1 min).
+3. **For any specific task**, jump to the relevant guide in `guides/` (each is focused, ≤ 5 min to skim).
+4. **Pull tokens from `tokens.css`** — do not hardcode hex values, font sizes, or radii. The CSS variables are the source of truth.
+5. **Lift the widget from `components/widget/Widget.jsx`** rather than rebuilding it. It accepts `wpm`, `idle`, `monologueSeconds`, and `onPointerDown`.
+6. **Copy brand assets into your output** — reference paths in `brand/`, do not link to URLs.
+7. **For production Swift code**, the upstream `DesignTokens.swift` (in [`anton-glance/TalkCoach`](https://github.com/anton-glance/TalkCoach) at `docs/design/old/Sources/`) is the source of truth.
 
-## Adoption history
+---
 
-- **Session 014** — Aggressive scope reduction. Widget shell decisions (144pt size, Liquid Glass material, hover saturation) locked.
-- **Session 013** — Persistent visibility + "Listening…" + dismissal flow locked. Widget stays visible for the entire mic-active session.
-- **Session 018** — Locto brand package adopted as visual reference (this folder). Filler tracking and repeated-phrase detection deferred to v2.0. Locto used as user-facing product name.
+## Source of truth precedence
 
-## Source
+When in conflict:
+1. The upstream `DesignTokens.swift` wins on shipping macOS values.
+2. `tokens.css` mirrors those for any non-Swift surface.
+3. Guides in `guides/` document intent and rules.
+4. Preview cards in `preview/` are visual reference — not authoritative.
 
-The source Locto package was produced by an external design effort and uploaded to this project in Session 018 as visual + brand reference. Files in this folder are adapted versions, with project-specific overrides surfaced inline (see the "Scope & precedence" section at the top of `02-brand-guidelines.html`).
+If you're unsure, default to "calm, ambient, peripheral-vision" — and make less, not more.

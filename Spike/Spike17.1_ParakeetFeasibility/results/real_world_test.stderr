@@ -1,0 +1,21 @@
+INFO: loading Parakeet TDT v3 model...
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Preprocessor.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Encoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling Decoder.mlmodelc
+INFO: model progress: compiling 
+INFO: model progress: downloading 0/0 files
+INFO: model progress: compiling JointDecisionv3.mlmodelc
+INFO: model progress: compiling 
+INFO: model loaded in 119ms — RSS 36.0MB (before-load: 7.5MB)
+INFO: processing real_world_test.caf...
+[+20761ms] "One two three one two three one two three one two three one " confirmed=true conf=0.99
+[+40938ms] "one two three one two three one two three one two three one " confirmed=true conf=0.99
+[+61072ms] "two three one two three one two" confirmed=true conf=0.99
+[+67355ms] "three one" confirmed=true conf=0.99
+INFO: done — 4 updates, peak RSS 78.9MB
+INFO: wrote /Users/antonglance/coding/TalkCoach/Spike/Spike17.1_ParakeetFeasibility/results/real_world_test.csv

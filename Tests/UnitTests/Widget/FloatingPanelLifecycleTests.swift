@@ -434,36 +434,6 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Canceled dismiss during lingerFull must leave panel in .lingerFull")
     }
 
-    // MARK: - Group 7: Token silence activity state
-
-    func testIsInTokenSilence_True_SetsActivityState_Waiting() async {
-        makeComponents()
-        sut.start()
-        await activateSession()
-        await showPanel()
-        sut.viewModel.activityState = .counting
-
-        coordinator.isInTokenSilence = true
-        await Task.yield()
-
-        XCTAssertEqual(sut.viewModel.activityState, .waiting,
-                       "isInTokenSilence=true must set activityState to .waiting")
-    }
-
-    func testIsInTokenSilence_False_DoesNotAffectActivityState() async {
-        makeComponents()
-        sut.start()
-        await activateSession()
-        await showPanel()
-        sut.viewModel.activityState = .counting
-
-        coordinator.isInTokenSilence = false
-        await Task.yield()
-
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "isInTokenSilence=false must NOT change activityState (only true triggers .waiting)")
-    }
-
     func testEngineReady_TransitionsActivityState_ToCounting() async {
         makeComponents()
         sut.start()
@@ -484,8 +454,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         sut.start()
         await activateSession()
         await showPanel()
-        // Establish .waiting state
-        coordinator.isInTokenSilence = true
+        // Establish .waiting state via VAD-inactive path (Architecture Z).
+        coordinator.isVoiceInactive = true
         await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
 
@@ -745,7 +715,7 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         await showPanel()  // warming → engine-ready → counting
         XCTAssertEqual(sut.viewModel.activityState, .counting)
 
-        coordinator.isInTokenSilence = true
+        coordinator.isVoiceInactive = true
         await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
 
@@ -788,7 +758,7 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         sut.start()
         await activateSession()
         await showPanel()
-        coordinator.isInTokenSilence = true
+        coordinator.isVoiceInactive = true
         await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,

@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 200px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div class="label" style="margin-bottom:12px;">Voice · do &amp; don't</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+  <div style="background:#EFF6EA;border-radius:10px;padding:14px;border-left:3px solid #3B6D11;">
+    <div style="font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:#3B6D11;margin-bottom:6px;">Do</div>
+    <div style="font-size:13px;color:var(--text-primary);">You held 161 wpm across 22 minutes.</div>
+  </div>
+  <div style="background:#FCEBEB;border-radius:10px;padding:14px;border-left:3px solid #A32D2D;">
+    <div style="font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:#A32D2D;margin-bottom:6px;">Don't</div>
+    <div style="font-size:13px;color:var(--text-primary);">Your speech velocity demonstrated strong consistency metrics.</div>
+  </div>
+  <div style="background:#EFF6EA;border-radius:10px;padding:14px;border-left:3px solid #3B6D11;">
+    <div style="font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:#3B6D11;margin-bottom:6px;">Do</div>
+    <div style="font-size:13px;color:var(--text-primary);">Pace was on point.</div>
+  </div>
+  <div style="background:#FCEBEB;border-radius:10px;padding:14px;border-left:3px solid #A32D2D;">
+    <div style="font-size:10px;font-weight:500;letter-spacing:0.12em;text-transform:uppercase;color:#A32D2D;margin-bottom:6px;">Don't</div>
+    <div style="font-size:13px;color:var(--text-primary);">Excellent! Your pace was crushing it!</div>
+  </div>
+</div>
+</div></body></html>

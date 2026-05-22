@@ -1,0 +1,38 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  html, body { background: transparent; margin: 0; }
+  .card {
+    width: 700px;
+    min-height: 200px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    box-sizing: border-box;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 8px; }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0; }
+  .label { font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-tertiary); }
+</style></head><body><div class="card">
+
+<div class="label" style="margin-bottom:12px;">Motion · calm, 200–600ms, easeInOut / easeOut, no springs</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;">
+  <div style="background:var(--surface-2);border-radius:10px;padding:14px;"><div class="label" style="margin-bottom:8px;">Durations</div>
+    <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>fast (hover, micro)</span><span class="mono">200ms</span></div>
+    <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>base (show / hide)</span><span class="mono">350ms</span></div>
+    <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>slow (state cross-fade)</span><span class="mono">600ms</span></div>
+  </div>
+  <div style="background:var(--surface-2);border-radius:10px;padding:14px;"><div class="label" style="margin-bottom:8px;">Easing</div>
+    <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>easeInOut</span><span class="mono">.42,0,.58,1</span></div>
+    <div style="display:flex;justify-content:space-between;padding:3px 0;"><span>easeOut</span><span class="mono">0,0,.2,1</span></div>
+    <div style="display:flex;justify-content:space-between;padding:3px 0;color:var(--fast-ink);"><span>spring</span><span class="mono">— never —</span></div>
+  </div>
+</div>
+<div class="mono" style="margin-top:12px;">Honor <code>prefers-reduced-motion</code> globally. Hero numbers tick at 1Hz, not 60Hz.</div>
+</div></body></html>
