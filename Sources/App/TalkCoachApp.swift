@@ -44,6 +44,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // swiftlint:disable:next function_body_length
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        guard !isRunningTests else {
+            Logger.app.info("Running under XCTest — skipping production audio/engine boot")
+            return
+        }
+
         let defaults = UserDefaults.standard
         let wasSetupCompletedBefore = defaults.bool(forKey: "hasCompletedSetup")
 
@@ -126,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Free whisper.cpp + Silero VAD Metal contexts before atexit handlers run.
         // ggml_metal_device_free asserts residency sets are empty; this prevents that crash.
         if let backend = whisperBackend {
+            // TODO(hardening): semaphore-bridge pattern — safe here (no MainActor re-dispatch, 2s cap) but fragile; revisit for a MainActor-sync free path. See journal S033 lesson 8.
             let sema = DispatchSemaphore(value: 0)
             Task.detached { await backend.shutdown(); sema.signal() }
             _ = sema.wait(timeout: .now() + 2.0)
