@@ -84,7 +84,7 @@ final class FakeLanguageDetector: LanguageDetecting, @unchecked Sendable {
 final class FailingTranscriberBackend: TranscriberBackend, @unchecked Sendable {
     let tokenStream: AsyncStream<TranscribedToken> = AsyncStream { $0.finish() }
     let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.finish() }
-    let vadActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
+    let speakingActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
     func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws {
         throw TranscriberBackendError.modelUnavailable
     }
@@ -101,7 +101,7 @@ final class YieldingStubBackend: TranscriberBackend, @unchecked Sendable {
     private let cont: AsyncStream<TranscribedToken>.Continuation
     let tokenStream: AsyncStream<TranscribedToken>
     let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.yield(()); $0.finish() }
-    let vadActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
+    let speakingActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
 
     init() {
         // swiftlint:disable:next identifier_name
@@ -125,7 +125,7 @@ final class NeverReadyStubBackend: TranscriberBackend, @unchecked Sendable {
     // engineReadyContinuation kept alive indefinitely — stream never yields, never finishes.
     private let engineReadyContinuation: AsyncStream<Void>.Continuation
     let engineReadyStream: AsyncStream<Void>
-    let vadActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
+    let speakingActivityStream: AsyncStream<Bool> = AsyncStream { $0.finish() }
 
     init() {
         var tokenStreamCont: AsyncStream<TranscribedToken>.Continuation!

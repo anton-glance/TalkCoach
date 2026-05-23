@@ -93,7 +93,6 @@
 				A9D2424D2FA534C10039FC37 /* Sources */,
 				A9D2424E2FA534C10039FC37 /* Frameworks */,
 				A9D2424F2FA534C10039FC37 /* Resources */,
-				A9083ACF2FBF78F200DD0842 /* Copy Whisper Models */,
 			);
 			buildRules = (
 			);
@@ -115,7 +114,6 @@
 			buildPhases = (
 				A9D2425C2FA534C20039FC37 /* Sources */,
 				A9D2425D2FA534C20039FC37 /* Frameworks */,
-				A9D2425E2FA534C20039FC37 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -179,39 +177,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A9D2425E2FA534C20039FC37 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		A9083ACF2FBF78F200DD0842 /* Copy Whisper Models */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/Vendor/models/ggml-small.bin",
-				"$(SRCROOT)/Vendor/models/ggml-silero-v5.1.2.bin",
-			);
-			name = "Copy Whisper Models";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/Models/ggml-small.bin",
-				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/Models/ggml-silero-v5.1.2.bin",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "\nset -euo pipefail\n\nMODELS_SRC=\"${SRCROOT}/Vendor/models\"\n\nMODELS_DST=\"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/Resources/Models\"\n\n\nfor MODEL in \"ggml-small.bin\" \"ggml-silero-v5.1.2.bin\"; do\n\n  if [ ! -f \"${MODELS_SRC}/${MODEL}\" ]; then\n\n    echo \"error: whisper model '${MODEL}' not found at ${MODELS_SRC}/${MODEL}.\"\n\n    echo \"error: Download it from the URL in Vendor/models/README.md and place it in Vendor/models/ before building.\"\n\n    exit 1\n\n  fi\n\ndone\n\n\nmkdir -p \"${MODELS_DST}\"\n\ncp -f \"${MODELS_SRC}/ggml-small.bin\" \"${MODELS_DST}/ggml-small.bin\"\n\ncp -f \"${MODELS_SRC}/ggml-silero-v5.1.2.bin\" \"${MODELS_DST}/ggml-silero-v5.1.2.bin\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A9D2424D2FA534C10039FC37 /* Sources */ = {
@@ -376,32 +342,17 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(SRCROOT)/Vendor/whisper.cpp/include",
-					"$(SRCROOT)/Vendor/whisper.cpp/ggml/include",
-				);
+				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = Sources/App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Vendor/parakeet-bridge/target/release";
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
-					"-framework",
-					Accelerate,
-					"-framework",
-					MetalKit,
-					"-framework",
-					Metal,
 					"-lc++",
-					"$(SRCROOT)/Vendor/build/ggml/src/ggml-blas/libggml-blas.a",
-					"$(SRCROOT)/Vendor/build/ggml/src/libggml-cpu.a",
-					"$(SRCROOT)/Vendor/build/ggml/src/libggml-base.a",
-					"$(SRCROOT)/Vendor/build/ggml/src/libggml.a",
-					"-force_load",
-					"$(SRCROOT)/Vendor/build/ggml/src/ggml-metal/libggml-metal.a",
-					"-force_load",
-					"$(SRCROOT)/Vendor/build/src/libwhisper.a",
+					"-lparakeet_bridge",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.antonglance.TalkCoach;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -410,7 +361,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CWhisper";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CParakeetBridge";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
@@ -434,32 +385,17 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(SRCROOT)/Vendor/whisper.cpp/include",
-					"$(SRCROOT)/Vendor/whisper.cpp/ggml/include",
-				);
+				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = Sources/App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Vendor/parakeet-bridge/target/release";
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
-					"-framework",
-					Accelerate,
-					"-framework",
-					MetalKit,
-					"-framework",
-					Metal,
 					"-lc++",
-					"$(SRCROOT)/Vendor/build/ggml/src/ggml-blas/libggml-blas.a",
-					"$(SRCROOT)/Vendor/build/ggml/src/libggml-cpu.a",
-					"$(SRCROOT)/Vendor/build/ggml/src/libggml-base.a",
-					"$(SRCROOT)/Vendor/build/ggml/src/libggml.a",
-					"-force_load",
-					"$(SRCROOT)/Vendor/build/ggml/src/ggml-metal/libggml-metal.a",
-					"-force_load",
-					"$(SRCROOT)/Vendor/build/src/libwhisper.a",
+					"-lparakeet_bridge",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.antonglance.TalkCoach;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -468,7 +404,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CWhisper";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CParakeetBridge";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
@@ -490,7 +426,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CWhisper";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CParakeetBridge";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
@@ -513,7 +449,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CWhisper";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Sources/Speech/CParakeetBridge";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;

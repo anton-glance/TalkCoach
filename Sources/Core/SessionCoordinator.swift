@@ -20,7 +20,7 @@ struct EndedSession: Equatable {
 
 // MARK: - SessionWiring
 
-/// Bundles the injectable dependencies for the audio → transcription pipeline (Architecture Z).
+/// Bundles the injectable dependencies for the audio → transcription pipeline (Architecture AA).
 struct SessionWiring {
     let audioPipeline: AudioPipeline
     let languageDetector: any LanguageDetecting
@@ -55,7 +55,7 @@ final class SessionCoordinator: ObservableObject {
     // Production code: only SessionCoordinator sets this property.
     @Published var lastTokenArrival: Date?
     @Published var lastEngineReadyAt: Date?
-    // VAD-driven silence signal: set true when Silero reports continuous voice inactivity.
+    // Speaking activity signal: set true when Parakeet token end-times indicate continuous inactivity.
     @Published var isVoiceInactive: Bool = false
     @Published private(set) var isRecovering: Bool = false
     private(set) var lastEndReason: SessionEndReason?
@@ -79,7 +79,7 @@ final class SessionCoordinator: ObservableObject {
     private(set) var engineReadyTask: Task<Void, Never>?
     private var localeMonitorTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
-    private var vadMonitorTask: Task<Void, Never>?
+    private var speakingMonitorTask: Task<Void, Never>?
     private var activePipeline: AudioPipeline?
 
     // Per-session measurement state — reset at start/end of each wiring cycle.
@@ -283,7 +283,7 @@ final class SessionCoordinator: ObservableObject {
             return
         }
 
-        // Step 3: Backend start (Architecture Z — WhisperCppBackend via TranscriberBackend protocol)
+        // Step 3: Backend start (Architecture AA — ParakeetBackend via TranscriberBackend protocol)
         let audioProvider = AudioPipelineBufferProvider(pipeline: capturedWiring.audioPipeline)
         do {
             try await capturedWiring.backend.start(locale: locale, audioProvider: audioProvider)
@@ -313,9 +313,9 @@ final class SessionCoordinator: ObservableObject {
         relayTask = Task { [weak self] in
             await self?.relayTokens(from: capturedWiring.backend.tokenStream)
         }
-        vadMonitorTask = Task { [weak self] in
+        speakingMonitorTask = Task { [weak self] in
             var silenceStartedAt: Date? = nil
-            for await hasVoice in capturedWiring.backend.vadActivityStream {
+            for await hasVoice in capturedWiring.backend.speakingActivityStream {
                 if Task.isCancelled { break }
                 guard let self else { break }
                 if hasVoice {
@@ -393,8 +393,8 @@ final class SessionCoordinator: ObservableObject {
         engineReadyTask = nil
         localeMonitorTask?.cancel()
         relayTask?.cancel()
-        vadMonitorTask?.cancel()
-        vadMonitorTask = nil
+        speakingMonitorTask?.cancel()
+        speakingMonitorTask = nil
 
         // Stop backend first: stop() finishes tokenStream, unblocking the relay loop.
         // Then await relay completion so any in-flight consume() call drains before sessionEnded.

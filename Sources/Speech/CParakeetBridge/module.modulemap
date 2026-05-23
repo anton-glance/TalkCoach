@@ -1,0 +1,4 @@
+module CParakeetBridge {
+    header "CParakeetBridge.h"
+    export *
+}

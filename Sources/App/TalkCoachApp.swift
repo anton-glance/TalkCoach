@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var floatingPanelController: FloatingPanelController!
     private(set) var sessionStore: SessionStore?
     private(set) var settingsWindow: NSWindow?
-    private var whisperBackend: WhisperCppBackend?
+    private var parakeetBackend: ParakeetBackend?
 
     override init() {
         super.init()
@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         sessionCoordinator.start()
 
-        // Architecture Z: eager WhisperCppBackend init (contexts load on first session start).
+        // Architecture AA: ParakeetBackend — model loads lazily on first session start.
         let audioPipeline = AudioPipeline()
         let declaredLocales = settingsStore.declaredLocales.map { Locale(identifier: $0) }
         let bufferProvider = AudioPipelineBufferProvider(pipeline: audioPipeline)
@@ -81,21 +81,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             whisperLIDProvider: StubWhisperLIDProvider(),
             audioBufferProvider: bufferProvider
         )
-        if let whisperURL = try? WhisperModelLoader.whisperModelURL(),
-           let sileroURL = try? WhisperModelLoader.sileroModelURL() {
-            let backend = WhisperCppBackend(
-                whisperModelPath: whisperURL.path,
-                sileroModelPath: sileroURL.path
-            )
-            sessionCoordinator.wiring = SessionWiring(
-                audioPipeline: audioPipeline,
-                languageDetector: languageDetector,
-                backend: backend
-            )
-            whisperBackend = backend
-        } else {
-            Logger.app.error("WhisperCppBackend: model files not found in bundle — session wiring not set")
-        }
+        let backend = ParakeetBackend()
+        sessionCoordinator.wiring = SessionWiring(
+            audioPipeline: audioPipeline,
+            languageDetector: languageDetector,
+            backend: backend
+        )
+        parakeetBackend = backend
 
         floatingPanelController.start()
 
@@ -129,14 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         floatingPanelController.stop()
         sessionCoordinator.stop()
-        // Free whisper.cpp + Silero VAD Metal contexts before atexit handlers run.
-        // ggml_metal_device_free asserts residency sets are empty; this prevents that crash.
-        if let backend = whisperBackend {
-            // TODO(hardening): semaphore-bridge pattern — safe here (no MainActor re-dispatch, 2s cap) but fragile; revisit for a MainActor-sync free path. See journal S033 lesson 8.
-            let sema = DispatchSemaphore(value: 0)
-            Task.detached { await backend.shutdown(); sema.signal() }
-            _ = sema.wait(timeout: .now() + 2.0)
-        }
+        // ParakeetBackend.stop() is called via sessionCoordinator.stop() → pk_engine_destroy.
+        // No Metal contexts to tear down (Architecture AA is CPU-only ONNX).
     }
 
     func openSettings() {

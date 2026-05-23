@@ -11,7 +11,7 @@ private final class VadStubBackend: TranscriberBackend, @unchecked Sendable {
     let tokenStream: AsyncStream<TranscribedToken>
     let engineReadyStream: AsyncStream<Void> = AsyncStream { $0.yield(()); $0.finish() }
     private let vadCont: AsyncStream<Bool>.Continuation
-    let vadActivityStream: AsyncStream<Bool>
+    let speakingActivityStream: AsyncStream<Bool>
 
     init() {
         // swiftlint:disable:next identifier_name
@@ -20,7 +20,7 @@ private final class VadStubBackend: TranscriberBackend, @unchecked Sendable {
         tokenCont = tc
         // swiftlint:disable:next identifier_name
         var vc: AsyncStream<Bool>.Continuation!
-        vadActivityStream = AsyncStream { vc = $0 }
+        speakingActivityStream = AsyncStream { vc = $0 }
         vadCont = vc
     }
 
