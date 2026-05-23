@@ -36,6 +36,23 @@ The build is now "wire the validated signal in as the gate," not "invent a VAD."
 - Spike #19: ✅ PASS — Silero v5 VAD validated and LOCKED.
 - M3.7.6: ungated (Spike #19 done) — ready to scope next session. Add the dual-purpose-grace learning.
 
+
+### Session 037 ADDENDUM — M3.7.6 architecture LOCKED (raw-transition gate; metric-owned pause tolerances)
+
+Decided after the S037 close-out, while discussing M3 scope. Product owner directive: **M3 builds the COMPLETE, fully-tested VAD/gating infrastructure; M4 builds WPM + Monologue on top with NO surprises.** M3 ships the clock and wiring with no live metric; M4 adds the metrics.
+
+**Locked architecture:**
+- The gate (M3) runs Silero VAD → MINIMAL jitter-debounce (~100-200ms, signal-cleanliness only, tunable) → emits RAW gated transitions (`speechStarted(t)`, `speechStopped(t)`) to any subscriber.
+- The gate does NOT apply any PRODUCT pause-tolerance. WPM's 2s grace and Monologue's 2.5s reset are METRIC rules, applied DOWNSTREAM in M4, each metric to the same raw stream.
+- **CORRECTION to earlier S037 framing:** the "dual-purpose 2s grace in the gate" idea (from the Spike #19 learning) was WRONG under the M3-infra/M4-metrics split. The product graces belong in M4, not the gate. The gate owns only signal cleanliness (kill 32ms VAD chatter), NOT product pauses. This is the better separation and is the load-bearing decision that makes M4 surprise-free: because M3 never decides what a "pause" MEANS for a metric, M4 can give WPM and Monologue any tolerances (2s, 2.5s, future-tuned) without touching M3.
+
+**Why raw transitions, not pre-digested:** WPM derives speaking-DURATION; Monologue derives continuous-STREAK-with-pause-tolerance. Different views of the same signal. If the gate emitted only WPM's view, Monologue would hit a gate-rebuild surprise. Raw transitions let both derive independently.
+
+**M3 close criterion (end-to-end, the "no surprises" proof):** drive synthetic audio with pauses of 150ms / 1s / 2.2s / 3s through the REAL gate; assert (a) the gate emits clean transitions reflecting actual voice presence, debouncing only sub-debounce chatter (NOT the product pauses); (b) TWO stub subscribers — a WPM-stub applying 2s, a Monologue-stub applying 2.5s — each derive correctly from the ONE shared raw stream. Both deriving correctly = M3 provably M4-ready.
+
+**M3.7.6 scope note:** the gate must run IN PARALLEL with Parakeet on the same production audio stream (tap → resample → both ParakeetBackend AND the Silero gate). The Phase-1 plan must be written against the real M3.4 production audio architecture (RollingAudioWindow, tap wiring, buffer flow) — to be scoped fresh next session reading that code, not hand-waved.
+
+**Backlog framing:** M4 = WPM + Monologue (both real). M3.7.6 = the complete tested gate/infra they plug into. Monologue's detector is still gated behind Spike #11 for its reset-rule validation, but the INFRA readiness is proven in M3 via the stub-seam test.
 ---
 
 ## Session 036 — 2026-05-23 — M3.7.4 ParakeetBackend integration COMPLETE (engine proven on live audio, speaking-activity time-offset bug fixed); voice-activity REFRAMED as pipeline master-clock → M3.7.6 + Spike #19 (Silero, cross-platform-mandated); widget-dim latency found structurally ~10-14s under window-only detection — moved to M3.7.6 scope
