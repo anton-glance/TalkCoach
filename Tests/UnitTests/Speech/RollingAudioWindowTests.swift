@@ -1,3 +1,4 @@
+import AVFAudio
 import XCTest
 @testable import TalkCoach
 

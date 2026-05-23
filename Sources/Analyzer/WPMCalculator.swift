@@ -31,6 +31,20 @@ struct WPMCalculator: Sendable {
         tracker.addToken(word)
     }
 
+    /// Process a hop batch from ParakeetBackend. Resets the word accumulator and
+    /// speaking tracker for the new window; EMA smoother carries forward across hops.
+    nonisolated mutating func newHop(
+        words hopWords: [TimestampedWord],
+        windowStart: TimeInterval,
+        windowEnd: TimeInterval
+    ) -> WPMReading {
+        words.removeAll()
+        tracker.reset()
+
+        for word in hopWords { addWord(word) }
+        return wpm(at: windowEnd)
+    }
+
     nonisolated mutating func wpm(at timestamp: TimeInterval) -> WPMReading {
         let windowStart = max(0, timestamp - windowSize)
         let window = TimeRange(start: windowStart, end: timestamp)

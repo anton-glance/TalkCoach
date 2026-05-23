@@ -47,7 +47,13 @@ actor ParakeetBackend: TranscriberBackend {
         tracker = SpeakingActivityTracker()
         engineReadyFired = false
 
-        let modelDir = try ParakeetModelLoader.modelDirectoryURL()
+        let modelDir: URL
+        do {
+            modelDir = try ParakeetModelLoader.modelDirectoryURL()
+        } catch {
+            Logger.speech.error("ParakeetBackend: model directory not found — \(error)")
+            throw TranscriberBackendError.modelUnavailable
+        }
         let eng: OpaquePointer? = modelDir.path.withCString { pk_engine_create($0) }
         guard let eng else {
             Logger.speech.error("ParakeetBackend: pk_engine_create returned null — model not found at \(modelDir.path)")

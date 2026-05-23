@@ -17,6 +17,11 @@ struct SpeakingActivityTracker: Sendable {
         tokenIntervals.append((start: token.startTime, end: token.endTime))
     }
 
+    /// Clears all accumulated token intervals. Called by WPMCalculator.newHop() on each hop boundary.
+    nonisolated mutating func reset() {
+        tokenIntervals.removeAll()
+    }
+
     /// Sum of speaking duration within the given window.
     nonisolated func speakingDuration(in window: TimeRange) -> TimeInterval {
         guard window.start < window.end else { return 0 }
