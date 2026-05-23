@@ -1,1 +1,0 @@
-../Spike/Spike17.2_WhisperCppVAD/whisper.cpp

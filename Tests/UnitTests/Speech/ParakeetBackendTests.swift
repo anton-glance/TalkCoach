@@ -58,4 +58,49 @@ final class ParakeetBackendTests: XCTestCase {
         for await _ in backend.engineReadyStream { count += 1 }
         XCTAssertEqual(count, 0)
     }
+
+    /// Regression: speaking-activity must be true during continuous speech across hops.
+    ///
+    /// Parakeet returns window-relative token timestamps (0…~9.7s reset each hop).
+    /// ParakeetBackend must offset them by the window's session-absolute start before
+    /// adding to the tracker, so isCurrentlySpeaking(asOf: elapsed) sees times consistent
+    /// with the session clock. This test fails if windowAbsoluteStart() is absent or wrong.
+    func testSpeakingActivityTrueDuringContinuousHops_withWindowOffset() {
+        let sampleRate: Double = 16_000
+        let windowSamples = RollingAudioWindow.windowSamples  // 160_000 = 10s
+
+        var tracker = SpeakingActivityTracker()
+
+        // Hop 1: first full window (0–10s elapsed). Parakeet tokens: window-relative 0.5–9.5s.
+        let hop1Elapsed: TimeInterval = 10.0
+        let hop1WindowStart = ParakeetBackend.windowAbsoluteStart(
+            elapsed: hop1Elapsed, sampleCount: windowSamples
+        )  // = 10 - 10 = 0.0
+        tracker.reset()
+        tracker.addToken(TimestampedWord(
+            word: "word",
+            startTime: hop1WindowStart + 0.5,
+            endTime: hop1WindowStart + 9.5   // session-absolute: 9.5
+        ))
+        XCTAssertTrue(
+            tracker.isCurrentlySpeaking(asOf: hop1Elapsed),
+            "Hop 1: token ends at 9.5s, elapsed=10s — within silence timeout, must be speaking"
+        )
+
+        // Hop 2: 3s later (elapsed=13s). Parakeet tokens again window-relative 0.5–9.5s.
+        let hop2Elapsed: TimeInterval = 13.0
+        let hop2WindowStart = ParakeetBackend.windowAbsoluteStart(
+            elapsed: hop2Elapsed, sampleCount: windowSamples
+        )  // = 13 - 10 = 3.0
+        tracker.reset()
+        tracker.addToken(TimestampedWord(
+            word: "word",
+            startTime: hop2WindowStart + 0.5,  // session-absolute: 3.5
+            endTime: hop2WindowStart + 9.5     // session-absolute: 12.5
+        ))
+        XCTAssertTrue(
+            tracker.isCurrentlySpeaking(asOf: hop2Elapsed),
+            "Hop 2: token ends at 12.5s, elapsed=13s — within silence timeout, must be speaking"
+        )
+    }
 }

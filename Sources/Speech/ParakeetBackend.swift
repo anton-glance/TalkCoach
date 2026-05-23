@@ -103,8 +103,21 @@ actor ParakeetBackend: TranscriberBackend {
         }
     }
 
+    /// Session-absolute start of the window being inferred.
+    ///
+    /// Parakeet returns token timestamps relative to the window's own start (0…~windowDuration).
+    /// Adding this offset converts them to session-absolute time, consistent with the
+    /// session-clock elapsed value used to query isCurrentlySpeaking(asOf:).
+    nonisolated static func windowAbsoluteStart(elapsed: TimeInterval, sampleCount: Int) -> TimeInterval {
+        elapsed - TimeInterval(sampleCount) / 16_000
+    }
+
     private func infer(samples: [Float]) async {
         guard let eng = engine else { return }
+
+        // Compute elapsed and window offset before inference so both use the same clock reference.
+        let elapsed = Date().timeIntervalSinceReferenceDate - sessionWallStart
+        let windowStart = Self.windowAbsoluteStart(elapsed: elapsed, sampleCount: samples.count)
 
         let result: UnsafeMutablePointer<PkResult>? = samples.withUnsafeBufferPointer { ptr in
             pk_transcribe(eng, ptr.baseAddress!, ptr.count)
@@ -115,30 +128,33 @@ actor ParakeetBackend: TranscriberBackend {
         let wordCount = Int(result.pointee.word_count)
         let text = result.pointee.text.map { String(cString: $0) } ?? ""
 
+        // Reset per-hop tracker so only the current window's tokens contribute to isCurrentlySpeaking.
+        tracker.reset()
+
         if wordCount > 0, let tokensPtr = result.pointee.tokens {
-            let windowStart = TimeInterval(tokensPtr[0].start)
-            let windowEnd = TimeInterval(tokensPtr[wordCount - 1].end)
+            // tok.start/end are window-relative (0…~windowDuration). Offset to session-absolute.
+            let firstTokenAbsStart = windowStart + TimeInterval(tokensPtr[0].start)
+            let lastTokenAbsEnd = windowStart + TimeInterval(tokensPtr[wordCount - 1].end)
 
             for i in 0..<wordCount {
                 let tok = tokensPtr[i]
                 tracker.addToken(TimestampedWord(
                     word: "",
-                    startTime: TimeInterval(tok.start),
-                    endTime: TimeInterval(tok.end)
+                    startTime: windowStart + TimeInterval(tok.start),
+                    endTime: windowStart + TimeInterval(tok.end)
                 ))
             }
 
             if !text.isEmpty {
                 tokenCont.yield(TranscribedToken(
                     token: text,
-                    startTime: windowStart,
-                    endTime: windowEnd,
+                    startTime: firstTokenAbsStart,
+                    endTime: lastTokenAbsEnd,
                     isFinal: true
                 ))
             }
         }
 
-        let elapsed = Date().timeIntervalSinceReferenceDate - sessionWallStart
         let isSpeaking = tracker.isCurrentlySpeaking(asOf: elapsed)
         speakingCont.yield(isSpeaking)
 

@@ -75,4 +75,17 @@ final class SpeakingDurationTests: XCTestCase {
         let duration = tracker.speakingDuration(in: TimeRange(start: 0, end: 10))
         XCTAssertEqual(duration, 1.0, accuracy: 0.001)
     }
+
+    /// FM2: speaking duration uses token intervals, not wall-clock.
+    /// A 3s pause between tokens (exceeds tokenSilenceTimeout=1.5s) must not inflate the denominator.
+    func testSpeakingDuration_pauseMidWindow_notWallClock() {
+        var tracker = SpeakingActivityTracker()
+        // Two 1s tokens separated by a 3s gap — gap exceeds tokenSilenceTimeout(1.5s), not merged.
+        tracker.addToken(word(0.0, 1.0))
+        tracker.addToken(word(4.0, 5.0))
+        let duration = tracker.speakingDuration(in: TimeRange(start: 0, end: 5))
+        // Wall-clock = 5s; token-based must be 2s (two separate 1s intervals).
+        XCTAssertEqual(duration, 2.0, accuracy: 0.001,
+            "Speaking duration must use token intervals not wall-clock — pause mid-window must not inflate denominator")
+    }
 }

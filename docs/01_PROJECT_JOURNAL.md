@@ -2,6 +2,60 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 036 — 2026-05-23 — M3.7.4 ParakeetBackend integration COMPLETE (engine proven on live audio, speaking-activity time-offset bug fixed); voice-activity REFRAMED as pipeline master-clock → M3.7.6 + Spike #19 (Silero, cross-platform-mandated); widget-dim latency found structurally ~10-14s under window-only detection — moved to M3.7.6 scope
+
+**Format:** Architect + product-owner + agent. Live smoke-gate iteration → one bug fix → product reframe of voice-activity → module close + new module + spike scoping. M3.7.4 TAGGED `m3.7.4-complete`.
+
+### M3.7.4 — CLOSED ✅ (engine integration only; voice-gating explicitly excluded)
+
+Live smoke gate passed for the module's actual scope. The full path is proven on real audio across multiple sessions: real mic → AVAudioConverter resample → RollingAudioWindow → Parakeet (static-ORT) → tokens with timestamps → widget state. Transcription accuracy excellent on continuous far-field speech (20-31 word hops, faithful text).
+
+**Speaking-activity bug found and fixed (the one real smoke-gate defect):** `speaking=false` on EVERY hop during continuous speech. Root cause: tokens added to `SpeakingActivityTracker` with WINDOW-RELATIVE timestamps (`tok.start` 0–~9.7, reset each hop because Parakeet times each window from its own start), but `isCurrentlySpeaking(asOf:)` queried with SESSION-ABSOLUTE elapsed. Tracker saw "last word at 9.7, now is 20" → always silent. Fix: offset each token by window-absolute-start (`elapsed - samples.count/16000`, using ACTUAL sample count not hardcoded 10s), compute `elapsed` once at top of `infer()` so offset and query share a clock snapshot, propagate absolute times to the transcript yield too. New test `testSpeakingActivityTrueDuringContinuousHops_withWindowOffset`. Confirmed live: `speaking=true` throughout continuous speech (3rd smoke run).
+
+**Warm-load persistence CONFIRMED (engine-always-warm holds):** wiring times across 3 sequential sessions: 7.9s → 5.6s → 4.5s. Engine stayed warm process-lifetime; second/third sessions skipped reload. Cold-load is 5-9s (ONNX init + model deserialize), inside the `warming` widget state, non-blocking.
+
+**Final state:** 386 tests (385 pass, 1 pre-existing skip), Rust↔Swift FFI with static ORT (zero dylib), loader reads sandbox-container Application Support, clean teardown. Tag `m3.7.4-complete`.
+
+**Explicitly OUT of M3.7.4 scope (moved forward, not deferred-as-escape):**
+- Voice-gating / real-time VAD → M3.7.6 (see reframe below)
+- 10-14s widget-dim latency → reframed as M3.7.6's problem, NOT an M3.7.4 defect
+- WPM display on widget → Phase 5 / M5.1 (PlaceholderWidgetView shows "Counting…" text by design; `WPMCalculator.newHop` deliberately not in live path yet)
+- Layout-recursion AppKit warning at teardown → M3.7.6 watch-item (non-crashing here)
+
+### PRODUCT REFRAME — voice-activity is the pipeline MASTER CLOCK (new architectural principle)
+
+Product owner reframed voice/no-voice from "cosmetic widget dim" to "the trigger that gates the ENTIRE metric pipeline." Voice present → everything counts (WPM, monologue, fillers). Voice stops → after a configurable grace (default 2s, IN SETTINGS) → declare silence → all metrics PAUSE so the gap doesn't pollute counts. Therefore voice-detection must be as close to instant as possible — onset instant, offset 2s-graced.
+
+**Architect un-disagreed with the Session 035 "no Silero for v1" position.** Prior reasoning (no single v1 feature needs sub-second VAD) was wrong: voice-activity is not per-feature, it's a SHARED trigger gating all features at once. A shared master signal wrong by 10s corrupts WPM + monologue + fillers simultaneously — the accuracy bar for a shared trigger is far higher than for any single consumer. Reframe accepted as a better architecture.
+
+**Why window-only detection fails (the discovery):** the 10-14s dim latency the product owner observed is STRUCTURAL, not tunable. Silence can't be detected until a hop runs (3s cadence) AND the 10s rolling window clears the trailing speech. So real latency = hop + window-clear ≈ 10-14s, not the ~3s the architect estimated in Session 035. Architect acknowledged the earlier estimate was a miss (counted hop cadence, missed window-clear tail). A real-time VAD decoupled from the WPM window is required.
+
+### M3.7.4 vs M3.7.6 — module-boundary discipline (anti-pattern avoided)
+
+Architect pushed back HARD on folding VAD into the still-open M3.7.4 — that is precisely the M3.7→M3.7.1→M3.7.2 anti-pattern (open module absorbing new scope until it spirals 3hr→80hr). Distinction that decided it: the engine produces CORRECT output the VAD refines, not WRONG output the VAD must fix — and WPM isn't even wired to the live pipeline yet (Phase 5), so there is no polluted-WPM defect today; VAD protects metrics that don't exist live yet. Therefore engine integration is a working baseline → CLOSE M3.7.4, open VAD as M3.7.6. Product owner agreed.
+
+### Spike #19 — VAD candidate, scope decided by CROSS-PLATFORM constraint
+
+Candidate search collapsed to ONE by the cross-platform requirement. Session 034's Parakeet choice was explicitly the foundation for a planned Windows port (Rust/ONNX/CPU, no Metal). The VAD master-clock must honor the same bet or the pipeline's trigger wouldn't port.
+- Apple-native VAD (Speech framework / AVAudioEngine) — macOS-ONLY → DISQUALIFIED for v1 regardless of Mac-side cost; would be thrown away at the Windows port.
+- Silero VAD — portable ONNX, runs through the SAME `ort`/ONNX Rust bridge M3.7.4 already built and statically linked. No new dependency, no new bridge — a second ONNX model on existing plumbing. Ports to Windows alongside Parakeet.
+- WebRTC VAD — energy-heuristic family that DIED in Spike #16 on the far-field mic. Not a candidate.
+
+**Spike #19 = Silero VALIDATION (not a bake-off):** does Silero, via the existing ONNX bridge, detect voice on the BUILT-IN FAR-FIELD MacBook mic with acceptable latency + accuracy? Pass bar inherits the Spike #16 far-field lesson: must work at sitting distance, reject HVAC/keyboard/fan (false-positive = pipeline counts silence as speech), catch soft conversational speech (miss = pipeline pauses mid-sentence). Measure onset latency, offset latency, and the two failure modes SEPARATELY. Gating WIRING (VAD signal pausing WPM/monologue/filler counts) is the M3.7.6 BUILD, not the spike — spike picks/validates the signal only.
+
+### Settings surface (v1 minimal-settings lock — now 2 deliberate entries)
+- M3.7.5: Download-Model button (Session 035)
+- M3.7.6: silence-grace threshold (default 2s) — onset instant, offset 2s-graced, configurable
+Both are behavior controls, not tuning-for-its-own-sake. Conscious exceptions to minimal-settings, not creep. Still NO language dropdown, NO arbitrary tuning knobs.
+
+### Backlog deltas
+- M3.7.4: ✅ COMPLETE, tagged `m3.7.4-complete`.
+- M3.7.6: NEW — real-time VAD (Silero) as pipeline master-clock + metric gating + 2s-grace Settings control. Gated behind Spike #19.
+- Spike #19: NEW — Silero far-field validation through existing ONNX bridge.
+- Whisper dir deletion (`Vendor/whisper.cpp/`, `Vendor/build/`): now SAFE (branch stable) — ride in close-out commit.
+
+---
+
 ## Session 035 — 2026-05-22 — Git history surgery unblocks push (487MB whisper blob excised via filter-repo); M3.7.4 ParakeetBackend integration BUILT and engine-proven on live audio (Rust↔Swift FFI link holds, static-ORT, 388 tests green) but smoke gate INCOMPLETE — talk-dependent UX checks deferred to next session; loader repointed Bundle.main→Application Support after sandbox-container path discovered live; Settings Download-Model button scoped as M3.7.5
 
 **Format:** Architect + product-owner + agent session. Two-part: (1) blocking git surgery, (2) M3.7.4 plan→implement→partial-smoke-gate. NO production tag — module stays OPEN pending talk-test.
