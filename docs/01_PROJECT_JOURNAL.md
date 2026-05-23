@@ -2,6 +2,55 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 035 — 2026-05-22 — Git history surgery unblocks push (487MB whisper blob excised via filter-repo); M3.7.4 ParakeetBackend integration BUILT and engine-proven on live audio (Rust↔Swift FFI link holds, static-ORT, 388 tests green) but smoke gate INCOMPLETE — talk-dependent UX checks deferred to next session; loader repointed Bundle.main→Application Support after sandbox-container path discovered live; Settings Download-Model button scoped as M3.7.5
+
+**Format:** Architect + product-owner + agent session. Two-part: (1) blocking git surgery, (2) M3.7.4 plan→implement→partial-smoke-gate. NO production tag — module stays OPEN pending talk-test.
+
+### Part 1 — git history surgery (push blocker cleared)
+
+18 commits (through Session 034) were unpushable: a 487MB `ggml-small.bin` (Spike #17.2, committed S033) sat in history under `Spike/Spike17.2_WhisperCppVAD/models/`, exceeding GitHub's 100MB pre-receive limit. Confirmed exactly one oversized blob (`git rev-list` + cat-file scan). Chose `git filter-repo` over LFS — the blob is a dead whisper model under the Parakeet lock, so excise-from-history is correct, not LFS-track. Sequence: install filter-repo (2.47.0 via brew) → verify backup branch `backup/pre-lfs-surgery-s034` is `0 0` identical to working branch → DRY RUN on a throwaway `--no-local` clone (blob gone, 158 commits preserved, Session 034 intact with new SHAs) → real rewrite → re-add origin (filter-repo strips it deliberately) → `--force-with-lease` (failed first on stale lease — no recorded remote ref after re-add; `git fetch` then push succeeded). Result: `e3561b3..7b67107`, 20MB transferred not 480MB, `0 0`. Work backed up to origin before any integration began, per instruction.
+
+**Learning:** `--force-with-lease` needs a fetched baseline for the remote ref. After `git remote add`, the lease has nothing to compare against → `stale info` rejection. `git fetch origin` first, then lease push.
+
+### Part 2 — M3.7.4 ParakeetBackend production integration
+
+**Architecture decisions locked (product owner ruled on each):**
+- WPM denominator = speaking-duration from Parakeet per-word token timestamps (start/end), NOT wall-clock. Protects FM2. Forced by discovery that there is NO sub-second VAD in production — HAL `AudioProcessProber` is per-app mic-open presence at ~1Hz, NOT a voice/no-voice signal. Silero left with whisper; energy-VAD died in Spike #16.
+- `vadActivityStream` → renamed `speakingActivityStream`, sourced from `SpeakingActivityTracker.isCurrentlySpeaking(asOf:)` (token end-times), ~3s lag accepted (drives only cosmetic widget `.waiting` dim). Architectural seam built so a parallel Silero fast-detector can replace the producer in v1.x with zero consumer changes.
+- **Two-jobs decoupling (new principle):** word-counting/pace (accuracy, 3s OK — Parakeet) is a DIFFERENT job from talk-vs-silence (speed, sub-second — would need Silero). v1 serves both from Parakeet token-timing at 3s cadence. v1.x adds parallel Silero IF a feature needs sub-second pause resolution. The monologue detector (parked behind Spike #11) is where 3s-vs-2.5s-reset robustness gets validated. All v1 features (WPM, monologue) tolerate 3s cadence because token timestamps are sub-second even when the hop is 3s. Trail-off (v2), shouting (v2), pause-as-metric (never) are the only things genuinely waiting on a fast detector.
+- Resampling 16k mono f32 via AVAudioConverter in Swift; Rust always gets clean buffers.
+- FFI: opaque-pointer-with-free, single `pk_transcribe` returning heap PkResult (word_count + token spans + text) freed by `pk_free_result`. Hop batches delivered explicitly as a unit (killed the agent's fragile `audioSamplePositionMs`-sniffing boundary reconstruction).
+- Model loads from a user directory (NOT Bundle.main — a 670MB app-embedded model would reintroduce the large-binary git problem just surgically removed AND bloat the .app). First-launch download is M3.7.5.
+
+**Implementation:** agent's Phase 1 plan approved with 4 architect revisions (rename+resource the activity stream; explicit hop-batch delivery; narrow AC-4 to whisper-libs+Metal-embed only — do NOT assert Accelerate/MetalKit absent; OQ-6 channels-param Phase-A check). OQ-1 (highest risk, Rust↔Xcode link) resolved the CLEAN way: ORT statically linked (767 OrtApi symbols in the .a, zero dylib) — OQ-2 (codesign/library-validation) evaporated entirely. Build green, FM2 tests named-and-passing (`testNewHop_zeroDenominator_holdsLastSmoothedValue`, `testSpeakingDuration_pauseMidWindow_notWallClock`). Loader repointed to Application Support with a base-URL injection test seam. Three commits + loader-fix pushed to origin (`9fb89f9`).
+
+**pbxproj surgery:** done via Xcode GUI, NOT script. The agent's Claude Code hook correctly blocked direct pbxproj edits and tried to route the byte-level mutation through the architect+user as a relay — refused (defeats the guardrail). GUI is the safe editor for build settings; the agent's change-list became a human checklist. `plutil -lint` OK, symmetric Debug/Release diff verified.
+
+### Smoke gate — engine PROVEN, gate INCOMPLETE
+
+Three live runs. Run 1: `modelUnavailable` — model was in `~/Library/Application Support/` but the SANDBOXED app resolves `.applicationSupportDirectory` to its CONTAINER (`~/Library/Containers/com.antonglance.TalkCoach/Data/Library/Application Support/`). Copied model into container → Run 2: engine loaded, but session ended immediately (`0 external readers` — no real mic-holding app; incidental trigger). Run 3 (real call, mic held): **FULL PATH FIRED** — `ParakeetBackend: hop — 8 words`, real tokens with real timestamps (`'One, two, one, two.' t=[6.64–8.57]`), widget `warming→counting`. Session ended only on leaving the call (`.micFreedExternally`), clean teardown. The Rust↔Swift link and live inference are proven on real audio.
+
+**Open for next session (talk-test required — product owner couldn't speak):**
+1. Live WPM accuracy + the rolling-window re-transcription overlap (same words across hops [6.64–8.57]→[4.08–5.93]→[0.96–3.77]) — does `newHop` reset prevent double-count?
+2. **`speaking=false` on EVERY hop even while producing words** — may be correct for a 2s mic-check, or `isCurrentlySpeaking` threshold miscalibration. Real continuous speech distinguishes.
+3. FM2 across a real mid-thought pause; cadence feel (UX#1); dim latency feel (UX#2).
+4. Cold load is 6–7.2s (not the spike's ~964ms — first-load ONNX init). Confirm engine-always-warm persists across sessions: run two back-to-back calls, second should skip the load.
+
+### Constraints discovered (carry forward)
+- **Sandbox container path:** M3.7.5 Download-Model button must write to the app's CONTAINER Application Support, not `~/Library/Application Support/`. App writing its own container needs no special entitlement.
+- **Smoke-test requires a real mic-holding conferencing call.** Photo Booth/QuickTime are insufficient proxies — `AudioProcessProber` counts conferencing-style external readers. Permanent testing constraint.
+- CoreAudio sandbox log noise (`AddInstanceForFactory`, `audioanalyticsd PRECONDITION FAILURE`, `throwing -10877`) is harmless — mic opens regardless.
+
+### Scope ruling
+Product owner: v1 Settings gets a Download-Model button (→ M3.7.5, separate module). Language dropdown and tuning variables REJECTED for v1 — language dropdown reopens English-only lock (and we have zero validated non-English WPM accuracy on this engine); tuning reopens minimal-settings lock and cuts against the glanceable-coach thesis. Hop interval stays a code-injectable dev knob, not shipped UI.
+
+### Backlog deltas
+- M3.7.4: OPEN (engine-proven, smoke gate incomplete — talk-test pending).
+- M3.7.5: NEW — Settings Download-Model button, writes to sandbox container Application Support.
+- Whisper directory deletion (`Vendor/whisper.cpp/`, `Vendor/build/`) still deferred to close-out AFTER smoke gate passes — recoverable from git, no upside deleting mid-gate.
+
+---
+
 ---
 ## Session 034 — 2026-05-22 — Engine decision REVERSED: whisper.cpp OUT, Parakeet (via `parakeet-rs` Rust/ONNX/int8, CPU) IN — Spike #18 proves Parakeet TDT v3 transcribes our English verbatim-faithfully at a shippable word-count error on a 10s rolling-window batch, holds across Russian, and runs 3–19× faster than cadence on CPU; Architecture Z (whisper.cpp + Silero) superseded by Architecture AA before it ever shipped; per-inference token-ceiling discovered as the load-bearing production constraint
 
