@@ -2,6 +2,42 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 037 — 2026-05-23 — Spike #19 PASS: Silero VAD (v5) validated as the pipeline master-clock on the far-field MacBook mic — onset ~32ms, ZERO false-positives in a live Starbucks run (the Spike #16 killer scenario), no mid-sentence fragmentation; Silero LOCKED, M3.7.6 build de-risked and ready to scope
+
+**Format:** Architect + product-owner + agent. Spike plan approved with 3 architect revisions → agent built harness + resolved all OQs → live-mic validation by product owner → Silero PASS, spike closed.
+
+### Spike #19 — Silero VAD far-field validation — ✅ PASS
+
+**Verdict: Silero VAD (v5) is validated as the voice-activity master clock. LOCKED for M3.7.6.**
+
+**Setup proven:** Silero v5 ONNX (2.2MB, from snakers4/silero-vad) through the `ort` crate (2.0.0-rc.12, matching parakeet-rs's transitive dep, `download-binaries` feature, zero version conflict since the spike doesn't depend on parakeet-rs). Real-time pipeline: 48kHz cpal capture (built-in mic refuses a 16kHz config) → rubato SincFixedIn 3:1 downsample → Silero per-frame inference (512-sample/32ms frames, 576-input with caller-managed context-64 prepend, [2,1,128] state carried forward) → per-frame voice probability. Sub-ms inference, no frame drops over 30s. Agent tried v5 first per Revision 3 (the noisy-environment-improved model — the right call for the far-field hard case); no v4 fallback needed.
+
+**Results against the pass bar:**
+- ONSET LATENCY: ~32ms (one frame). Probability goes near-zero → >0.6 in a single frame at every speech start. Target was ≤100ms. PASS decisively. (Revision 1 satisfied: measured on the LIVE-mic path, not WAV — the user-facing latency, including frame-fill + resample, still ~1 frame.)
+- OFFSET: drops below threshold within 1-2 frames of stopping. 2s grace comfortably covers it. PASS.
+- MID-SENTENCE FRAGMENTATION (Revision 2, the master-clock killer): NONE. Brief sub-100ms SILENCE dips occur ONLY at genuine inter-word/breath pauses, never mid-utterance. Product owner's direct observation: "did not notice it captured silence mid-talk, but responsive when I paused to breathe or between words." This is exactly the wanted behavior. PASS.
+- FALSE-POSITIVE on noise: **DECISIVE PASS.** A live 30s run in a Starbucks (real far-field mic + real background noise — the exact Spike #16 killer condition) produced ZERO frames above threshold; peak prob 0.07, most <0.01. Earlier room-at-rest: 0/467 frames at all thresholds (0.3/0.4/0.5), peak 0.208, fan transients to 0.329 recovering within 192ms. Energy-VAD DIED in this exact scenario (Spike #16); Silero doesn't flinch.
+- SOFT FAR-FIELD SPEECH: caught reliably (held VOICE across soft-spoken sentences at sitting distance).
+
+**The Starbucks zero-FP run is the strongest single piece of evidence in the spike** — better than any controlled WAV recording, because it's the actual deployment environment. The keyboard/HVAC WAV gates were left unrun (option 1): the live noisy-environment run already answered "does ambient noise false-trigger" more convincingly than a controlled recording would.
+
+### Spike plan — 3 architect revisions (all validated by results)
+1. Live-mic latency REQUIRED not optional (WAV measures only algorithmic latency; user experiences algorithmic+pipeline). → Gate 4 became the latency judge; ~32ms held on the real path.
+2. Soft-speech bar reframed from "≥75% frame detection" to "stays true across a continuous sentence, no mid-sentence false-gap" — because this is a MASTER CLOCK gating WPM+monologue+fillers, not a per-feature signal. → No mid-sentence fragmentation observed.
+3. Try v5 FIRST (noisy-env improvement) not v4 (API convenience). → v5 worked, no fallback.
+
+### Key learning for M3.7.6 — the 2s grace does TWO jobs
+The raw VAD signal is intentionally CHOPPY at word boundaries (32-96ms SILENCE dips between words — correct VAD behavior). Gating metrics on the raw signal would pause/resume many times per sentence. The product-owner-specified 2s grace solves BOTH: (a) BRIDGES inter-word gaps so the pipeline sees continuous speech across natural pauses (keeps WPM/monologue/filler counts running through a sentence), AND (b) defines END-OF-TURN (declares silence after a real stop). M3.7.6 must implement it as a SINGLE debounce serving both purposes, not two mechanisms.
+
+### M3.7.6 status — de-risked, ready to scope
+The build is now "wire the validated signal in as the gate," not "invent a VAD." The model works, the ONNX path works, the real-time pipeline works. M3.7.6 to be scoped fresh next session (deliberately NOT rushed at session-tail): Silero through the production ort/ONNX bridge, the dual-purpose 2s-grace debounce, metric-gating across WPM/monologue/fillers, the 2s-grace Settings control, and the AppKit layout-recursion warning investigation carried from M3.7.4.
+
+### Backlog deltas
+- Spike #19: ✅ PASS — Silero v5 VAD validated and LOCKED.
+- M3.7.6: ungated (Spike #19 done) — ready to scope next session. Add the dual-purpose-grace learning.
+
+---
+
 ## Session 036 — 2026-05-23 — M3.7.4 ParakeetBackend integration COMPLETE (engine proven on live audio, speaking-activity time-offset bug fixed); voice-activity REFRAMED as pipeline master-clock → M3.7.6 + Spike #19 (Silero, cross-platform-mandated); widget-dim latency found structurally ~10-14s under window-only detection — moved to M3.7.6 scope
 
 **Format:** Architect + product-owner + agent. Live smoke-gate iteration → one bug fix → product reframe of voice-activity → module close + new module + spike scoping. M3.7.4 TAGGED `m3.7.4-complete`.

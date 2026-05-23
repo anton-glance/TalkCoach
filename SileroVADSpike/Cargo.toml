@@ -1,0 +1,17 @@
+[package]
+name = "silero-vad-spike"
+version = "0.1.0"
+edition = "2021"
+
+# OQ-2 resolved: ort 2.0.0-rc.12 matches the transitive dep in ParakeetRustSpike/Cargo.lock.
+# ndarray 0.17 confirmed compatible (same lock file shows 0.17.2 alongside ort rc.12).
+# OQ-3 resolved: this binary has no parakeet-rs dep, so there is exactly one ORT instance.
+# "download-binaries" and "ndarray" are both in ort's default feature set — no explicit flag needed.
+[dependencies]
+ort        = "2.0.0-rc.12"          # default features: download-binaries + ndarray
+ndarray    = "0.17"
+hound      = "3"
+clap       = { version = "4", features = ["derive"] }
+anyhow     = "1"
+cpal       = "0.15"
+rubato     = "0.16"
