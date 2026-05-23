@@ -135,6 +135,40 @@ pub extern "C" fn pk_transcribe(
     }))
 }
 
+// ── Silero VAD v5 stub ────────────────────────────────────────────────────────
+//
+// Stub implementations return null / 0.0 until the green-phase implementation
+// replaces them. Swift callers check for null from sl_engine_create and either
+// XCTSkip (tests) or log an error (production) when the model is absent.
+
+pub struct SlEngine {
+    _private: (),
+}
+
+#[no_mangle]
+pub extern "C" fn sl_engine_create(
+    _model_path_utf8: *const c_char,
+) -> *mut SlEngine {
+    std::ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn sl_engine_destroy(_engine: *mut SlEngine) {}
+
+#[no_mangle]
+pub extern "C" fn sl_process_frame(
+    _engine: *mut SlEngine,
+    _samples: *const f32,
+    _num_samples: usize,
+) -> f32 {
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn sl_engine_reset(_engine: *mut SlEngine) {}
+
+// ── Parakeet free ─────────────────────────────────────────────────────────────
+
 /// Free a PkResult previously returned by pk_transcribe. No-op on null.
 #[no_mangle]
 pub extern "C" fn pk_free_result(result: *mut PkResult) {
