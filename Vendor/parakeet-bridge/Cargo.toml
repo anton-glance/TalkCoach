@@ -8,3 +8,5 @@ crate-type = ["staticlib"]
 
 [dependencies]
 parakeet-rs = "0.3"
+ort        = "2.0.0-rc.12"          # same version as parakeet-rs transitive dep — unified in lock
+ndarray    = "0.17"
