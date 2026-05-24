@@ -165,6 +165,26 @@ No transcripts persisted. No app names persisted. No timestamps within day excep
 
 ---
 
+## Runtime behavior (locked Session 038)
+
+The end-to-end session lifecycle and widget state machine, as validated on live audio in M3.7.6.
+
+1. **Session starts on mic-on.** When the user opens a mic source (Zoom, Meet, recording, etc.), Locto's widget appears immediately, ready to display WPM and detect Monologue (M4). Pre-warm at mic-on currently costs ~14s of model cold-load (in the `warming` state). **v1.5 exploration:** warm the ONNX models silently at app launch so the first session is instant. Not a v1 blocker.
+
+2. **Continuous speech → WPM updates.** The widget shows current WPM updated every `wpmRefreshInterval` (default 3s, setting), computed as a sliding average over a 10s window. (M4 computes; Phase 5 renders.)
+
+3. **Every pause is detected at the backend (160ms).** The Silero gate detects every pause including breaths — this raw data feeds Monologue and (v1.5/v2) speech-balance. Pause handling, by consumer:
+   - **WPM:** after `wpmPauseThreshold` (default ~2s, setting) of no voice, WPM stops aggregating; the pause is excluded from the displayed WPM. Resumes on next voice.
+   - **Monologue:** continuous talk for `monologueTargetMinutes` (setting) with no pause longer than `monologuePauseThreshold` (default ~2.5-3s, setting). A pause beyond the threshold zeros the streak. **Two independent settings** — WPM and Monologue thresholds are separate (may not feel right at the same value).
+   - **Speech-balance (v1.5/v2):** talk-vs-pause percentage.
+   - **Analytic graph (v1.5/v2):** WPM over time with talking/silent periods.
+
+4. **Widget fade follows the WPM-pause threshold.** Backend detects pause at 160ms and starts a hold timer; at `wpmPauseThreshold` it declares "silence" — stops WPM and fades the widget to 50% (`waiting`, nothing displayed, UI idle). If voice resumes before the threshold, the timer zeros (absorbs breaths, no flicker). If voice resumes during `waiting`, instant return to `counting` full opacity. (M3.7.6 ships this as a TEMPORARY 2s UI-only hold timer since WPM doesn't exist yet; M4 replaces the constant with the `wpmPauseThreshold` setting.)
+
+5. **Widget state flow:** `Warming → Counting → [>threshold silence] → Waiting (50%) → [voice] → Counting → [mic off] → Wrapping`.
+
+6. **Mic-off → stop, save, wrap.** When the mic source closes, everything stops immediately and the session is saved for historical analysis. The widget runs a 3+2s wrap/linger transition (pure UI — data is already saved). If a new mic session starts within the wrap window, the widget renews for the new session.
+
 ## Non-goals (explicitly NOT in v1)
 
 - **Filler-word tracking — v2.0 (deferred Session 018).** Counting "so", "um", "ну", "это" etc. as a per-session metric, with seeded dictionaries per language and a Settings editor. Deferred alongside repeated-phrase detection and the rich post-session dashboard. Market discovery surfaced monologue detection as the higher-priority feedback signal — fillers return as part of the v2.0 dashboard with explanations and recommendations rather than as a raw count on the widget.

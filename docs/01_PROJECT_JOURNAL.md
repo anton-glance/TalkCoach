@@ -2,6 +2,57 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 038 — 2026-05-24 — M3.7.6 COMPLETE: VAD master-clock gate + broadcaster fan-out + 2s UI silence-hold, FULL PIPELINE validated on live natural speech (Parakeet + gate + widget together). Phase 3 DONE. M4 (WPM + Monologue) scope locked. Tagged m3.7.6-complete.
+
+**Format:** Architect + product-owner + agent. Plan → approve → implement → live smoke (3 sessions) found a real integration bug → fix-plan → approve → implement → live smoke PASS → close.
+
+### M3.7.6 — CLOSED ✅ (tag m3.7.6-complete)
+
+Built the complete, tested Silero VAD gate infrastructure that M4 builds WPM + Monologue on with no surprises.
+
+**What landed:**
+- `AudioBufferBroadcaster` actor — fans the single-consumer `AudioPipeline.bufferStream` (SE-0314) to BOTH Parakeet and the gate. Snapshot-of-Sendable-continuations design, no per-buffer actor hop, `.bufferingNewest(64)` per consumer. The highest-risk piece; proven on live audio (clean teardown: "source stream finished — all consumer streams finished").
+- `SileroVADGate` actor — Silero v5 via the EXISTING parakeet-bridge staticlib (ORT compiled once, two sessions one runtime — the two-ORT-models risk resolved by single-staticlib design, no duplicate symbols). Own AVAudioConverter resample to 16k, 512-sample frames, jitter-debounce (offlineDebounceFrames=5/160ms, onlineDebounceFrames=1/32ms). Emits RAW `VADTransitionEvent.speechStarted/speechStopped` with session-absolute time. NO product pause-tolerance in the gate (AC verified).
+- Silero C bridge: extended EXISTING `CParakeetBridge.h` with `sl_*` functions (OQ-3 — no separate module, no Xcode GUI step).
+- `speakingActivityStream` fully removed from TranscriberBackend + ParakeetBackend (OQ-1 — clean seam, ~8 test-double touches).
+- Silero model DOWNLOADED to sandbox-container Application Support (OQ-4 — bundling deferred to M5/M6 for one clean install).
+
+**The M3 close-criterion test (the no-surprises M4 proof):** `testGateM3CloseCriterionTwoStubSubscribers` PASSED — synthetic pauses 150ms/1s/2.2s/3s through the real gate; WPM-stub@2s and Monologue-stub@2.5s each derive correctly from the ONE shared raw stream, diverging on the 2.08s gap (WPM closes interval, Monologue continues streak). 13 assertions green. This proves M4 can build both metrics on the gate without touching it.
+
+### The integration bug live smoke caught (and why test-level pass was insufficient)
+
+Unit/integration tests passed, but the FULL-PIPELINE live smoke (product owner's insistence before close) found a real bug stubs couldn't catch: **token-vs-gate fight over the widget.** Parakeet re-transcribes a 10s window, so stale tokens arrive 1-3s AFTER real silence; `FloatingPanelController.handleTokenArrival` unconditionally set `.counting` on any token, dragging the widget back to lit after the gate correctly set `.waiting`. Architecture-Z leftover (token drove voice-state) conflicting with the M3.7.6 master-clock (gate drives voice-state).
+
+**Fix:** (a) `handleTokenArrival` guarded — token cannot override `.waiting` (tokens carry CONTENT for M4 WPM, NOT voice-presence; gate is sole authority for counting↔waiting). (b) `voiceInactiveSubscription` made bidirectional (was one-way to .waiting only; now restores .counting on gate speechStarted). (c) **2s UI silence-hold timer** (see below).
+
+**Lesson logged:** test-level green is necessary not sufficient for integration behavior; the full-pipeline live smoke is the real gate. The token-vs-gate conflict and (earlier) the speaking-activity time-offset bug both passed units and only surfaced live. The fix added a failing-test-first guard so it can't regress.
+
+### The 2s UI silence-hold (product spec, locked S038)
+
+Backend gate detects EVERY pause at 160ms (raw data for M4 speech-balance). The WIDGET applies a 2s hold so it doesn't flicker on breaths:
+- gate speechStopped → start 2s hold; widget STAYS counting.
+- gate speechStarted before 2s → cancel timer; stays counting (absorbs 200-500ms breaths).
+- 2s elapses → widget fades to .waiting (50%).
+- during waiting, gate speechStarted → instant return to .counting; timer cleared.
+- timer cancelled on teardown.
+
+For M3 this is UI-ONLY (no WPM exists). The 2s is a named `static let` marked TEMPORARY — M4 replaces it with the WPM-pause-threshold SETTING. State flow validated live: Warming → Counting → [>2s silence] → Waiting(50%) → [voice] → Counting → [mic off] → Wrapping.
+
+### Live smoke PASS (the close evidence)
+3 sessions. Final session: clean English transcript on natural speech ("Okay, let's continue. What are we going to do now?", "it seems like behavior is correct, it's very responsive"), breath pauses did NOT fade (2s hold absorbed them), real >2s pauses faded via `reason=silence-2s`, instant return via `reason=vad-active`, no token flicker, clean wrapping on mic-off. Parakeet + gate + broadcaster + 2s-hold all working together on live audio. 403 tests (402 pass, 1 expected skip), swiftlint clean.
+
+### Phase 3 is DONE
+The speech-pipeline research risk is fully retired. Engine (Parakeet, M3.7.4) + VAD master-clock (Silero gate, M3.7.6) both proven on live audio. What remains to v1 is M3.7.5 (download button), M4 (WPM+Monologue math), Phase 5 (widget UI), Phase 6 (polish/notarize) — all integration/UI, no open research.
+
+### Carryover watch-items (NOT M3 blockers)
+- AppKit `layoutSubtreeIfNeeded` recursion warning at teardown — non-fatal, logged once, app tears down fine. Carried from M3.7.4. Investigate during Phase 5 widget UI.
+- Cold-start first-hop emits low-quality/wrong-language tokens (saw a Russian fragment on hop 1 before English locked). Parakeet TDT v3 is multilingual; LanguageDetector picks en_US but the model can still emit other languages on garbled first-hop audio. M4 concern (would corrupt WPM word-count): (1) investigate whether parakeet-rs can force English-only decoding; (2) WPM should discard/down-weight the first hop.
+
+### M4 scope locked (S038 — for next planning)
+M4 = WPM + Monologue, both on the M3.7.6 gate. Two INDEPENDENT settings: WPM-pause-threshold and Monologue-pause-threshold (kept separate — may not feel right at the same value). WPM = sliding 10s-window average, updated every 3s (setting), pauses beyond WPM-threshold excluded. Monologue = continuous talk for N min (setting) with no pause > Monologue-threshold (setting); pause beyond it zeros the streak. The widget fade re-subscribes to the WPM-pause-threshold (replacing the temporary 2s UI timer). Monologue 2.5s-reset validation gated behind Spike #11. Speech-balance (talk/pause %) and the analytic WPM/time graph → v1.5/v2.
+
+---
+
 ## Session 037 — 2026-05-23 — Spike #19 PASS: Silero VAD (v5) validated as the pipeline master-clock on the far-field MacBook mic — onset ~32ms, ZERO false-positives in a live Starbucks run (the Spike #16 killer scenario), no mid-sentence fragmentation; Silero LOCKED, M3.7.6 build de-risked and ready to scope
 
 **Format:** Architect + product-owner + agent. Spike plan approved with 3 architect revisions → agent built harness + resolved all OQs → live-mic validation by product owner → Silero PASS, spike closed.
