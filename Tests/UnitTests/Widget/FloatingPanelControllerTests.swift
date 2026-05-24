@@ -427,10 +427,14 @@ final class FloatingPanelControllerTests: XCTestCase {
 
         coordinator.isVoiceInactive = true
         await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+            "widget must stay .counting during 2s silence hold")
+
+        fakeScheduler.fire()  // advance 2s hold timer
 
         XCTAssertEqual(
             sut.viewModel.activityState, .waiting,
-            "VAD voice-inactive signal must transition widget to .waiting"
+            "VAD voice-inactive signal must transition widget to .waiting after 2s hold"
         )
     }
 

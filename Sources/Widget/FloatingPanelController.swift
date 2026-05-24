@@ -40,7 +40,11 @@ final class FloatingPanelController {
     private var hideToken: HideSchedulerToken?
     private var dragDebounceToken: HideSchedulerToken?
     private var recoveryEndToken: HideSchedulerToken?
+    private var silenceHoldToken: HideSchedulerToken?
     private var moveObserver: (any NSObjectProtocol)?
+
+    // TEMPORARY UI hold — M4 replaces with the WPM-pause-threshold setting.
+    private static let silenceHoldSeconds: TimeInterval = 2.0
     private var isProgrammaticMove = false
     private var isStarted = false
     private var lastTokenObservedAtNs: UInt64 = 0
@@ -113,8 +117,15 @@ final class FloatingPanelController {
         voiceInactiveSubscription = sessionCoordinator.$isVoiceInactive
             .dropFirst()
             .sink { [weak self] isInactive in
-                guard let self, isInactive else { return }
-                self.setActivityState(.waiting, reason: "vad-inactive")
+                guard let self else { return }
+                if isInactive {
+                    self.startSilenceHoldTimer()
+                } else {
+                    self.cancelSilenceHoldTimer()
+                    if self.panelState == .visible, self.viewModel.activityState == .waiting {
+                        self.setActivityState(.counting, reason: "vad-active")
+                    }
+                }
             }
 
         recoverySubscription = sessionCoordinator.$isRecovering
@@ -146,6 +157,7 @@ final class FloatingPanelController {
         cancelPendingDragDebounce()
         cancelPendingHide()
         cancelRecoveryEndTimer()
+        cancelSilenceHoldTimer()
         lingerStartedAt = nil
         hidePanel(reason: "lifecycle-stop")
     }
@@ -246,6 +258,7 @@ final class FloatingPanelController {
 
     private func handleSessionIdle() {
         cancelRecoveryEndTimer()
+        cancelSilenceHoldTimer()
 
         switch panelState {
         case .visible:
@@ -305,7 +318,11 @@ final class FloatingPanelController {
         case .visible:
             viewModel.totalTokens += 1
             cancelRecoveryEndTimer()
-            setActivityState(.counting, reason: "token")
+            // Gate is the sole authority for counting↔waiting. Tokens exit .warming
+            // but must not override .waiting set by the gate's hold timer.
+            if viewModel.activityState != .waiting {
+                setActivityState(.counting, reason: "token")
+            }
             let t3Ns = DispatchTime.now().uptimeNanoseconds
             let t1Ns = lastTokenObservedAtNs
             let sinkLatencyMs = Double(t2Ns - t1Ns) / 1_000_000.0
@@ -564,6 +581,24 @@ final class FloatingPanelController {
         if let token = hideToken {
             hideScheduler.cancel(token)
             hideToken = nil
+        }
+    }
+
+    // MARK: - Silence Hold Timer
+
+    private func startSilenceHoldTimer() {
+        cancelSilenceHoldTimer()
+        silenceHoldToken = hideScheduler.schedule(delay: Self.silenceHoldSeconds) { [weak self] in
+            guard let self, self.panelState == .visible else { return }
+            self.silenceHoldToken = nil
+            self.setActivityState(.waiting, reason: "silence-2s")
+        }
+    }
+
+    private func cancelSilenceHoldTimer() {
+        if let token = silenceHoldToken {
+            hideScheduler.cancel(token)
+            silenceHoldToken = nil
         }
     }
 

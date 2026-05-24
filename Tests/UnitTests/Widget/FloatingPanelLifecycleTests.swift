@@ -454,16 +454,17 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         sut.start()
         await activateSession()
         await showPanel()
-        // Establish .waiting state via VAD-inactive path (Architecture Z).
+        // Silence hold starts; widget must stay .counting during the 2s window.
         coordinator.isVoiceInactive = true
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .waiting)
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "must stay .counting during 2s silence hold")
 
         coordinator.lastTokenArrival = Date()
         await Task.yield()
 
         XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "Token arrival must set activityState to .counting")
+                       "Token arrival must keep activityState at .counting during hold")
     }
 
     // MARK: - Group 8: TrackingContentView hover callback wiring
@@ -717,6 +718,7 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
         coordinator.isVoiceInactive = true
         await Task.yield()
+        scheduler.fire(delay: 2.0)  // advance 2s silence hold timer
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
 
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
@@ -760,6 +762,7 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         await showPanel()
         coordinator.isVoiceInactive = true
         await Task.yield()
+        scheduler.fire(delay: 2.0)  // advance 2s silence hold timer
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
                        "Panel must be at 0.5 opacity in .waiting state before linger starts")
@@ -927,8 +930,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     // MARK: - Group 15: ViewModel initial state and linger preservation (AC-FIX7-audit)
 
     func testWidgetViewModel_InitialActivityState_IsIdle() {
-        let vm = WidgetViewModel()
-        XCTAssertEqual(vm.activityState, .idle,
+        let viewModel = WidgetViewModel()
+        XCTAssertEqual(viewModel.activityState, .idle,
                        "WidgetViewModel.activityState must initialize to .idle (AC25)")
     }
 
