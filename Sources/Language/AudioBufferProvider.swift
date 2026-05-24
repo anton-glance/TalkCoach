@@ -11,3 +11,17 @@ nonisolated struct AudioPipelineBufferProvider: AudioBufferProvider {
         pipeline.bufferStream
     }
 }
+
+/// Wraps a pre-vended `AsyncStream<CapturedAudioBuffer>` (e.g. one produced by
+/// `AudioBufferBroadcaster.makeStream()`) behind the `AudioBufferProvider` protocol.
+nonisolated struct StreamAudioBufferProvider: AudioBufferProvider {
+    private let stream: AsyncStream<CapturedAudioBuffer>
+
+    init(stream: AsyncStream<CapturedAudioBuffer>) {
+        self.stream = stream
+    }
+
+    func bufferStream() -> AsyncStream<CapturedAudioBuffer> {
+        stream
+    }
+}

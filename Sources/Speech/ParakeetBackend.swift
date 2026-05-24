@@ -22,11 +22,7 @@ actor ParakeetBackend: TranscriberBackend {
     private let engineReadyCont: AsyncStream<Void>.Continuation
     nonisolated let engineReadyStream: AsyncStream<Void>
 
-    private let speakingCont: AsyncStream<Bool>.Continuation
-    nonisolated let speakingActivityStream: AsyncStream<Bool>
-
     private var sessionWallStart: TimeInterval = 0
-    private var tracker = SpeakingActivityTracker()
 
     init() {
         var tc: AsyncStream<TranscribedToken>.Continuation!
@@ -36,15 +32,10 @@ actor ParakeetBackend: TranscriberBackend {
         var ec: AsyncStream<Void>.Continuation!
         engineReadyStream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { ec = $0 }
         engineReadyCont = ec
-
-        var sc: AsyncStream<Bool>.Continuation!
-        speakingActivityStream = AsyncStream(bufferingPolicy: .bufferingNewest(8)) { sc = $0 }
-        speakingCont = sc
     }
 
     func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws {
         sessionWallStart = Date().timeIntervalSinceReferenceDate
-        tracker = SpeakingActivityTracker()
         engineReadyFired = false
 
         let modelDir: URL
@@ -96,7 +87,6 @@ actor ParakeetBackend: TranscriberBackend {
         await rollingWindow.stopHopTimer()
         tokenCont.finish()
         engineReadyCont.finish()
-        speakingCont.finish()
         if let eng = engine {
             pk_engine_destroy(eng)
             engine = nil
@@ -128,22 +118,10 @@ actor ParakeetBackend: TranscriberBackend {
         let wordCount = Int(result.pointee.word_count)
         let text = result.pointee.text.map { String(cString: $0) } ?? ""
 
-        // Reset per-hop tracker so only the current window's tokens contribute to isCurrentlySpeaking.
-        tracker.reset()
-
         if wordCount > 0, let tokensPtr = result.pointee.tokens {
             // tok.start/end are window-relative (0…~windowDuration). Offset to session-absolute.
             let firstTokenAbsStart = windowStart + TimeInterval(tokensPtr[0].start)
             let lastTokenAbsEnd = windowStart + TimeInterval(tokensPtr[wordCount - 1].end)
-
-            for i in 0..<wordCount {
-                let tok = tokensPtr[i]
-                tracker.addToken(TimestampedWord(
-                    word: "",
-                    startTime: windowStart + TimeInterval(tok.start),
-                    endTime: windowStart + TimeInterval(tok.end)
-                ))
-            }
 
             if !text.isEmpty {
                 tokenCont.yield(TranscribedToken(
@@ -155,14 +133,11 @@ actor ParakeetBackend: TranscriberBackend {
             }
         }
 
-        let isSpeaking = tracker.isCurrentlySpeaking(asOf: elapsed)
-        speakingCont.yield(isSpeaking)
-
         if !engineReadyFired {
             engineReadyCont.yield(())
             engineReadyFired = true
         }
 
-        Logger.speech.info("ParakeetBackend: hop — \(wordCount) words, speaking=\(isSpeaking)")
+        Logger.speech.info("ParakeetBackend: hop — \(wordCount) words")
     }
 }

@@ -25,6 +25,20 @@ struct SessionWiring {
     let audioPipeline: AudioPipeline
     let languageDetector: any LanguageDetecting
     let backend: any TranscriberBackend
+    /// Provided by production; nil in tests that don't exercise VAD gate.
+    let vadGate: SileroVADGate?
+
+    init(
+        audioPipeline: AudioPipeline,
+        languageDetector: any LanguageDetecting,
+        backend: any TranscriberBackend,
+        vadGate: SileroVADGate? = nil
+    ) {
+        self.audioPipeline = audioPipeline
+        self.languageDetector = languageDetector
+        self.backend = backend
+        self.vadGate = vadGate
+    }
 }
 
 // MARK: - SessionEndReason
@@ -81,6 +95,8 @@ final class SessionCoordinator: ObservableObject {
     private var relayTask: Task<Void, Never>?
     private var speakingMonitorTask: Task<Void, Never>?
     private var activePipeline: AudioPipeline?
+    private var activeBroadcaster: AudioBufferBroadcaster?
+    private var activeVADGate: SileroVADGate?
 
     // Per-session measurement state — reset at start/end of each wiring cycle.
     private var sessionStartTime: Date?
@@ -284,7 +300,21 @@ final class SessionCoordinator: ObservableObject {
         }
 
         // Step 3: Backend start (Architecture AA — ParakeetBackend via TranscriberBackend protocol)
-        let audioProvider = AudioPipelineBufferProvider(pipeline: capturedWiring.audioPipeline)
+        // If a VAD gate is present, route audio through a broadcaster so both the gate
+        // and the backend each get their own independent consumer stream.
+        let audioProvider: any AudioBufferProvider
+        if let gate = capturedWiring.vadGate {
+            let broadcaster = AudioBufferBroadcaster()
+            activeBroadcaster = broadcaster
+            let backendStream = await broadcaster.makeStream()
+            let vadStream = await broadcaster.makeStream()
+            await broadcaster.drive(from: capturedWiring.audioPipeline.bufferStream)
+            await gate.start(stream: vadStream)
+            activeVADGate = gate
+            audioProvider = StreamAudioBufferProvider(stream: backendStream)
+        } else {
+            audioProvider = AudioPipelineBufferProvider(pipeline: capturedWiring.audioPipeline)
+        }
         do {
             try await capturedWiring.backend.start(locale: locale, audioProvider: audioProvider)
             Logger.session.info("SessionCoordinator: backend started [\(locale.identifier)]")
@@ -313,23 +343,18 @@ final class SessionCoordinator: ObservableObject {
         relayTask = Task { [weak self] in
             await self?.relayTokens(from: capturedWiring.backend.tokenStream)
         }
-        speakingMonitorTask = Task { [weak self] in
-            var silenceStartedAt: Date? = nil
-            for await hasVoice in capturedWiring.backend.speakingActivityStream {
-                if Task.isCancelled { break }
-                guard let self else { break }
-                if hasVoice {
-                    silenceStartedAt = nil
-                    self.isVoiceInactive = false
-                    let ts = Self.isoFormatter.string(from: Date())
-                    Logger.session.info("voice-active: \(ts, privacy: .public) true reason=voice-onset")
-                } else {
-                    let now = Date()
-                    if silenceStartedAt == nil { silenceStartedAt = now }
-                    if let start = silenceStartedAt, now.timeIntervalSince(start) >= 0.2 {
+        if let gate = activeVADGate {
+            speakingMonitorTask = Task { [weak self] in
+                for await event in gate.transitionStream {
+                    if Task.isCancelled { break }
+                    guard let self else { break }
+                    switch event {
+                    case .speechStarted(let t):
+                        self.isVoiceInactive = false
+                        Logger.session.info("voice-active: true reason=VAD-onset t=\(t, format: .fixed(precision: 3))s")
+                    case .speechStopped(let t):
                         self.isVoiceInactive = true
-                        let ts = Self.isoFormatter.string(from: now)
-                        Logger.session.info("voice-active: \(ts, privacy: .public) false reason=debounced-silence")
+                        Logger.session.info("voice-active: false reason=VAD-stopped t=\(t, format: .fixed(precision: 3))s")
                     }
                 }
             }
@@ -396,7 +421,14 @@ final class SessionCoordinator: ObservableObject {
         speakingMonitorTask?.cancel()
         speakingMonitorTask = nil
 
-        // Stop backend first: stop() finishes tokenStream, unblocking the relay loop.
+        // Stop gate (finishes transitionStream, unblocking speakingMonitorTask).
+        await activeVADGate?.stop()
+        activeVADGate = nil
+        // Stop broadcaster (cancels drive task, finishes consumer streams).
+        await activeBroadcaster?.stop()
+        activeBroadcaster = nil
+
+        // Stop backend: finishes tokenStream, unblocking the relay loop.
         // Then await relay completion so any in-flight consume() call drains before sessionEnded.
         await wiring?.backend.stop()
 

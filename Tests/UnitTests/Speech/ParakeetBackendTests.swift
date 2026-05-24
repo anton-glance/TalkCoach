@@ -41,15 +41,6 @@ final class ParakeetBackendTests: XCTestCase {
         XCTAssertEqual(tokenCount, 0)
     }
 
-    /// AC-3: stop() finishes speakingActivityStream.
-    func testStopFinishesSpeakingActivityStream() async {
-        let backend = ParakeetBackend()
-        await backend.stop()
-        var count = 0
-        for await _ in backend.speakingActivityStream { count += 1 }
-        XCTAssertEqual(count, 0)
-    }
-
     /// AC-3: stop() finishes engineReadyStream.
     func testStopFinishesEngineReadyStream() async {
         let backend = ParakeetBackend()
@@ -66,7 +57,6 @@ final class ParakeetBackendTests: XCTestCase {
     /// adding to the tracker, so isCurrentlySpeaking(asOf: elapsed) sees times consistent
     /// with the session clock. This test fails if windowAbsoluteStart() is absent or wrong.
     func testSpeakingActivityTrueDuringContinuousHops_withWindowOffset() {
-        let sampleRate: Double = 16_000
         let windowSamples = RollingAudioWindow.windowSamples  // 160_000 = 10s
 
         var tracker = SpeakingActivityTracker()

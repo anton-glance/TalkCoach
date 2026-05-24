@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var sessionStore: SessionStore?
     private(set) var settingsWindow: NSWindow?
     private var parakeetBackend: ParakeetBackend?
+    private var sileroProcessor: ProductionSileroFrameProcessor?
 
     override init() {
         super.init()
@@ -82,10 +83,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioBufferProvider: bufferProvider
         )
         let backend = ParakeetBackend()
+
+        // Silero VAD gate — loaded if model is present; degrades gracefully when absent
+        // (isVoiceInactive stays false, widget dim feature inactive until model downloads).
+        let vadGate: SileroVADGate?
+        if let modelPath = try? SileroModelLoader.modelPath(),
+           let processor = ProductionSileroFrameProcessor(modelPath: modelPath) {
+            sileroProcessor = processor
+            vadGate = SileroVADGate(frameProcessor: processor)
+            Logger.session.info("SileroVADGate: loaded from \(modelPath)")
+        } else {
+            Logger.session.info("SileroVADGate: silero_vad.onnx absent — VAD gate inactive until model downloads")
+            vadGate = nil
+        }
+
         sessionCoordinator.wiring = SessionWiring(
             audioPipeline: audioPipeline,
             languageDetector: languageDetector,
-            backend: backend
+            backend: backend,
+            vadGate: vadGate
         )
         parakeetBackend = backend
 

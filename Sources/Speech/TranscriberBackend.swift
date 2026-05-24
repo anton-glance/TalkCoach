@@ -26,5 +26,4 @@ nonisolated protocol TranscriberBackend: Sendable {
     func stop() async
     var tokenStream: AsyncStream<TranscribedToken> { get }
     var engineReadyStream: AsyncStream<Void> { get }
-    var speakingActivityStream: AsyncStream<Bool> { get }
 }
