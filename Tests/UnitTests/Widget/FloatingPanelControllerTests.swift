@@ -433,4 +433,124 @@ final class FloatingPanelControllerTests: XCTestCase {
             "VAD voice-inactive signal must transition widget to .waiting"
         )
     }
+
+    // MARK: - Gate hold timer and token-override guard (M3.7.6 fix)
+
+    /// Gate speechStopped + hold fires → token arrives → widget STAYS in .waiting.
+    /// RED fails because handleTokenArrival() unconditionally sets .counting.
+    func testTokenArrivalDoesNotOverrideWaitingState() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        fakeScheduler.fire()  // advance hold timer → .waiting
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .waiting, "must reach .waiting before token test")
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+            "token arrival must NOT override gate .waiting state")
+    }
+
+    /// Gate speechStopped then speechStarted within 2s — timer cancelled, widget stays .counting.
+    /// RED fails because isVoiceInactive=true immediately sets .waiting (no hold).
+    func testBreathPauseDoesNotFade() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+            "widget must stay .counting during 2s hold — breath pause must not trigger fade")
+
+        coordinator.isVoiceInactive = false
+        await Task.yield()
+        fakeScheduler.fire()  // cancelled timer — must be a no-op
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+            "voice-resume before 2s must cancel hold: widget stays .counting")
+    }
+
+    /// Gate speechStopped + 2s with no voice-resume → widget fades to .waiting.
+    /// RED fails because isVoiceInactive=true immediately sets .waiting (no hold timer to verify).
+    func testSilenceOver2sFadesToWaiting() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+            "widget must stay .counting during 2s silence hold")
+
+        fakeScheduler.fire()  // 2s hold timer fires
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+            "widget must fade to .waiting after 2s silence with no voice-resume")
+    }
+
+    /// From .waiting, gate speechStarted restores .counting immediately.
+    /// RED fails because voiceInactiveSubscription ignores isVoiceInactive=false.
+    func testVoiceResumeFromWaitingIsInstant() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        fakeScheduler.fire()  // advance hold timer to reach .waiting
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition: must reach .waiting")
+
+        coordinator.isVoiceInactive = false
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+            "gate speechStarted must instantly restore .counting from .waiting")
+    }
+
+    /// Hold timer cancelled on teardown — no .waiting transition fires after stop().
+    /// RED fails because isVoiceInactive=true immediately sets .waiting (no hold timer to cancel).
+    func testHoldTimerCancelledOnTeardown() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+            "hold timer pending — widget stays in .counting before teardown")
+
+        sut.stop()
+        fakeScheduler.fire()  // cancelled timer — must be a no-op
+
+        XCTAssertNotEqual(sut.viewModel.activityState, .waiting,
+            "cancelled hold timer must not set .waiting after teardown")
+    }
 }
