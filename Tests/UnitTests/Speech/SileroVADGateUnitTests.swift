@@ -35,16 +35,16 @@ final class SileroVADGateUnitTests: XCTestCase {
     func testOnsetIsImmediate() async {
         let gate = SileroVADGate(frameProcessor: StubFrameProcessor())
 
-        let task = Task {
+        let collectTask = Task {
             var events: [VADTransitionEvent] = []
-            for await e in gate.transitionStream { events.append(e) }
+            for await event in gate.transitionStream { events.append(event) }
             return events
         }
 
         await gate._testProcessFrame(0.9)  // above threshold → speechStarted
 
         await gate.stop()
-        let events = await task.value
+        let events = await collectTask.value
 
         XCTAssertEqual(events.count, 1)
         if case .speechStarted = events.first { } else {
@@ -59,24 +59,24 @@ final class SileroVADGateUnitTests: XCTestCase {
     func testDebounceFiltersShortSilence() async {
         let gate = SileroVADGate(frameProcessor: StubFrameProcessor())
 
-        let task = Task {
+        let collectTask = Task {
             var events: [VADTransitionEvent] = []
-            for await e in gate.transitionStream { events.append(e) }
+            for await event in gate.transitionStream { events.append(event) }
             return events
         }
 
         for _ in 0..<20 { await gate._testProcessFrame(0.9) }
-        for _ in 0..<4  { await gate._testProcessFrame(0.0) }
+        for _ in 0..<4 { await gate._testProcessFrame(0.0) }
         for _ in 0..<20 { await gate._testProcessFrame(0.9) }
 
         await gate.stop()
-        let events = await task.value
+        let events = await collectTask.value
 
         let starts = events.filter { if case .speechStarted = $0 { return true }; return false }
-        let stops  = events.filter { if case .speechStopped = $0 { return true }; return false }
+        let stops = events.filter { if case .speechStopped = $0 { return true }; return false }
 
         XCTAssertEqual(starts.count, 1, "expected 1 speechStarted")
-        XCTAssertEqual(stops.count, 0,  "4-frame pause must not trigger speechStopped")
+        XCTAssertEqual(stops.count, 0, "4-frame pause must not trigger speechStopped")
     }
 
     // MARK: - Long silence emits stop (RED: _updateDebounce stub does nothing → 0 stops ≠ 1)
@@ -85,23 +85,23 @@ final class SileroVADGateUnitTests: XCTestCase {
     func testDebounceEmitsTransitionOnLongSilence() async {
         let gate = SileroVADGate(frameProcessor: StubFrameProcessor())
 
-        let task = Task {
+        let collectTask = Task {
             var events: [VADTransitionEvent] = []
-            for await e in gate.transitionStream { events.append(e) }
+            for await event in gate.transitionStream { events.append(event) }
             return events
         }
 
         for _ in 0..<20 { await gate._testProcessFrame(0.9) }
-        for _ in 0..<6  { await gate._testProcessFrame(0.0) }
+        for _ in 0..<6 { await gate._testProcessFrame(0.0) }
 
         await gate.stop()
-        let events = await task.value
+        let events = await collectTask.value
 
         let starts = events.filter { if case .speechStarted = $0 { return true }; return false }
-        let stops  = events.filter { if case .speechStopped = $0 { return true }; return false }
+        let stops = events.filter { if case .speechStopped = $0 { return true }; return false }
 
         XCTAssertEqual(starts.count, 1, "expected 1 speechStarted")
-        XCTAssertEqual(stops.count, 1,  "6-frame silence must trigger speechStopped")
+        XCTAssertEqual(stops.count, 1, "6-frame silence must trigger speechStopped")
     }
 
     // MARK: - Transition stream finishes on stop (passes in both RED and GREEN)
@@ -122,9 +122,9 @@ final class SileroVADGateUnitTests: XCTestCase {
     func testSpeechStartedTimestampIsAudioTime() async {
         let gate = SileroVADGate(frameProcessor: StubFrameProcessor())
 
-        let task = Task {
+        let collectTask = Task {
             var events: [VADTransitionEvent] = []
-            for await e in gate.transitionStream { events.append(e) }
+            for await event in gate.transitionStream { events.append(event) }
             return events
         }
 
@@ -132,12 +132,12 @@ final class SileroVADGateUnitTests: XCTestCase {
         await gate._testProcessFrame(0.9)
 
         await gate.stop()
-        let events = await task.value
+        let events = await collectTask.value
 
-        guard case .speechStarted(let t) = events.first else {
+        guard case .speechStarted(let sessionTime) = events.first else {
             XCTFail("Expected speechStarted event")
             return
         }
-        XCTAssertEqual(t, 0.032, accuracy: 1e-9, "timestamp must be audio-time (frame 1 × 32ms)")
+        XCTAssertEqual(sessionTime, 0.032, accuracy: 1e-9, "timestamp must be audio-time (frame 1 × 32ms)")
     }
 }

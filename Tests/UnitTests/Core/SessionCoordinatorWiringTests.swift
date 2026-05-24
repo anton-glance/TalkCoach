@@ -1,4 +1,3 @@
-// swiftlint:disable file_length
 import AVFAudio
 import XCTest
 @testable import TalkCoach
@@ -162,6 +161,7 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         langError: Error? = nil,
         backend: (any TranscriberBackend)? = nil,
         engineStartShouldThrow: Bool = false
+        // swiftlint:disable:next large_tuple
     ) -> (
         wiring: SessionWiring,
         engineProvider: WiringFakeAudioEngineProvider,

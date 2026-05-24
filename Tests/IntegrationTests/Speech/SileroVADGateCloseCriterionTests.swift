@@ -34,44 +34,31 @@ final class SileroVADGateCloseCriterionTests: XCTestCase {
         nonisolated func reset() {}
     }
 
+    private func driveFrames(_ gate: SileroVADGate, count: Int, prob: Float) async {
+        for _ in 0..<count { await gate._testProcessFrame(prob) }
+    }
+
     // MARK: - M3 close criterion
 
+    // swiftlint:disable:next function_body_length
     func testGateM3CloseCriterionTwoStubSubscribers() async {
         let gate = SileroVADGate(frameProcessor: FixedFrameProcessor())
 
-        // Collect all transition events.
         let collectionTask = Task {
             var events: [VADTransitionEvent] = []
-            for await e in gate.transitionStream { events.append(e) }
+            for await event in gate.transitionStream { events.append(event) }
             return events
         }
 
-        // ── Block 1: 63 speech
-        for _ in 0..<63 { await gate._testProcessFrame(0.9) }
-
-        // ── Pause A: 4 silence (below 5-frame debounce — must NOT emit speechStopped)
-        for _ in 0..<4  { await gate._testProcessFrame(0.0) }
-
-        // ── Block 2: 63 speech
-        for _ in 0..<63 { await gate._testProcessFrame(0.9) }
-
-        // ── Pause B: 32 silence
-        for _ in 0..<32 { await gate._testProcessFrame(0.0) }
-
-        // ── Block 3: 63 speech
-        for _ in 0..<63 { await gate._testProcessFrame(0.9) }
-
-        // ── Pause C: 69 silence
-        for _ in 0..<69 { await gate._testProcessFrame(0.0) }
-
-        // ── Block 4: 63 speech
-        for _ in 0..<63 { await gate._testProcessFrame(0.9) }
-
-        // ── Pause D: 94 silence
-        for _ in 0..<94 { await gate._testProcessFrame(0.0) }
-
-        // ── Block 5: 63 speech
-        for _ in 0..<63 { await gate._testProcessFrame(0.9) }
+        await driveFrames(gate, count: 63, prob: 0.9)  // Block 1
+        await driveFrames(gate, count: 4, prob: 0.0)   // Pause A — must NOT emit stop
+        await driveFrames(gate, count: 63, prob: 0.9)  // Block 2
+        await driveFrames(gate, count: 32, prob: 0.0)  // Pause B
+        await driveFrames(gate, count: 63, prob: 0.9)  // Block 3
+        await driveFrames(gate, count: 69, prob: 0.0)  // Pause C
+        await driveFrames(gate, count: 63, prob: 0.9)  // Block 4
+        await driveFrames(gate, count: 94, prob: 0.0)  // Pause D
+        await driveFrames(gate, count: 63, prob: 0.9)  // Block 5
 
         await gate.stop()
         let events = await collectionTask.value
@@ -81,58 +68,57 @@ final class SileroVADGateCloseCriterionTests: XCTestCase {
 
         // ── AC-G2: alternating start/stop pattern beginning with start
         let starts = events.filter { if case .speechStarted = $0 { return true }; return false }
-        let stops  = events.filter { if case .speechStopped = $0 { return true }; return false }
+        let stops = events.filter { if case .speechStopped = $0 { return true }; return false }
         XCTAssertEqual(starts.count, 4, "expected 4 speechStarted events")
-        XCTAssertEqual(stops.count,  3, "expected 3 speechStopped events")
+        XCTAssertEqual(stops.count, 3, "expected 3 speechStopped events")
 
         guard events.count == 7 else { return }
 
-        // Extract timestamps
-        func ts(_ e: VADTransitionEvent) -> TimeInterval {
-            switch e {
-            case .speechStarted(let t): return t
-            case .speechStopped(let t): return t
+        func extractTime(_ event: VADTransitionEvent) -> TimeInterval {
+            switch event {
+            case .speechStarted(let time): return time
+            case .speechStopped(let time): return time
             }
         }
 
-        let t0 = ts(events[0])  // speechStarted  frame 1
-        let t1 = ts(events[1])  // speechStopped  frame 135
-        let t2 = ts(events[2])  // speechStarted  frame 163
-        let t3 = ts(events[3])  // speechStopped  frame 230
-        let t4 = ts(events[4])  // speechStarted  frame 295
-        let t5 = ts(events[5])  // speechStopped  frame 362
-        let t6 = ts(events[6])  // speechStarted  frame 452
+        let ts0 = extractTime(events[0])  // speechStarted  frame 1
+        let ts1 = extractTime(events[1])  // speechStopped  frame 135
+        let ts2 = extractTime(events[2])  // speechStarted  frame 163
+        let ts3 = extractTime(events[3])  // speechStopped  frame 230
+        let ts4 = extractTime(events[4])  // speechStarted  frame 295
+        let ts5 = extractTime(events[5])  // speechStopped  frame 362
+        let ts6 = extractTime(events[6])  // speechStarted  frame 452
 
         let frameMs = Double(SileroVADGate.frameSamples) / 16_000.0  // 0.032
 
         // ── AC-G3: first speechStarted at audio-time frame 1
-        XCTAssertEqual(t0,  1 * frameMs, accuracy: 1e-9, "speechStarted must be at frame 1 (audio time)")
+        XCTAssertEqual(ts0, 1 * frameMs, accuracy: 1e-9, "speechStarted must be at frame 1 (audio time)")
 
         // ── AC-G4: Pause A (4 frames) must not emit speechStopped — verified implicitly
         // by events[1] being speechStopped from Pause B, not Pause A.
 
         // ── AC-G5: speechStopped from Pause B at frame 135
-        XCTAssertEqual(t1, 135 * frameMs, accuracy: 1e-9, "Pause B: speechStopped at frame 135")
+        XCTAssertEqual(ts1, 135 * frameMs, accuracy: 1e-9, "Pause B: speechStopped at frame 135")
 
         // ── AC-G6: speechStarted from Block 3 at frame 163
-        XCTAssertEqual(t2, 163 * frameMs, accuracy: 1e-9, "Block 3: speechStarted at frame 163")
+        XCTAssertEqual(ts2, 163 * frameMs, accuracy: 1e-9, "Block 3: speechStarted at frame 163")
 
         // ── AC-G7: speechStopped from Pause C at frame 230
-        XCTAssertEqual(t3, 230 * frameMs, accuracy: 1e-9, "Pause C: speechStopped at frame 230")
+        XCTAssertEqual(ts3, 230 * frameMs, accuracy: 1e-9, "Pause C: speechStopped at frame 230")
 
         // ── AC-G8: speechStarted from Block 4 at frame 295
-        XCTAssertEqual(t4, 295 * frameMs, accuracy: 1e-9, "Block 4: speechStarted at frame 295")
+        XCTAssertEqual(ts4, 295 * frameMs, accuracy: 1e-9, "Block 4: speechStarted at frame 295")
 
         // ── AC-G9: speechStopped from Pause D at frame 362
-        XCTAssertEqual(t5, 362 * frameMs, accuracy: 1e-9, "Pause D: speechStopped at frame 362")
+        XCTAssertEqual(ts5, 362 * frameMs, accuracy: 1e-9, "Pause D: speechStopped at frame 362")
 
         // ── AC-G10: speechStarted from Block 5 at frame 452
-        XCTAssertEqual(t6, 452 * frameMs, accuracy: 1e-9, "Block 5: speechStarted at frame 452")
+        XCTAssertEqual(ts6, 452 * frameMs, accuracy: 1e-9, "Block 5: speechStarted at frame 452")
 
         // ── AC-G11 (WPM proxy): gaps ≥ 2 s
-        let gap1 = t2 - t1  // 0.896 s
-        let gap2 = t4 - t3  // 2.080 s
-        let gap3 = t6 - t5  // 2.880 s
+        let gap1 = ts2 - ts1  // 0.896 s
+        let gap2 = ts4 - ts3  // 2.080 s
+        let gap3 = ts6 - ts5  // 2.880 s
 
         let wpmGapsCount = [gap1, gap2, gap3].filter { $0 >= 2.0 }.count
         XCTAssertEqual(wpmGapsCount, 2, "exactly 2 stop-start gaps must be ≥ 2 s (WPM close criterion)")
@@ -142,7 +128,7 @@ final class SileroVADGateCloseCriterionTests: XCTestCase {
         XCTAssertEqual(monologueGapsCount, 1, "exactly 1 stop-start gap must be ≥ 2.5 s (Monologue reset criterion)")
 
         // ── AC-G13: gap2 is in the WPM zone but NOT the Monologue zone (key divergence)
-        XCTAssertGreaterThanOrEqual(gap2, 2.0,  "gap2 must be ≥ 2 s to close WPM window")
-        XCTAssertLessThan(gap2, 2.5,            "gap2 must be < 2.5 s — Monologue must NOT reset")
+        XCTAssertGreaterThanOrEqual(gap2, 2.0, "gap2 must be ≥ 2 s to close WPM window")
+        XCTAssertLessThan(gap2, 2.5, "gap2 must be < 2.5 s — Monologue must NOT reset")
     }
 }

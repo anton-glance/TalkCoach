@@ -1,4 +1,3 @@
-// swiftlint:disable file_length
 import Combine
 import CoreAudio
 import XCTest

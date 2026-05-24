@@ -23,8 +23,8 @@ final class AudioBufferBroadcasterTests: XCTestCase {
         await broadcaster.drive(from: source)
 
         let bufferCount = 10
-        for i in 0..<bufferCount {
-            sourceCont.yield(makeBuffer(sampleTime: Int64(i)))
+        for idx in 0..<bufferCount {
+            sourceCont.yield(makeBuffer(sampleTime: Int64(idx)))
         }
         sourceCont.finish()
 

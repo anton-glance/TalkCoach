@@ -92,8 +92,9 @@ actor SileroVADGate {
 
     // MARK: Internal test helper
 
-    /// Drives the debounce state machine directly with a known probability value,
-    /// bypassing the audio stream → resample → frame pipeline. For unit tests only.
+    // Drives the debounce state machine directly with a known probability value,
+    // bypassing the audio stream → resample → frame pipeline. For unit tests only.
+    // swiftlint:disable:next identifier_name
     func _testProcessFrame(_ prob: Float) {
         processedFrames += 1
         let elapsed = TimeInterval(processedFrames) * Double(Self.frameSamples) / 16_000.0
@@ -156,8 +157,8 @@ actor SileroVADGate {
         var mono = [Float](repeating: 0.0, count: count)
         let scale = 1.0 / Float(buffer.samples.count)
         for channel in buffer.samples {
-            for i in 0..<min(count, channel.count) {
-                mono[i] += channel[i] * scale
+            for idx in 0..<min(count, channel.count) {
+                mono[idx] += channel[idx] * scale
             }
         }
         return mono
@@ -173,8 +174,8 @@ actor SileroVADGate {
         let outputCount = Int(Double(samples.count) / ratio)
         var output = [Float]()
         output.reserveCapacity(outputCount)
-        for i in 0..<outputCount {
-            let srcIdx = Int(Double(i) * ratio)
+        for idx in 0..<outputCount {
+            let srcIdx = Int(Double(idx) * ratio)
             output.append(samples[min(srcIdx, samples.count - 1)])
         }
         return output

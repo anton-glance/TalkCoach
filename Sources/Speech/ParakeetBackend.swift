@@ -25,6 +25,7 @@ actor ParakeetBackend: TranscriberBackend {
     private var sessionWallStart: TimeInterval = 0
 
     init() {
+        // swiftlint:disable identifier_name
         var tc: AsyncStream<TranscribedToken>.Continuation!
         tokenStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { tc = $0 }
         tokenCont = tc
@@ -32,6 +33,7 @@ actor ParakeetBackend: TranscriberBackend {
         var ec: AsyncStream<Void>.Continuation!
         engineReadyStream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { ec = $0 }
         engineReadyCont = ec
+        // swiftlint:enable identifier_name
     }
 
     func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws {

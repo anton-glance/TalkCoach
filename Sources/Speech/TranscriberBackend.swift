@@ -8,7 +8,7 @@ struct TranscribedToken: Sendable, Equatable {
     let endTime: TimeInterval
     let isFinal: Bool
     var audioSamplePositionMs: Int = 0
-    var confidence: Float? = nil
+    var confidence: Float?
 }
 
 // MARK: - TranscriberBackendError

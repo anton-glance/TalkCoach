@@ -205,6 +205,23 @@ final class SessionCoordinator: ObservableObject {
         endCurrentSession(reason: .xButton)
     }
 
+    private func startSpeakingActivityMonitor(gate: SileroVADGate) {
+        speakingMonitorTask = Task { [weak self] in
+            for await event in gate.transitionStream {
+                if Task.isCancelled { break }
+                guard let self else { break }
+                switch event {
+                case .speechStarted(let sessionTime):
+                    self.isVoiceInactive = false
+                    Logger.session.info("voice-active: true reason=VAD-onset t=\(sessionTime, format: .fixed(precision: 3))s")
+                case .speechStopped(let sessionTime):
+                    self.isVoiceInactive = true
+                    Logger.session.info("voice-active: false reason=VAD-stopped t=\(sessionTime, format: .fixed(precision: 3))s")
+                }
+            }
+        }
+    }
+
     // MARK: Private — poll timer
 
     private func startPollTimer() {
@@ -300,21 +317,7 @@ final class SessionCoordinator: ObservableObject {
         }
 
         // Step 3: Backend start (Architecture AA — ParakeetBackend via TranscriberBackend protocol)
-        // If a VAD gate is present, route audio through a broadcaster so both the gate
-        // and the backend each get their own independent consumer stream.
-        let audioProvider: any AudioBufferProvider
-        if let gate = capturedWiring.vadGate {
-            let broadcaster = AudioBufferBroadcaster()
-            activeBroadcaster = broadcaster
-            let backendStream = await broadcaster.makeStream()
-            let vadStream = await broadcaster.makeStream()
-            await broadcaster.drive(from: capturedWiring.audioPipeline.bufferStream)
-            await gate.start(stream: vadStream)
-            activeVADGate = gate
-            audioProvider = StreamAudioBufferProvider(stream: backendStream)
-        } else {
-            audioProvider = AudioPipelineBufferProvider(pipeline: capturedWiring.audioPipeline)
-        }
+        let audioProvider = await startBroadcasterAndGate(wiring: capturedWiring)
         do {
             try await capturedWiring.backend.start(locale: locale, audioProvider: audioProvider)
             Logger.session.info("SessionCoordinator: backend started [\(locale.identifier)]")
@@ -343,26 +346,27 @@ final class SessionCoordinator: ObservableObject {
         relayTask = Task { [weak self] in
             await self?.relayTokens(from: capturedWiring.backend.tokenStream)
         }
-        if let gate = activeVADGate {
-            speakingMonitorTask = Task { [weak self] in
-                for await event in gate.transitionStream {
-                    if Task.isCancelled { break }
-                    guard let self else { break }
-                    switch event {
-                    case .speechStarted(let t):
-                        self.isVoiceInactive = false
-                        Logger.session.info("voice-active: true reason=VAD-onset t=\(t, format: .fixed(precision: 3))s")
-                    case .speechStopped(let t):
-                        self.isVoiceInactive = true
-                        Logger.session.info("voice-active: false reason=VAD-stopped t=\(t, format: .fixed(precision: 3))s")
-                    }
-                }
-            }
-        }
+        if let gate = activeVADGate { startSpeakingActivityMonitor(gate: gate) }
         startPollTimer()
 
         let setupMs = Int(Date().timeIntervalSince(wiringStart) * 1000)
         Logger.session.info("SessionCoordinator: wiring complete in \(setupMs)ms — locale=\(locale.identifier)")
+    }
+
+    /// Routes `AudioPipeline.bufferStream` to the backend (and optionally the VAD gate)
+    /// via an `AudioBufferBroadcaster`. Returns the `AudioBufferProvider` to pass to the backend.
+    private func startBroadcasterAndGate(wiring: SessionWiring) async -> any AudioBufferProvider {
+        guard let gate = wiring.vadGate else {
+            return AudioPipelineBufferProvider(pipeline: wiring.audioPipeline)
+        }
+        let broadcaster = AudioBufferBroadcaster()
+        activeBroadcaster = broadcaster
+        let backendStream = await broadcaster.makeStream()
+        let vadStream = await broadcaster.makeStream()
+        await broadcaster.drive(from: wiring.audioPipeline.bufferStream)
+        await gate.start(stream: vadStream)
+        activeVADGate = gate
+        return StreamAudioBufferProvider(stream: backendStream)
     }
 
     private func monitorLocaleChanges() async {
