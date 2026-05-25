@@ -83,12 +83,12 @@ actor ParakeetBackend: TranscriberBackend {
 
     func stop() async {
         bufferTask?.cancel()
+        await bufferTask?.value
         bufferTask = nil
         inferTask?.cancel()
+        await inferTask?.value
         inferTask = nil
         await rollingWindow.stopHopTimer()
-        tokenCont.finish()
-        engineReadyCont.finish()
         if let eng = engine {
             pk_engine_destroy(eng)
             engine = nil

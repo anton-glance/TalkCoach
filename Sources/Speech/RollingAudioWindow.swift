@@ -59,9 +59,9 @@ actor RollingAudioWindow {
         inputPCM.frameLength = AVAudioFrameCount(frameCount)
         if let floatData = inputPCM.floatChannelData {
             let chCount = min(Int(captured.channelCount), captured.samples.count)
-            for ch in 0..<chCount {
-                captured.samples[ch].withUnsafeBufferPointer { src in
-                    floatData[ch].update(from: src.baseAddress!, count: src.count)
+            for channel in 0..<chCount {
+                captured.samples[channel].withUnsafeBufferPointer { src in
+                    floatData[channel].update(from: src.baseAddress!, count: src.count)
                 }
             }
         }
@@ -105,7 +105,6 @@ actor RollingAudioWindow {
     func stopHopTimer() {
         hopTask?.cancel()
         hopTask = nil
-        hopContinuation.finish()
     }
 
     private func fireHop() {

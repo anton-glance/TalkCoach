@@ -6,6 +6,7 @@ struct TimestampedWord: Sendable {
     let startTime: TimeInterval
     let endTime: TimeInterval
 
+    // swiftlint:disable:next unneeded_synthesized_initializer
     nonisolated init(word: String, startTime: TimeInterval, endTime: TimeInterval) {
         self.word = word
         self.startTime = startTime
@@ -18,6 +19,7 @@ struct TimeRange: Sendable {
     let start: TimeInterval
     let end: TimeInterval
 
+    // swiftlint:disable:next unneeded_synthesized_initializer
     nonisolated init(start: TimeInterval, end: TimeInterval) {
         self.start = start
         self.end = end
@@ -32,6 +34,7 @@ struct WPMReading: Sendable {
     let rawWPM: Double
     let smoothedWPM: Double
 
+    // swiftlint:disable:next unneeded_synthesized_initializer
     nonisolated init(timestamp: TimeInterval, rawWPM: Double, smoothedWPM: Double) {
         self.timestamp = timestamp
         self.rawWPM = rawWPM
@@ -45,6 +48,7 @@ struct WindowedWordCount: Sendable {
     let windowStart: TimeInterval
     let windowEnd: TimeInterval
 
+    // swiftlint:disable:next unneeded_synthesized_initializer
     nonisolated init(words: [TimestampedWord], windowStart: TimeInterval, windowEnd: TimeInterval) {
         self.words = words
         self.windowStart = windowStart

@@ -86,6 +86,7 @@ final class SessionCoordinator: ObservableObject {
 
     var wiring: SessionWiring?
     private var consumers: [any TokenConsumer] = []
+    private var wpmCalculator: WPMCalculator?
 
     // Exposed as private(set) so tests can `await sut.sessionWiringTask?.value`
     // to synchronise on wiring completion without polling.
@@ -94,6 +95,11 @@ final class SessionCoordinator: ObservableObject {
     private var localeMonitorTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
     private var speakingMonitorTask: Task<Void, Never>?
+    // Serialises session 2's runSession() against session 1's teardownWiring().
+    // Without this guard, session 2's relay can start consuming tokenStream while
+    // session 1's cancelled relay is still exiting — two concurrent consumers on a
+    // single-consumer AsyncStream.
+    private var teardownTask: Task<Void, Never>?
     private var activePipeline: AudioPipeline?
     private var activeBroadcaster: AudioBufferBroadcaster?
     private var activeVADGate: SileroVADGate?
@@ -188,6 +194,10 @@ final class SessionCoordinator: ObservableObject {
         consumers.append(consumer)
     }
 
+    func setWPMCalculator(_ calc: WPMCalculator) {
+        wpmCalculator = calc
+    }
+
     /// Called by AudioPipeline when a recovery cycle begins.
     func audioPipelineDidBeginRecovery() {
         isRecovering = true
@@ -213,9 +223,11 @@ final class SessionCoordinator: ObservableObject {
                 switch event {
                 case .speechStarted(let sessionTime):
                     self.isVoiceInactive = false
+                    self.wpmCalculator?.notifyVADEvent(event)
                     Logger.session.info("voice-active: true reason=VAD-onset t=\(sessionTime, format: .fixed(precision: 3))s")
                 case .speechStopped(let sessionTime):
                     self.isVoiceInactive = true
+                    self.wpmCalculator?.notifyVADEvent(event)
                     Logger.session.info("voice-active: false reason=VAD-stopped t=\(sessionTime, format: .fixed(precision: 3))s")
                 }
             }
@@ -267,13 +279,21 @@ final class SessionCoordinator: ObservableObject {
         }
 
         guard wiring != nil else { return }
-        Task { [weak self] in await self?.teardownWiring() }
+        let teardown = Task { [weak self] in
+            guard let self else { return }
+            await self.teardownWiring()
+        }
+        teardownTask = teardown
     }
 
     // MARK: Private — wiring sequence
 
     // swiftlint:disable:next function_body_length
     private func runSession() async {
+        if let pending = teardownTask {
+            await pending.value
+            teardownTask = nil
+        }
         guard let capturedWiring = wiring else { return }
         let wiringStart = Date()
         sessionStartTime = wiringStart
@@ -346,6 +366,7 @@ final class SessionCoordinator: ObservableObject {
         relayTask = Task { [weak self] in
             await self?.relayTokens(from: capturedWiring.backend.tokenStream)
         }
+        wpmCalculator?.sessionActivated()
         if let gate = activeVADGate { startSpeakingActivityMonitor(gate: gate) }
         startPollTimer()
 
@@ -409,7 +430,9 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private func handleEngineReadyEvent() {
-        lastEngineReadyAt = Date()
+        let readyTime = Date()
+        lastEngineReadyAt = readyTime
+        wpmCalculator?.engineReadyFired(at: readyTime)
         Logger.session.info("SessionCoordinator: engine-ready event received from backend")
     }
 
