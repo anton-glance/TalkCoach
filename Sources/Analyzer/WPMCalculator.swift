@@ -14,7 +14,8 @@ final class WPMCalculator: TokenConsumer {
 
     // MARK: - Private types
 
-    private struct WordEntry {
+    private struct LatestSnapshot {
+        let wordCount: Int
         let arrivedAt: Date
     }
 
@@ -40,7 +41,8 @@ final class WPMCalculator: TokenConsumer {
 
     /// Non-nil only while a session is active. nil = post-teardown guard armed.
     private var engineReadyCutoff: Date?
-    private var wordEntries: [WordEntry] = []
+    /// The most-recent token's word count. Replaced (not appended) on each hop.
+    private var latestSnapshot: LatestSnapshot?
     private var voiceIntervals: [VoiceInterval] = []
     private var currentSpeechStart: Date?
     private var refreshToken: HideSchedulerToken?
@@ -76,9 +78,9 @@ final class WPMCalculator: TokenConsumer {
     /// Discards any tokens that arrive before `readyTime + engineReadyGracePeriod`.
     func engineReadyFired(at readyTime: Date) {
         isActive = true  // belt-and-suspenders if sessionActivated() was not called first
-        let prevWords = wordEntries.count
+        let prevWords = latestSnapshot?.wordCount ?? 0
         engineReadyCutoff = readyTime.addingTimeInterval(Self.engineReadyGracePeriod)
-        wordEntries.removeAll()
+        latestSnapshot = nil
         // voiceIntervals and currentSpeechStart intentionally preserved:
         // VAD events from session start are valid; voicedSecondsInWindow clips to engineReadyCutoff.
         Logger.analyzer.info(
@@ -90,7 +92,17 @@ final class WPMCalculator: TokenConsumer {
     /// Call when the widget enters waiting state (silence-hold fired).
     /// Cancels the refresh loop, clears in-window state, and publishes nil.
     /// The loop restarts on the next `notifyVADEvent(.speechStarted)`.
-    func enterWaiting() {}
+    func enterWaiting() {
+        if let token = refreshToken {
+            scheduler.cancel(token)
+            refreshToken = nil
+        }
+        latestSnapshot = nil
+        voiceIntervals.removeAll()
+        currentSpeechStart = nil
+        wpmRaw = nil
+        wpmVoiced = nil
+    }
 
     /// Forward VAD transitions from `SileroVADGate.transitionStream` here.
     func notifyVADEvent(_ event: VADTransitionEvent) {
@@ -101,6 +113,10 @@ final class WPMCalculator: TokenConsumer {
             Logger.analyzer.info("wpm-vad: started cutoffSet=\(cutoffSet) accepted=\(accepted)")
             guard isActive else { return }
             currentSpeechStart = now()
+            // Restart the refresh loop if enterWaiting() paused it.
+            if refreshToken == nil, engineReadyCutoff != nil {
+                startRefreshLoop()
+            }
         case .speechStopped:
             Logger.analyzer.info("wpm-vad: stopped cutoffSet=\(cutoffSet) accepted=\(accepted)")
             guard isActive else { return }
@@ -126,9 +142,7 @@ final class WPMCalculator: TokenConsumer {
             Logger.analyzer.info("wpm-consume: words=\(count) beforeCutoff=\(isBefore) accepted=\(!isBefore && count > 0)")
             guard arrival >= cutoff else { return }
             guard count > 0 else { return }
-            for _ in 0..<count {
-                wordEntries.append(WordEntry(arrivedAt: arrival))
-            }
+            latestSnapshot = LatestSnapshot(wordCount: count, arrivedAt: arrival)
         }
     }
 
@@ -140,7 +154,7 @@ final class WPMCalculator: TokenConsumer {
                 refreshToken = nil
             }
             engineReadyCutoff = nil
-            wordEntries.removeAll()
+            latestSnapshot = nil
             voiceIntervals.removeAll()
             currentSpeechStart = nil
             wpmRaw = nil
@@ -171,18 +185,21 @@ final class WPMCalculator: TokenConsumer {
         let currentNow = now()
         let cutoff = currentNow.addingTimeInterval(-Self.windowSeconds)
 
-        wordEntries.removeAll { $0.arrivedAt < cutoff }
+        // Evict snapshot if it fell outside the window.
+        if let snap = latestSnapshot, snap.arrivedAt < cutoff {
+            latestSnapshot = nil
+        }
         voiceIntervals.removeAll { interval in
             guard let end = interval.end else { return false }
             return end < cutoff
         }
 
-        let words = wordEntries.count
+        let words = latestSnapshot?.wordCount ?? 0
         let voicedSec = voicedSecondsInWindow(since: cutoff, now: currentNow)
 
         let tElapsed = engineReadyCutoff.map { currentNow.timeIntervalSince($0) } ?? 0
         Logger.analyzer.info(
-            "wpm-refresh: A=\(self.wpmRaw ?? -1) B=\(self.wpmVoiced ?? -1) words=\(words) voicedSec=\(voicedSec, format: .fixed(precision: 2)) wordEntries=\(self.wordEntries.count) voiceIntervals=\(self.voiceIntervals.count) currentSpeechStartSet=\(self.currentSpeechStart != nil) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
+            "wpm-refresh: A=\(self.wpmRaw ?? -1) B=\(self.wpmVoiced ?? -1) words=\(words) voicedSec=\(voicedSec, format: .fixed(precision: 2)) snapshotWords=\(self.latestSnapshot?.wordCount ?? 0) voiceIntervals=\(self.voiceIntervals.count) currentSpeechStartSet=\(self.currentSpeechStart != nil) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
         )
 
         guard words >= Self.minWordsForReading, voicedSec >= Self.minVoicedSecondsForReading else {
