@@ -141,6 +141,55 @@ final class SileroVADGateUnitTests: XCTestCase {
         }
     }
 
+    // MARK: - Stream liveness after session restart
+
+    /// Regression: transitionStream must be live after a stop()→start() cycle where session 1's
+    /// speakingMonitorTask was cancelled-while-suspended (which terminates the old AsyncStream storage).
+    ///
+    /// With the bug: start() does not recreate transitionStream; session 2's consumer immediately
+    /// gets nil from the terminal stream, and VAD events never reach WPMCalculator —
+    /// wpm-warmup-cutoff logs speechStartSet=false, A_raw stays -1.
+    /// With the fix: start() recreates the stream; session 2's consumer receives the event.
+    func testTransitionStreamLiveAfterSessionRestart() async {
+        let gate = SileroVADGate(frameProcessor: StubFrameProcessor())
+
+        // Session 1: suspend a consumer on the initial transitionStream.
+        let session1Stream = gate.transitionStream
+        let session1Task = Task<VADTransitionEvent?, Never> { @MainActor in
+            for await event in session1Stream { return event }
+            return nil
+        }
+        await Task.yield()  // ensure session1Task reaches its for-await suspension
+
+        // Simulate session 1 teardown: cancel while suspended — terminates old stream storage.
+        session1Task.cancel()
+        _ = await session1Task.value
+
+        // Session 2: start() must recreate transitionStream.
+        await gate.start(stream: AsyncStream { _ in })
+
+        // Session 2 consumer on the post-start stream.
+        let session2Stream = gate.transitionStream
+        let session2Task = Task<VADTransitionEvent?, Never> { @MainActor in
+            for await event in session2Stream { return event }
+            return nil
+        }
+        await Task.yield()  // ensure session2Task reaches its for-await suspension
+
+        // Drive a frame — must arrive at session 2's consumer.
+        await gate._testProcessFrame(0.9)
+
+        let received = await session2Task.value
+        XCTAssertNotNil(
+            received,
+            "transitionStream must be live after start() — session 2 speakingMonitorTask must receive VAD event"
+        )
+        if case .speechStarted = received { } else {
+            XCTFail("Expected speechStarted, got \(String(describing: received))")
+        }
+        session2Task.cancel()
+    }
+
     // MARK: - Audio-time timestamps (RED: _updateDebounce stub does nothing → no events)
 
     /// speechStarted timestamp must equal frame_index × 32ms (audio time, not wall clock).
