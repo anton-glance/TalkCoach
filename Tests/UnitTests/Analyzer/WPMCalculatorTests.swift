@@ -207,12 +207,11 @@ final class WPMCalculatorTests: XCTestCase {
 
         fake.fireNext()
 
-        // Window = [t+1, t+11]; voiced = closed [t+1, t+7] = 6s
-        // wpmRaw   = round(10 / (10/60)) = 60
-        // wpmVoiced = round(10 / (6/60)) = round(100) = 100
+        // Window = [t+1, t+11]; voiced = closed [t+1, t+7] = 6s (floor: 6s >= 2s)
+        // wpmRaw   = round(10 / (10/60)) = 60 — flat 10s denominator
+        // wpmVoiced = EMA-smoothed raw; first reading seeds to rawWPM = 60 (no prior smoothed)
         XCTAssertEqual(sut.wpmRaw, 60)
-        XCTAssertEqual(sut.wpmVoiced, 100)
-        XCTAssertGreaterThan(sut.wpmVoiced!, sut.wpmRaw!)
+        XCTAssertEqual(sut.wpmVoiced, 60, "B seeds to rawWPM on first reading — voiced-seconds denominator removed")
     }
 
     // MARK: AC4 — Minimum-data floor
@@ -469,11 +468,115 @@ final class WPMCalculatorTests: XCTestCase {
 
         fake.fireNext()
 
-        // voicedSec = [0,7.5] clipped to [3.5,7.5] = 4s
-        // wpmVoiced = round(4 / (4/60)) = 60
-        // wpmRaw    = round(4 / (10/60)) = 24
-        XCTAssertEqual(sut.wpmVoiced, 60, "voiced seconds must be clipped to engineReadyCutoff")
+        // voicedSec = [0,7.5] clipped to [3.5,7.5] = 4s (floor: 4s >= 2s — clip still matters for floor gate)
+        // wpmRaw    = round(4 / (10/60)) = 24 — flat 10s denominator
+        // wpmVoiced = EMA-smoothed raw; first reading seeds to rawWPM = 24 (no prior smoothed)
         XCTAssertEqual(sut.wpmRaw, 24)
+        XCTAssertEqual(sut.wpmVoiced, 24, "B seeds to rawWPM on first reading — voiced-seconds denominator removed")
+    }
+
+    // MARK: EMA-smoothed B — raw vs smoothed A/B spec
+
+    func testRawWPMIsWordsOverTenSeconds() async {
+        // A = words / (10/60). Flat 10s denominator — voiced-seconds play no role in A.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 4.0)  // 4s voiced >= 2s floor
+
+        // 24 words → 24 / (10/60) = 24 * 6 = 144
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine ten " +
+            "one two three four"
+        ))
+        fake.fireNext()
+
+        XCTAssertEqual(sut.wpmRaw, 144, "A must be words / flat-10s, not words / voiced-seconds")
+    }
+
+    func testSmoothedWPMAppliesEMA() async {
+        // B = alpha * rawWPM + (1 - alpha) * prevB, alpha = 0.4.
+        // First reading seeds to rawWPM (no prior smoothed value).
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+
+        clock.advance(by: 1.0)  // t=1
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1: 10 words at t=5 → rawWPM1 = 60; B seeds to 60 (no prior)
+        clock.advance(by: 4.0)  // t=5; voiced open from t=1 = 4s >= 2s floor
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+
+        XCTAssertEqual(sut.wpmRaw, 60, "hop-1 rawWPM")
+        XCTAssertEqual(sut.wpmVoiced, 60, "hop-1 B seeds to rawWPM — no prior smoothed value")
+
+        // Hop 2: 20 words at t=8 → rawWPM2 = 120; B = 0.4*120 + 0.6*60 = 48+36 = 84
+        clock.advance(by: 3.0)  // t=8; voiced open from t=1 = 7s >= 2s floor
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+
+        XCTAssertEqual(sut.wpmRaw, 120, "hop-2 rawWPM")
+        XCTAssertEqual(sut.wpmVoiced, 84, "hop-2 B = 0.4*120 + 0.6*60 = 84")
+    }
+
+    func testSmoothedResetsAfterWaiting() async {
+        // After enterWaiting(), previousSmoothedWPM is cleared.
+        // The first reading after resume seeds B to rawWPM (no carryover from pre-waiting B).
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+
+        clock.advance(by: 1.0)  // t=1
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1: seed B = 60
+        clock.advance(by: 4.0)  // t=5
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+
+        // Hop 2: push B to 84 (0.4*120 + 0.6*60)
+        clock.advance(by: 3.0)  // t=8
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmVoiced, 84, "setup: B should be 84 before waiting")
+
+        // Enter waiting — clears EMA state
+        sut.enterWaiting()
+
+        // Resume: speechStarted restarts the loop
+        clock.advance(by: 2.0)  // t=10
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // 10 words at t=14 (4s voiced since resume >= 2s floor)
+        clock.advance(by: 4.0)  // t=14
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+
+        // rawWPM = 60; previousSmoothedWPM was cleared by enterWaiting → seeds to 60, not EMA from 84
+        XCTAssertEqual(sut.wpmRaw, 60)
+        XCTAssertEqual(sut.wpmVoiced, 60, "B must re-seed after waiting — no carryover of pre-waiting smoothed value")
     }
 
     // MARK: D1 — Snapshot-replace (overlapping hops must not multiply word count)
