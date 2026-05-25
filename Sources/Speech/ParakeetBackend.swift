@@ -40,20 +40,24 @@ actor ParakeetBackend: TranscriberBackend {
         sessionWallStart = Date().timeIntervalSinceReferenceDate
         engineReadyFired = false
 
-        let modelDir: URL
-        do {
-            modelDir = try ParakeetModelLoader.modelDirectoryURL()
-        } catch {
-            Logger.speech.error("ParakeetBackend: model directory not found — \(error)")
-            throw TranscriberBackendError.modelUnavailable
+        if engine == nil {
+            let modelDir: URL
+            do {
+                modelDir = try ParakeetModelLoader.modelDirectoryURL()
+            } catch {
+                Logger.speech.error("ParakeetBackend: model directory not found — \(error)")
+                throw TranscriberBackendError.modelUnavailable
+            }
+            let eng: OpaquePointer? = modelDir.path.withCString { pk_engine_create($0) }
+            guard let eng else {
+                Logger.speech.error("ParakeetBackend: pk_engine_create returned null — model not found at \(modelDir.path)")
+                throw TranscriberBackendError.modelUnavailable
+            }
+            engine = eng
+            Logger.speech.info("ParakeetBackend: engine loaded from \(modelDir.path)")
+        } else {
+            Logger.speech.info("ParakeetBackend: reusing existing engine for new session")
         }
-        let eng: OpaquePointer? = modelDir.path.withCString { pk_engine_create($0) }
-        guard let eng else {
-            Logger.speech.error("ParakeetBackend: pk_engine_create returned null — model not found at \(modelDir.path)")
-            throw TranscriberBackendError.modelUnavailable
-        }
-        engine = eng
-        Logger.speech.info("ParakeetBackend: engine loaded from \(modelDir.path)")
 
         await rollingWindow.resetForNewSession()
         Logger.speech.info("pk: rollingWindow reset for new session")
@@ -88,6 +92,13 @@ actor ParakeetBackend: TranscriberBackend {
         }
     }
 
+    deinit {
+        // Engine survives stop()/start() cycles — destroy only at final deallocation.
+        if let eng = engine {
+            pk_engine_destroy(eng)
+        }
+    }
+
     func stop() async {
         bufferTask?.cancel()
         await bufferTask?.value
@@ -96,10 +107,7 @@ actor ParakeetBackend: TranscriberBackend {
         await inferTask?.value
         inferTask = nil
         await rollingWindow.stopHopTimer()
-        if let eng = engine {
-            pk_engine_destroy(eng)
-            engine = nil
-        }
+        // Engine intentionally kept alive — reused on next start() to avoid ORT re-init.
     }
 
     /// Session-absolute start of the window being inferred.

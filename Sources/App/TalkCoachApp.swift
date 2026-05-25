@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settingsWindow: NSWindow?
     private var parakeetBackend: ParakeetBackend?
     private var sileroProcessor: ProductionSileroFrameProcessor?
+    private var wpmCalculator: WPMCalculator?
 
     override init() {
         super.init()
@@ -30,9 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioProcessProber: SystemAudioProcessProber(),
             systemEventObserver: SystemEventObserver()
         )
+        let wpmCalc = WPMCalculator(settings: settingsStore, scheduler: DispatchHideScheduler())
+        sessionCoordinator.addConsumer(wpmCalc)
+        sessionCoordinator.setWPMCalculator(wpmCalc)
+        wpmCalculator = wpmCalc
         floatingPanelController = FloatingPanelController(
             sessionCoordinator: sessionCoordinator,
-            settingsStore: settingsStore
+            settingsStore: settingsStore,
+            wpmCalculator: wpmCalc
         )
 
         do {
@@ -137,8 +143,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         floatingPanelController.stop()
         sessionCoordinator.stop()
-        // ParakeetBackend.stop() is called via sessionCoordinator.stop() → pk_engine_destroy.
-        // No Metal contexts to tear down (Architecture AA is CPU-only ONNX).
+        // ParakeetBackend.stop() tears down tasks and audio but keeps the engine alive for
+        // session 2+. pk_engine_destroy runs in ParakeetBackend.deinit when parakeetBackend
+        // is released at app termination. No Metal contexts (Architecture AA is CPU-only ONNX).
     }
 
     func openSettings() {
