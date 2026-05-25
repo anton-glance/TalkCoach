@@ -58,6 +58,47 @@ final class RollingAudioWindowTests: XCTestCase {
         try await window.append(buf)
     }
 
+    /// resetForNewSession() must clear buffer and converter so session 2 starts clean.
+    func testResetForNewSessionClearsBuffer() async throws {
+        let window = RollingAudioWindow()
+        try await window.configure(sampleRate: 16_000, channelCount: 1)
+        let buf = makeBuffer(sampleRate: 16_000, channelCount: 1, frameLength: 1024)
+        try await window.append(buf)
+
+        let countBefore = await window.bufferCountForTesting
+        XCTAssertGreaterThan(countBefore, 0, "buffer must have samples after append")
+
+        await window.resetForNewSession()
+
+        let countAfter = await window.bufferCountForTesting
+        XCTAssertEqual(countAfter, 0, "buffer must be empty after resetForNewSession")
+        let converterNil = await window.converterIsNilForTesting
+        XCTAssertTrue(converterNil, "converter must be nil after resetForNewSession")
+    }
+
+    /// After reset + reconfigure, buffer grows from zero (not from previous session's cap).
+    func testBufferGrowsFromZeroAfterReset() async throws {
+        let window = RollingAudioWindow()
+        try await window.configure(sampleRate: 16_000, channelCount: 1)
+        // Fill to cap
+        for _ in 0..<200 {
+            let buf = makeBuffer(sampleRate: 16_000, channelCount: 1, frameLength: 1024)
+            try await window.append(buf)
+        }
+        let countAtCap = await window.bufferCountForTesting
+        XCTAssertEqual(countAtCap, RollingAudioWindow.bufferCapSamples, "buffer must be at cap before reset")
+
+        await window.resetForNewSession()
+        try await window.configure(sampleRate: 16_000, channelCount: 1)
+
+        let singleBuf = makeBuffer(sampleRate: 16_000, channelCount: 1, frameLength: 160)
+        try await window.append(singleBuf)
+
+        let countAfter = await window.bufferCountForTesting
+        XCTAssertGreaterThan(countAfter, 0, "buffer must grow after reset + append")
+        XCTAssertLessThan(countAfter, 1_000, "buffer must start from zero after reset, not from old cap level")
+    }
+
     /// stopHopTimer() must NOT finish hopStream — the stream lives for the backend's lifetime.
     /// A consumer already waiting on the stream must receive an element yielded after stop.
     func testStopDoesNotFinishHopStream() async throws {

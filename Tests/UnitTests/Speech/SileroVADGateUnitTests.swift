@@ -44,6 +44,8 @@ final class SileroVADGateUnitTests: XCTestCase {
         await gate._testProcessFrame(0.9)  // above threshold → speechStarted
 
         await gate.stop()
+        for _ in 0..<5 { await Task.yield() }
+        collectTask.cancel()
         let events = await collectTask.value
 
         XCTAssertEqual(events.count, 1)
@@ -70,6 +72,8 @@ final class SileroVADGateUnitTests: XCTestCase {
         for _ in 0..<20 { await gate._testProcessFrame(0.9) }
 
         await gate.stop()
+        for _ in 0..<5 { await Task.yield() }
+        collectTask.cancel()
         let events = await collectTask.value
 
         let starts = events.filter { if case .speechStarted = $0 { return true }; return false }
@@ -95,6 +99,8 @@ final class SileroVADGateUnitTests: XCTestCase {
         for _ in 0..<6 { await gate._testProcessFrame(0.0) }
 
         await gate.stop()
+        for _ in 0..<5 { await Task.yield() }
+        collectTask.cancel()
         let events = await collectTask.value
 
         let starts = events.filter { if case .speechStarted = $0 { return true }; return false }
@@ -104,16 +110,35 @@ final class SileroVADGateUnitTests: XCTestCase {
         XCTAssertEqual(stops.count, 1, "6-frame silence must trigger speechStopped")
     }
 
-    // MARK: - Transition stream finishes on stop (passes in both RED and GREEN)
+    // MARK: - Transition stream survives stop (live-pipeline shape)
 
-    func testTransitionStreamFinishesOnStop() async {
+    /// transitionStream must NOT be finished by stop(). A consumer already waiting
+    /// on the stream must receive an event yielded (via _testProcessFrame) after stop().
+    /// With the bug (finish() in stop()): the stream is killed, yield is a no-op, consumer
+    /// gets nil → test FAILS. With the fix: stream lives, event arrives → test PASSES.
+    func testTransitionStreamSurvivesStop() async {
         let gate = SileroVADGate(frameProcessor: StubFrameProcessor())
+
+        let collectTask = Task<VADTransitionEvent?, Never> {
+            for await event in gate.transitionStream {
+                return event
+            }
+            return nil
+        }
+        await Task.yield()
 
         await gate.stop()
 
-        var count = 0
-        for await _ in gate.transitionStream { count += 1 }
-        XCTAssertEqual(count, 0)
+        // Yield an event after stop — must arrive at the waiting consumer.
+        await gate._testProcessFrame(0.9)
+
+        let received = await collectTask.value
+        XCTAssertNotNil(received, "transitionStream must survive stop() — event must arrive at waiting consumer")
+        if let event = received {
+            if case .speechStarted = event { } else {
+                XCTFail("Expected speechStarted, got \(event)")
+            }
+        }
     }
 
     // MARK: - Audio-time timestamps (RED: _updateDebounce stub does nothing → no events)
@@ -132,6 +157,8 @@ final class SileroVADGateUnitTests: XCTestCase {
         await gate._testProcessFrame(0.9)
 
         await gate.stop()
+        for _ in 0..<5 { await Task.yield() }
+        collectTask.cancel()
         let events = await collectTask.value
 
         guard case .speechStarted(let sessionTime) = events.first else {

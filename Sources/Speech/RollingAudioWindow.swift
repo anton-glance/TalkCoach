@@ -29,6 +29,7 @@ actor RollingAudioWindow {
     /// Configure the resampling converter from the input buffer's format.
     /// Must be called before `append(_:)`. Safe to call multiple times if format is stable.
     func configure(sampleRate: Double, channelCount: UInt32) throws {
+        let converterWasNil = converter == nil
         guard let inputFormat = AVAudioFormat(
             standardFormatWithSampleRate: sampleRate,
             channels: AVAudioChannelCount(channelCount)
@@ -38,17 +39,24 @@ actor RollingAudioWindow {
             channels: 1,
             interleaved: false
         ) else {
+            Logger.speech.error("rw: configure failed formatCreation converterWasNil=\(converterWasNil ? "true" : "false")")
             throw RollingAudioWindowError.formatCreationFailed
         }
         guard let conv = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+            Logger.speech.error("rw: configure failed converterCreation converterWasNil=\(converterWasNil ? "true" : "false")")
             throw RollingAudioWindowError.converterCreationFailed
         }
         self.converter = conv
+        Logger.speech.info("rw: configure done converterWasNil=\(converterWasNil ? "true" : "false") rate=\(sampleRate) ch=\(channelCount)")
     }
 
     /// Append a captured buffer. Resamples to 16 kHz mono f32 and appends to ring buffer.
     func append(_ captured: CapturedAudioBuffer) throws {
-        guard let conv = converter else { return }
+        guard let conv = converter else {
+            let bufCount = buffer.count
+            Logger.speech.warning("rw: append skipped — converter nil bufferCount=\(bufCount)")
+            return
+        }
 
         let frameCount = Int(captured.frameLength)
         guard frameCount > 0, let inputFormat = AVAudioFormat(
@@ -89,10 +97,13 @@ actor RollingAudioWindow {
         if buffer.count > Self.bufferCapSamples {
             buffer.removeFirst(buffer.count - Self.bufferCapSamples)
         }
+        let bufCount = buffer.count
+        Logger.speech.debug("rw: append in=\(frameCount) out=\(outFrames) bufferCount=\(bufCount)")
     }
 
     /// Start the hop timer. Fires every `hopSeconds`, yielding a snapshot of the rolling window.
     func startHopTimer() {
+        Logger.speech.info("rw: startHopTimer called")
         hopTask = Task { [self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.hopSeconds))
@@ -109,11 +120,22 @@ actor RollingAudioWindow {
 
     private func fireHop() {
         let snapshot = Array(buffer.suffix(Self.windowSamples))
+        let bufCount = buffer.count
+        Logger.speech.info("rw: fireHop tick bufferCount=\(bufCount) snapshotCount=\(snapshot.count)")
         guard !snapshot.isEmpty else { return }
         hopContinuation.yield(snapshot)
     }
 
+    /// Clear buffer and converter for a new session.
+    /// Must be called from `ParakeetBackend.start()` before creating `bufferTask`.
+    func resetForNewSession() {
+        // stub — implementation in green phase
+    }
+
     #if DEBUG
+    var bufferCountForTesting: Int { buffer.count }
+    var converterIsNilForTesting: Bool { converter == nil }
+
     func yieldHopForTesting(_ samples: [Float]) {
         hopContinuation.yield(samples)
     }
