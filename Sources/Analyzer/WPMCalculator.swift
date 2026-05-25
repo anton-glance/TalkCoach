@@ -4,9 +4,9 @@ import OSLog
 
 /// Sliding-window WPM calculator driven by wall-clock token arrivals and Silero VAD events.
 ///
-/// Ships two variants simultaneously for live A/B evaluation (S6 smoke gate):
-///   wpmRaw    — words / (10s fixed denominator) — WPM-A
-///   wpmVoiced — words / (voiced-seconds denominator) — WPM-B
+/// Ships two variants simultaneously for live A/B comparison:
+///   wpmRaw    — words / (10s fixed denominator) — WPM-A (raw)
+///   wpmVoiced — EMA-smoothed raw WPM — WPM-B (smoothed, alpha = emaAlpha)
 ///
 /// Both go nil together when data is below the minimum floor.
 @MainActor
@@ -30,6 +30,8 @@ final class WPMCalculator: TokenConsumer {
     static let minWordsForReading: Int = 3
     static let minVoicedSecondsForReading: TimeInterval = 2.0
     static let engineReadyGracePeriod: TimeInterval = 0.5
+    // Provisional EMA weight for B row — product owner picks final value after live A/B comparison.
+    static let emaAlpha: Double = 0.4
 
     // MARK: - Dependencies
 
@@ -46,6 +48,8 @@ final class WPMCalculator: TokenConsumer {
     private var voiceIntervals: [VoiceInterval] = []
     private var currentSpeechStart: Date?
     private var refreshToken: HideSchedulerToken?
+    /// EMA state for B row. nil = no prior reading; first value seeds without smoothing.
+    private var previousSmoothedWPM: Double?
     /// true from sessionActivated() until sessionEnded(); guards notifyVADEvent.
     private var isActive = false
 
@@ -100,6 +104,7 @@ final class WPMCalculator: TokenConsumer {
         latestSnapshot = nil
         voiceIntervals.removeAll()
         currentSpeechStart = nil
+        previousSmoothedWPM = nil
         wpmRaw = nil
         wpmVoiced = nil
     }
@@ -157,6 +162,7 @@ final class WPMCalculator: TokenConsumer {
             latestSnapshot = nil
             voiceIntervals.removeAll()
             currentSpeechStart = nil
+            previousSmoothedWPM = nil
             wpmRaw = nil
             wpmVoiced = nil
         }
@@ -196,23 +202,26 @@ final class WPMCalculator: TokenConsumer {
 
         let words = latestSnapshot?.wordCount ?? 0
         let voicedSec = voicedSecondsInWindow(since: cutoff, now: currentNow)
-
         let tElapsed = engineReadyCutoff.map { currentNow.timeIntervalSince($0) } ?? 0
-        Logger.analyzer.info(
-            "wpm-refresh: A=\(self.wpmRaw ?? -1) B=\(self.wpmVoiced ?? -1) words=\(words) voicedSec=\(voicedSec, format: .fixed(precision: 2)) snapshotWords=\(self.latestSnapshot?.wordCount ?? 0) voiceIntervals=\(self.voiceIntervals.count) currentSpeechStartSet=\(self.currentSpeechStart != nil) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
-        )
+        let rawDouble = Double(words) / (Self.windowSeconds / 60.0)
+        let rawThisHop = Int(round(rawDouble))
 
         guard words >= Self.minWordsForReading, voicedSec >= Self.minVoicedSecondsForReading else {
             wpmRaw = nil
             wpmVoiced = nil
+            Logger.analyzer.info(
+                "wpm-refresh: A_raw=-1 B_smoothed=-1 rawThisHop=\(rawThisHop) words=\(words) alpha=0.4 tElapsed=\(tElapsed, format: .fixed(precision: 1))"
+            )
             return
         }
 
-        wpmRaw = Int(round(Double(words) / (Self.windowSeconds / 60.0)))
-        wpmVoiced = Int(round(Double(words) / (voicedSec / 60.0)))
+        wpmRaw = rawThisHop
+        let smoothed = previousSmoothedWPM.map { Self.emaAlpha * rawDouble + (1 - Self.emaAlpha) * $0 } ?? rawDouble
+        previousSmoothedWPM = smoothed
+        wpmVoiced = Int(round(smoothed))
 
         Logger.analyzer.info(
-            "WPMCalculator: A=\(self.wpmRaw ?? -1) B=\(self.wpmVoiced ?? -1) words=\(words) voiced=\(voicedSec, format: .fixed(precision: 2))s"
+            "wpm-refresh: A_raw=\(self.wpmRaw ?? -1) B_smoothed=\(self.wpmVoiced ?? -1) rawThisHop=\(rawThisHop) words=\(words) alpha=0.4 tElapsed=\(tElapsed, format: .fixed(precision: 1))"
         )
     }
 
