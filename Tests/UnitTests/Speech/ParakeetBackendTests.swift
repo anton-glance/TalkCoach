@@ -133,6 +133,87 @@ final class ParakeetBackendTests: XCTestCase {
         )
     }
 
+    /// Regression: tokenStream must be live after a stop()→start() cycle where session 1's
+    /// relay was cancelled-while-suspended (which terminalises the old AsyncStream storage).
+    ///
+    /// With the bug: start() does not recreate tokenStream, session 2's relay immediately
+    /// gets nil from the terminal stream, and consume() is never called — WPM stays blank.
+    /// With the fix: start() recreates the stream; session 2's consumer receives the token.
+    func testTokenStreamLiveAfterSessionRestart() async {
+        let backend = ParakeetBackend()
+
+        // Session 1: suspend a consumer on the initial tokenStream.
+        let session1Stream = backend.tokenStream
+        let session1Task = Task<String?, Never> { @MainActor in
+            for await token in session1Stream { return token.token }
+            return nil
+        }
+        await Task.yield()  // ensure session1Task reaches its for-await suspension
+
+        // Simulate session 1 teardown: cancel relay while suspended — terminalises old stream.
+        session1Task.cancel()
+        _ = await session1Task.value
+
+        // Session 2: start() must recreate tokenStream (even if model is absent and throws).
+        try? await backend.start(locale: Locale(identifier: "en_US"), audioProvider: nil)
+
+        // Session 2 consumer on the post-start stream.
+        let session2Stream = backend.tokenStream
+        let session2Task = Task<String?, Never> { @MainActor in
+            for await token in session2Stream { return token.token }
+            return nil
+        }
+        await Task.yield()  // ensure session2Task reaches its for-await suspension
+
+        // Yield a token — must arrive at session 2's consumer.
+        let expected = TranscribedToken(token: "s2token", startTime: 0, endTime: 1, isFinal: true)
+        await backend.yieldTestToken(expected)
+
+        let received = await session2Task.value
+        XCTAssertNotNil(
+            received,
+            "tokenStream must be live after start() — session 2 relay must receive token"
+        )
+        XCTAssertEqual(received, "s2token")
+        session2Task.cancel()  // prevent test from hanging if assertion passes early
+    }
+
+    /// Regression: engineReadyStream must be live after a stop()→start() cycle where session 1's
+    /// engineReadyTask was cancelled-while-suspended (same terminal-state mechanism as tokenStream).
+    func testEngineReadyStreamLiveAfterSessionRestart() async {
+        let backend = ParakeetBackend()
+
+        // Session 1: suspend a consumer on the initial engineReadyStream.
+        let session1Stream = backend.engineReadyStream
+        let session1Task = Task<Bool, Never> { @MainActor in
+            for await _ in session1Stream { return true }
+            return false
+        }
+        await Task.yield()
+
+        session1Task.cancel()
+        _ = await session1Task.value
+
+        // Session 2: start() must recreate engineReadyStream.
+        try? await backend.start(locale: Locale(identifier: "en_US"), audioProvider: nil)
+
+        let session2Stream = backend.engineReadyStream
+        let session2Task = Task<Bool, Never> { @MainActor in
+            for await _ in session2Stream { return true }
+            return false
+        }
+        await Task.yield()
+
+        await backend.yieldEngineReadyForTesting()
+
+        let received = await session2Task.value
+        XCTAssertTrue(
+            received,
+            "engineReadyStream must be live after start() — session 2 engineReadyTask must receive event"
+        )
+        session2Task.cancel()
+    }
+
     /// Regression: speaking-activity must be true during continuous speech across hops.
     ///
     /// Parakeet returns window-relative token timestamps (0…~9.7s reset each hop).
