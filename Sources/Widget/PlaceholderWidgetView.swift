@@ -8,27 +8,34 @@ struct PlaceholderWidgetView: View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 8) {
                 Spacer()
-                if let startedAt = viewModel.sessionStartedAt {
-                    TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                        Text(Self.formatElapsed(from: startedAt, to: context.date))
-                            .font(.system(size: 36, weight: .light, design: .monospaced))
-                            .monospacedDigit()
-                            .foregroundStyle(.primary)
-                    }
-                } else {
-                    Text("--:--")
-                        .font(.system(size: 36, weight: .light, design: .monospaced))
+
+                // WPM-A row (raw, fixed 10s denominator)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("A")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                    Text(wpmText(viewModel.currentWPMRaw))
+                        .font(.system(size: 28, weight: .light, design: .monospaced))
                         .monospacedDigit()
                         .foregroundStyle(.primary)
                 }
-                VStack(spacing: 2) {
-                    Text(Self.label(for: viewModel.activityState))
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(.secondary)
-                    Text("\(viewModel.totalTokens) tokens")
-                        .font(.system(size: 10, weight: .regular))
+
+                // Activity state label
+                Text(Self.label(for: viewModel.activityState))
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.secondary)
+
+                // WPM-B row (voiced-seconds denominator)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("B")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(.tertiary)
+                    Text(wpmText(viewModel.currentWPMVoiced))
+                        .font(.system(size: 28, weight: .light, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
                 }
+
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -49,6 +56,10 @@ struct PlaceholderWidgetView: View {
         .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
     }
 
+    private func wpmText(_ value: Int?) -> String {
+        value.map { "\($0)" } ?? "---"
+    }
+
     private static func label(for state: WidgetActivityState) -> String {
         switch state {
         case .idle: return ""
@@ -59,12 +70,5 @@ struct PlaceholderWidgetView: View {
         case .recovering: return "Recovering\u{2026}"
         case .dismissed: return ""
         }
-    }
-
-    private static func formatElapsed(from start: Date, to now: Date) -> String {
-        let interval = max(0, now.timeIntervalSince(start))
-        let minutes = Int(interval) / 60
-        let seconds = Int(interval) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
     }
 }

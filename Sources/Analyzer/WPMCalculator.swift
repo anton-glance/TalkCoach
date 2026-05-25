@@ -1,85 +1,222 @@
+import Combine
 import Foundation
+import OSLog
 
-/// Sliding-window, token-derived words-per-minute calculator with EMA smoothing.
+/// Sliding-window WPM calculator driven by wall-clock token arrivals and Silero VAD events.
 ///
-/// Speaking duration is derived from `SpeakingActivityTracker` using token timestamps.
-/// When `speakingDuration == 0` but `wordCount > 0` (token timing disagreement),
-/// the calculator holds the last-known smoothed value to avoid jitter.
-struct WPMCalculator: Sendable {
-    private let windowSize: TimeInterval
-    private let emaAlpha: Double
-    private let tokenSilenceTimeout: TimeInterval
-    private var smoother: EMASmoother
-    private var words: [TimestampedWord] = []
-    private var tracker: SpeakingActivityTracker
-    private var lastSmoothedWPM: Double = 0
+/// Ships two variants simultaneously for live A/B evaluation (S6 smoke gate):
+///   wpmRaw    — words / (10s fixed denominator) — WPM-A
+///   wpmVoiced — words / (voiced-seconds denominator) — WPM-B
+///
+/// Both go nil together when data is below the minimum floor.
+@MainActor
+final class WPMCalculator: TokenConsumer {
 
-    nonisolated init(
-        windowSize: TimeInterval,
-        emaAlpha: Double,
-        tokenSilenceTimeout: TimeInterval = 1.5
+    // MARK: - Private types
+
+    private struct WordEntry {
+        let arrivedAt: Date
+    }
+
+    private struct VoiceInterval {
+        let start: Date
+        var end: Date?
+    }
+
+    // MARK: - Constants
+
+    static let windowSeconds: TimeInterval = 10.0
+    static let minWordsForReading: Int = 3
+    static let minVoicedSecondsForReading: TimeInterval = 2.0
+    static let engineReadyGracePeriod: TimeInterval = 0.5
+
+    // MARK: - Dependencies
+
+    private let settings: SettingsStore
+    private let scheduler: any HideScheduler
+    private let now: () -> Date
+
+    // MARK: - Session state
+
+    /// Non-nil only while a session is active. nil = post-teardown guard armed.
+    private var engineReadyCutoff: Date?
+    private var wordEntries: [WordEntry] = []
+    private var voiceIntervals: [VoiceInterval] = []
+    private var currentSpeechStart: Date?
+    private var refreshToken: HideSchedulerToken?
+    /// true from sessionActivated() until sessionEnded(); guards notifyVADEvent.
+    private var isActive = false
+
+    // MARK: - Published output
+
+    @Published private(set) var wpmRaw: Int?
+    @Published private(set) var wpmVoiced: Int?
+
+    // MARK: - Init
+
+    init(
+        settings: SettingsStore,
+        scheduler: any HideScheduler,
+        now: @escaping () -> Date = { Date() }
     ) {
-        self.windowSize = windowSize
-        self.emaAlpha = emaAlpha
-        self.tokenSilenceTimeout = tokenSilenceTimeout
-        self.smoother = EMASmoother(alpha: emaAlpha)
-        self.tracker = SpeakingActivityTracker(tokenSilenceTimeout: tokenSilenceTimeout)
+        self.settings = settings
+        self.scheduler = scheduler
+        self.now = now
     }
 
-    nonisolated mutating func addWord(_ word: TimestampedWord) {
-        words.append(word)
-        tracker.addToken(word)
+    // MARK: - Session lifecycle
+
+    /// Call when session wiring starts, before the first notifyVADEvent can fire.
+    /// Arms VAD recording from session start, independently of Parakeet engine-ready.
+    func sessionActivated() {}
+
+    /// Call when the transcription engine signals it is ready.
+    /// Discards any tokens that arrive before `readyTime + engineReadyGracePeriod`.
+    func engineReadyFired(at readyTime: Date) {
+        let prevWords = wordEntries.count
+        let prevIntervals = voiceIntervals.count
+        engineReadyCutoff = readyTime.addingTimeInterval(Self.engineReadyGracePeriod)
+        wordEntries.removeAll()
+        voiceIntervals.removeAll()
+        currentSpeechStart = nil
+        Logger.analyzer.info(
+            "wpm-warmup-cutoff: cutoffRef=\(self.engineReadyCutoff!.timeIntervalSinceReferenceDate, format: .fixed(precision: 3)) clearedWords=\(prevWords) clearedIntervals=\(prevIntervals)"
+        )
+        startRefreshLoop()
     }
 
-    /// Process a hop batch from ParakeetBackend. Resets the word accumulator and
-    /// speaking tracker for the new window; EMA smoother carries forward across hops.
-    nonisolated mutating func newHop(
-        words hopWords: [TimestampedWord],
-        windowStart: TimeInterval,
-        windowEnd: TimeInterval
-    ) -> WPMReading {
-        words.removeAll()
-        tracker.reset()
-
-        for word in hopWords { addWord(word) }
-        return wpm(at: windowEnd)
+    /// Forward VAD transitions from `SileroVADGate.transitionStream` here.
+    func notifyVADEvent(_ event: VADTransitionEvent) {
+        let cutoffSet = engineReadyCutoff != nil
+        switch event {
+        case .speechStarted:
+            Logger.analyzer.info("wpm-vad: started cutoffSet=\(cutoffSet) accepted=\(cutoffSet)")
+            guard cutoffSet else { return }
+            currentSpeechStart = now()
+        case .speechStopped:
+            Logger.analyzer.info("wpm-vad: stopped cutoffSet=\(cutoffSet) accepted=\(cutoffSet)")
+            guard cutoffSet else { return }
+            if let start = currentSpeechStart {
+                voiceIntervals.append(VoiceInterval(start: start, end: now()))
+                currentSpeechStart = nil
+            }
+        }
     }
 
-    nonisolated mutating func wpm(at timestamp: TimeInterval) -> WPMReading {
-        let windowStart = max(0, timestamp - windowSize)
-        let window = TimeRange(start: windowStart, end: timestamp)
+    // MARK: - TokenConsumer
 
-        let wordCount = words.count(where: {
-            $0.startTime >= windowStart && $0.startTime < timestamp
-        })
-        let speakingDuration = tracker.speakingDuration(in: window)
+    // nonisolated to satisfy nonisolated protocol TokenConsumer; body hops to MainActor.
+    nonisolated func consume(_ token: TranscribedToken) async {
+        await MainActor.run { [self] in
+            let count = countWords(in: token.token)
+            guard let cutoff = engineReadyCutoff else {
+                Logger.analyzer.info("wpm-consume: words=\(count) beforeCutoff=true accepted=false noSession=true")
+                return
+            }
+            let arrival = now()
+            let isBefore = arrival < cutoff
+            Logger.analyzer.info("wpm-consume: words=\(count) beforeCutoff=\(isBefore) accepted=\(!isBefore && count > 0)")
+            guard arrival >= cutoff else { return }
+            guard count > 0 else { return }
+            for _ in 0..<count {
+                wordEntries.append(WordEntry(arrivedAt: arrival))
+            }
+        }
+    }
 
-        let rawWPM: Double
-        if wordCount > 0 && speakingDuration <= 0 {
-            rawWPM = lastSmoothedWPM
-        } else if speakingDuration > 0 {
-            rawWPM = Double(wordCount) / speakingDuration * 60.0
-        } else {
-            rawWPM = 0
+    nonisolated func sessionEnded() async {
+        await MainActor.run { [self] in
+            if let token = refreshToken {
+                scheduler.cancel(token)
+                refreshToken = nil
+            }
+            engineReadyCutoff = nil
+            wordEntries.removeAll()
+            voiceIntervals.removeAll()
+            currentSpeechStart = nil
+            wpmRaw = nil
+            wpmVoiced = nil
+        }
+    }
+
+    // MARK: - Refresh loop
+
+    private func startRefreshLoop() {
+        if let token = refreshToken {
+            scheduler.cancel(token)
+        }
+        refreshToken = scheduler.schedule(delay: settings.wpmRefreshInterval) { [weak self] in
+            self?.onRefreshFired()
+        }
+    }
+
+    private func onRefreshFired() {
+        guard engineReadyCutoff != nil else { return }
+        computeAndPublish()
+        startRefreshLoop()
+    }
+
+    // MARK: - Compute
+
+    private func computeAndPublish() {
+        let currentNow = now()
+        let cutoff = currentNow.addingTimeInterval(-Self.windowSeconds)
+
+        wordEntries.removeAll { $0.arrivedAt < cutoff }
+        voiceIntervals.removeAll { interval in
+            guard let end = interval.end else { return false }
+            return end < cutoff
         }
 
-        let smoothedWPM = smoother.smooth(rawWPM)
-        lastSmoothedWPM = smoothedWPM
+        let words = wordEntries.count
+        let voicedSec = voicedSecondsInWindow(since: cutoff, now: currentNow)
 
-        return WPMReading(timestamp: timestamp, rawWPM: rawWPM, smoothedWPM: smoothedWPM)
-    }
+        let tElapsed = engineReadyCutoff.map { currentNow.timeIntervalSince($0) } ?? 0
+        Logger.analyzer.info(
+            "wpm-refresh: A=\(self.wpmRaw ?? -1) B=\(self.wpmVoiced ?? -1) words=\(words) voicedSec=\(voicedSec, format: .fixed(precision: 2)) wordEntries=\(self.wordEntries.count) voiceIntervals=\(self.voiceIntervals.count) currentSpeechStartSet=\(self.currentSpeechStart != nil) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
+        )
 
-    nonisolated var totalSpeakingDuration: TimeInterval {
-        if let maxEnd = words.map(\.endTime).max() {
-            return tracker.speakingDuration(in: TimeRange(start: 0, end: maxEnd))
+        guard words >= Self.minWordsForReading, voicedSec >= Self.minVoicedSecondsForReading else {
+            wpmRaw = nil
+            wpmVoiced = nil
+            return
         }
-        return 0
+
+        wpmRaw = Int(round(Double(words) / (Self.windowSeconds / 60.0)))
+        wpmVoiced = Int(round(Double(words) / (voicedSec / 60.0)))
+
+        Logger.analyzer.info(
+            "WPMCalculator: A=\(self.wpmRaw ?? -1) B=\(self.wpmVoiced ?? -1) words=\(words) voiced=\(voicedSec, format: .fixed(precision: 2))s"
+        )
     }
 
-    nonisolated var sessionAverageWPM: Double {
-        guard !words.isEmpty else { return 0 }
-        let speaking = totalSpeakingDuration
-        guard speaking > 0 else { return 0 }
-        return Double(words.count) / speaking * 60.0
+    private func voicedSecondsInWindow(since cutoff: Date, now currentNow: Date) -> TimeInterval {
+        var total: TimeInterval = 0
+
+        for interval in voiceIntervals {
+            guard let end = interval.end else { continue }
+            let clippedStart = max(interval.start, cutoff)
+            let clippedEnd = min(end, currentNow)
+            if clippedEnd > clippedStart {
+                total += clippedEnd.timeIntervalSince(clippedStart)
+            }
+        }
+
+        if let start = currentSpeechStart {
+            let clippedStart = max(start, cutoff)
+            if currentNow > clippedStart {
+                total += currentNow.timeIntervalSince(clippedStart)
+            }
+        }
+
+        return total
+    }
+
+    // MARK: - Word counting
+
+    private func countWords(in text: String) -> Int {
+        text.components(separatedBy: .whitespaces)
+            .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) }
+            .count
     }
 }
