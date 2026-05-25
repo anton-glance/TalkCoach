@@ -55,12 +55,18 @@ actor ParakeetBackend: TranscriberBackend {
         engine = eng
         Logger.speech.info("ParakeetBackend: engine loaded from \(modelDir.path)")
 
+        await rollingWindow.resetForNewSession()
+        Logger.speech.info("pk: rollingWindow reset for new session")
+
         if let provider = audioProvider {
+            Logger.speech.info("pk: creating bufferTask")
             bufferTask = Task { [self] in
+                Logger.speech.info("pk: bufferTask started — awaiting first buffer")
                 var configured = false
                 for await captured in provider.bufferStream() {
                     if Task.isCancelled { break }
                     if !configured {
+                        Logger.speech.info("pk: bufferTask first buffer received — calling configure+startHopTimer")
                         try? await rollingWindow.configure(
                             sampleRate: captured.sampleRate,
                             channelCount: captured.channelCount
@@ -70,6 +76,7 @@ actor ParakeetBackend: TranscriberBackend {
                     }
                     try? await rollingWindow.append(captured)
                 }
+                Logger.speech.info("pk: bufferTask exited")
             }
         }
 

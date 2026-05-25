@@ -129,7 +129,8 @@ actor RollingAudioWindow {
     /// Clear buffer and converter for a new session.
     /// Must be called from `ParakeetBackend.start()` before creating `bufferTask`.
     func resetForNewSession() {
-        // stub — implementation in green phase
+        buffer = []
+        converter = nil
     }
 
     #if DEBUG

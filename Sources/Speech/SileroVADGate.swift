@@ -86,7 +86,6 @@ actor SileroVADGate {
         bufferTask?.cancel()
         await bufferTask?.value
         bufferTask = nil
-        transitionCont.finish()
         Logger.speech.info("SileroVADGate: stopped")
     }
 
