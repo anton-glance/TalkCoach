@@ -113,6 +113,12 @@ actor RollingAudioWindow {
         guard !snapshot.isEmpty else { return }
         hopContinuation.yield(snapshot)
     }
+
+    #if DEBUG
+    func yieldHopForTesting(_ samples: [Float]) {
+        hopContinuation.yield(samples)
+    }
+    #endif
 }
 
 enum RollingAudioWindowError: Error {

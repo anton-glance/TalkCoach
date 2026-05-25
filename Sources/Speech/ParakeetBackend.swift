@@ -100,6 +100,16 @@ actor ParakeetBackend: TranscriberBackend {
     /// Parakeet returns token timestamps relative to the window's own start (0…~windowDuration).
     /// Adding this offset converts them to session-absolute time, consistent with the
     /// session-clock elapsed value used to query isCurrentlySpeaking(asOf:).
+    #if DEBUG
+    func yieldTestToken(_ token: TranscribedToken) {
+        tokenCont.yield(token)
+    }
+
+    func yieldEngineReadyForTesting() {
+        engineReadyCont.yield(())
+    }
+    #endif
+
     nonisolated static func windowAbsoluteStart(elapsed: TimeInterval, sampleCount: Int) -> TimeInterval {
         elapsed - TimeInterval(sampleCount) / 16_000
     }

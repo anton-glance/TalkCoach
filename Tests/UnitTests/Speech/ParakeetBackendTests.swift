@@ -31,23 +31,49 @@ final class ParakeetBackendTests: XCTestCase {
         await backend.stop()
     }
 
-    /// AC-3: stop() finishes tokenStream so consumers can drain.
-    func testStopFinishesTokenStream() async {
+    /// AC-3: tokenStream must survive stop() — a consumer already waiting must receive
+    /// an element yielded after stop (stream is long-lived for the backend's lifetime).
+    func testTokenStreamSurvivesStop() async {
         let backend = ParakeetBackend()
+
+        // Consumer attaches first and waits.
+        let collectTask = Task<String?, Never> { @MainActor in
+            for await token in backend.tokenStream {
+                return token.token
+            }
+            return nil
+        }
+        await Task.yield()
+
         await backend.stop()
-        var tokenCount = 0
-        for await _ in backend.tokenStream { tokenCount += 1 }
-        // Stream is finished; loop terminates. Count is 0.
-        XCTAssertEqual(tokenCount, 0)
+
+        let expected = TranscribedToken(token: "hello", startTime: 0, endTime: 1, isFinal: true)
+        await backend.yieldTestToken(expected)
+
+        let received = await collectTask.value
+        XCTAssertNotNil(received, "tokenStream must survive stop() — element must arrive at waiting consumer")
+        XCTAssertEqual(received, "hello")
     }
 
-    /// AC-3: stop() finishes engineReadyStream.
-    func testStopFinishesEngineReadyStream() async {
+    /// AC-3: engineReadyStream must survive stop() — a consumer already waiting must receive
+    /// an event yielded after stop.
+    func testEngineReadyStreamSurvivesStop() async {
         let backend = ParakeetBackend()
+
+        let collectTask = Task<Bool, Never> { @MainActor in
+            for await _ in backend.engineReadyStream {
+                return true
+            }
+            return false
+        }
+        await Task.yield()
+
         await backend.stop()
-        var count = 0
-        for await _ in backend.engineReadyStream { count += 1 }
-        XCTAssertEqual(count, 0)
+
+        await backend.yieldEngineReadyForTesting()
+
+        let received = await collectTask.value
+        XCTAssert(received, "engineReadyStream must survive stop() — event must arrive at waiting consumer")
     }
 
     /// Regression: speaking-activity must be true during continuous speech across hops.

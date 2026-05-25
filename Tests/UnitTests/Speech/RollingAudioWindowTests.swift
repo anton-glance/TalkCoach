@@ -58,16 +58,33 @@ final class RollingAudioWindowTests: XCTestCase {
         try await window.append(buf)
     }
 
-    /// stopHopTimer() finishes the hop stream cleanly.
-    func testStopFinishesHopStream() async throws {
+    /// stopHopTimer() must NOT finish hopStream — the stream lives for the backend's lifetime.
+    /// A consumer already waiting on the stream must receive an element yielded after stop.
+    func testStopDoesNotFinishHopStream() async throws {
         let window = RollingAudioWindow()
-        try await window.configure(sampleRate: 16_000, channelCount: 1)
         await window.startHopTimer()
+        let stream = await window.hopStream
+
+        // Consumer attaches first and waits for the next hop.
+        let collectTask = Task<[Float]?, Never> { @MainActor in
+            for await hop in stream {
+                return hop
+            }
+            return nil
+        }
+        // Yield so collectTask reaches its for-await suspension before we stop.
+        await Task.yield()
+
+        // Stop — with bug: finish() kills stream, collectTask exits with nil immediately.
+        // With fix: only cancels hopTask, stream stays alive, collectTask keeps waiting.
         await window.stopHopTimer()
-        // If hopStream is finished the for-await loop below completes immediately.
-        var count = 0
-        for await _ in await window.hopStream { count += 1 }
-        // count may be 0 or >0 depending on timing; key property is it terminates.
-        _ = count
+
+        // Yield a hop into the stream — no-op if already finished (bug), delivers to
+        // the waiting consumer if alive (fix).
+        await window.yieldHopForTesting([0.1, 0.2, 0.3])
+
+        let received = await collectTask.value
+        XCTAssertNotNil(received, "hopStream must survive stopHopTimer — element must arrive at waiting consumer")
+        XCTAssertEqual(received, [0.1, 0.2, 0.3])
     }
 }
