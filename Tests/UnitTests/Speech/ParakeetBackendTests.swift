@@ -76,6 +76,63 @@ final class ParakeetBackendTests: XCTestCase {
         XCTAssert(received, "engineReadyStream must survive stop() — event must arrive at waiting consumer")
     }
 
+    /// Regression: stop() must NOT call pk_engine_destroy.
+    /// The engine must remain alive so session 2 can reuse it without reinitialising ORT.
+    ///
+    /// NOTE: the meaningful assertion (engine non-nil after stop) only runs when a real
+    /// model is on disk. In CI (no model), start() throws .modelUnavailable and the test
+    /// trivially passes. The behavioral gate is the live two-session smoke run.
+    func testStopDoesNotDestroyEngine() async {
+        let backend = ParakeetBackend()
+
+        let engineLoadedAfterStart: Bool
+        do {
+            try await backend.start(locale: Locale(identifier: "en-US"), audioProvider: nil)
+            engineLoadedAfterStart = await backend.engineIsLoadedForTesting
+        } catch {
+            engineLoadedAfterStart = false
+        }
+
+        await backend.stop()
+        let engineAliveAfterStop = await backend.engineIsLoadedForTesting
+
+        XCTAssertEqual(
+            engineAliveAfterStop, engineLoadedAfterStart,
+            "stop() must not destroy the engine — it must survive for the next session"
+        )
+    }
+
+    /// Regression: start() on a second session must reuse the existing engine pointer,
+    /// not call pk_engine_create again (which re-initialises ORT sessions and breaks transcription).
+    ///
+    /// NOTE: same CI limitation as testStopDoesNotDestroyEngine — skips if no model on disk.
+    func testStartDoesNotRecreateEngine() async throws {
+        let backend = ParakeetBackend()
+
+        do {
+            try await backend.start(locale: Locale(identifier: "en-US"), audioProvider: nil)
+        } catch {
+            return  // no model in CI — skip meaningful assertion
+        }
+        guard await backend.engineIsLoadedForTesting else { return }
+
+        let firstBitPattern = await backend.engineBitPatternForTesting
+        await backend.stop()
+
+        do {
+            try await backend.start(locale: Locale(identifier: "en-US"), audioProvider: nil)
+        } catch {
+            XCTFail("second start() must not throw when engine already loaded: \(error)")
+            return
+        }
+
+        let secondBitPattern = await backend.engineBitPatternForTesting
+        XCTAssertEqual(
+            firstBitPattern, secondBitPattern,
+            "start() must reuse the existing engine — pk_engine_create must not be called again"
+        )
+    }
+
     /// Regression: speaking-activity must be true during continuous speech across hops.
     ///
     /// Parakeet returns window-relative token timestamps (0…~9.7s reset each hop).

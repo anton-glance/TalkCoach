@@ -115,6 +115,12 @@ actor ParakeetBackend: TranscriberBackend {
     func yieldEngineReadyForTesting() {
         engineReadyCont.yield(())
     }
+
+    /// True when a PkEngine pointer is live. Used to verify keep-alive invariant.
+    var engineIsLoadedForTesting: Bool { engine != nil }
+
+    /// Raw bit-pattern of the engine pointer (0 if nil). Used to detect unintended recreation.
+    var engineBitPatternForTesting: Int { engine.map { Int(bitPattern: $0) } ?? 0 }
     #endif
 
     nonisolated static func windowAbsoluteStart(elapsed: TimeInterval, sampleCount: Int) -> TimeInterval {
