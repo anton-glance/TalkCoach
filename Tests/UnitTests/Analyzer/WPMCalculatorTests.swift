@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import XCTest
 @testable import TalkCoach
 
@@ -67,6 +68,7 @@ private func makeToken(_ text: String) -> TranscribedToken {
 // MARK: - WPMCalculatorTests
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class WPMCalculatorTests: XCTestCase {
 
     // MARK: AC1 — Warmup discard
@@ -472,6 +474,95 @@ final class WPMCalculatorTests: XCTestCase {
         // wpmRaw    = round(4 / (10/60)) = 24
         XCTAssertEqual(sut.wpmVoiced, 60, "voiced seconds must be clipped to engineReadyCutoff")
         XCTAssertEqual(sut.wpmRaw, 24)
+    }
+
+    // MARK: D1 — Snapshot-replace (overlapping hops must not multiply word count)
+
+    func testOverlappingHopsDoNotMultiplyWordCount() async {
+        // Parakeet 3s-hop re-transcribes the full 10s window on each hop.
+        // Two tokens of 10 words each must not accumulate to 20 — the second
+        // token replaces the first (snapshot model).
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 10.0)  // t=11
+
+        // First hop
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+
+        // Second hop 3s later — same 10 words re-transcribed from overlapping window
+        clock.advance(by: 3.0)  // t=14
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+
+        fake.fireNext()
+
+        // Snapshot model: latest token replaces previous — 10 words, not 20
+        // wpmRaw = round(10 / (10/60)) = 60
+        XCTAssertEqual(sut.wpmRaw, 60, "overlapping hops must not multiply word count — snapshot replaces")
+    }
+
+    // MARK: D2 — enterWaiting() blanks output and pauses refresh
+
+    func testEnterWaitingBlanksAndClears() async {
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken("one two three four five"))
+        fake.fireNext()
+        XCTAssertNotNil(sut.wpmRaw, "setup: must have non-nil WPM before enterWaiting")
+
+        sut.enterWaiting()
+
+        XCTAssertNil(sut.wpmRaw, "enterWaiting must blank wpmRaw")
+        XCTAssertNil(sut.wpmVoiced, "enterWaiting must blank wpmVoiced")
+        XCTAssertEqual(fake.pendingCount, 0, "enterWaiting must cancel the refresh loop")
+    }
+
+    func testResumeAfterWaitingStartsFresh() async {
+        // After enterWaiting() clears state, speechStarted restarts the loop
+        // and a subsequent token produces WPM from the clean window only.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken("one two three four five"))
+        fake.fireNext()
+        XCTAssertNotNil(sut.wpmRaw, "setup: produce non-nil WPM before waiting")
+
+        sut.enterWaiting()
+        XCTAssertEqual(fake.pendingCount, 0, "enterWaiting must cancel refresh")
+
+        // Resume: speechStarted restarts the refresh loop
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        XCTAssertEqual(fake.pendingCount, 1, "speechStarted after waiting must restart refresh loop")
+
+        // Feed new words in the fresh window
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken("one two three four five"))
+        fake.fireNext()
+        XCTAssertNotNil(sut.wpmRaw, "fresh window after resume must produce wpmRaw")
     }
 
     // MARK: AC8-isActive — post-teardown guard via isActive flag

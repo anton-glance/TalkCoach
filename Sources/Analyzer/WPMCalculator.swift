@@ -68,34 +68,42 @@ final class WPMCalculator: TokenConsumer {
 
     /// Call when session wiring starts, before the first notifyVADEvent can fire.
     /// Arms VAD recording from session start, independently of Parakeet engine-ready.
-    func sessionActivated() {}
+    func sessionActivated() {
+        isActive = true
+    }
 
     /// Call when the transcription engine signals it is ready.
     /// Discards any tokens that arrive before `readyTime + engineReadyGracePeriod`.
     func engineReadyFired(at readyTime: Date) {
+        isActive = true  // belt-and-suspenders if sessionActivated() was not called first
         let prevWords = wordEntries.count
-        let prevIntervals = voiceIntervals.count
         engineReadyCutoff = readyTime.addingTimeInterval(Self.engineReadyGracePeriod)
         wordEntries.removeAll()
-        voiceIntervals.removeAll()
-        currentSpeechStart = nil
+        // voiceIntervals and currentSpeechStart intentionally preserved:
+        // VAD events from session start are valid; voicedSecondsInWindow clips to engineReadyCutoff.
         Logger.analyzer.info(
-            "wpm-warmup-cutoff: cutoffRef=\(self.engineReadyCutoff!.timeIntervalSinceReferenceDate, format: .fixed(precision: 3)) clearedWords=\(prevWords) clearedIntervals=\(prevIntervals)"
+            "wpm-warmup-cutoff: cutoffRef=\(self.engineReadyCutoff!.timeIntervalSinceReferenceDate, format: .fixed(precision: 3)) clearedWords=\(prevWords) retainedIntervals=\(self.voiceIntervals.count) speechStartSet=\(self.currentSpeechStart != nil)"
         )
         startRefreshLoop()
     }
 
+    /// Call when the widget enters waiting state (silence-hold fired).
+    /// Cancels the refresh loop, clears in-window state, and publishes nil.
+    /// The loop restarts on the next `notifyVADEvent(.speechStarted)`.
+    func enterWaiting() {}
+
     /// Forward VAD transitions from `SileroVADGate.transitionStream` here.
     func notifyVADEvent(_ event: VADTransitionEvent) {
         let cutoffSet = engineReadyCutoff != nil
+        let accepted = isActive
         switch event {
         case .speechStarted:
-            Logger.analyzer.info("wpm-vad: started cutoffSet=\(cutoffSet) accepted=\(cutoffSet)")
-            guard cutoffSet else { return }
+            Logger.analyzer.info("wpm-vad: started cutoffSet=\(cutoffSet) accepted=\(accepted)")
+            guard isActive else { return }
             currentSpeechStart = now()
         case .speechStopped:
-            Logger.analyzer.info("wpm-vad: stopped cutoffSet=\(cutoffSet) accepted=\(cutoffSet)")
-            guard cutoffSet else { return }
+            Logger.analyzer.info("wpm-vad: stopped cutoffSet=\(cutoffSet) accepted=\(accepted)")
+            guard isActive else { return }
             if let start = currentSpeechStart {
                 voiceIntervals.append(VoiceInterval(start: start, end: now()))
                 currentSpeechStart = nil
@@ -126,6 +134,7 @@ final class WPMCalculator: TokenConsumer {
 
     nonisolated func sessionEnded() async {
         await MainActor.run { [self] in
+            isActive = false
             if let token = refreshToken {
                 scheduler.cancel(token)
                 refreshToken = nil
@@ -190,12 +199,16 @@ final class WPMCalculator: TokenConsumer {
         )
     }
 
-    private func voicedSecondsInWindow(since cutoff: Date, now currentNow: Date) -> TimeInterval {
+    private func voicedSecondsInWindow(since windowStart: Date, now currentNow: Date) -> TimeInterval {
         var total: TimeInterval = 0
+        // Clip voiced time to the later of the 10s window boundary or the engine-ready cutoff.
+        // Words before engineReadyCutoff are discarded as warmup garbage, so pre-cutoff voiced
+        // seconds must not inflate the denominator with unmatched time.
+        let effectiveCutoff = max(windowStart, engineReadyCutoff ?? .distantPast)
 
         for interval in voiceIntervals {
             guard let end = interval.end else { continue }
-            let clippedStart = max(interval.start, cutoff)
+            let clippedStart = max(interval.start, effectiveCutoff)
             let clippedEnd = min(end, currentNow)
             if clippedEnd > clippedStart {
                 total += clippedEnd.timeIntervalSince(clippedStart)
@@ -203,7 +216,7 @@ final class WPMCalculator: TokenConsumer {
         }
 
         if let start = currentSpeechStart {
-            let clippedStart = max(start, cutoff)
+            let clippedStart = max(start, effectiveCutoff)
             if currentNow > clippedStart {
                 total += currentNow.timeIntervalSince(clippedStart)
             }
