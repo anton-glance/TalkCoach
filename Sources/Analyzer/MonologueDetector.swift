@@ -153,22 +153,22 @@ final class MonologueDetector {
     // MARK: - Level computation
 
     private func computeLevel(_ elapsed: TimeInterval) -> Int {
-        let l1 = settings.monologueLevel1Minutes * 60
-        let l2 = settings.monologueLevel2Minutes * 60
-        let l3 = settings.monologueLevel3Minutes * 60
-        return [l1, l2, l3].filter { elapsed >= $0 }.count
+        let level1Secs = settings.monologueLevel1Minutes * 60
+        let level2Secs = settings.monologueLevel2Minutes * 60
+        let level3Secs = settings.monologueLevel3Minutes * 60
+        return [level1Secs, level2Secs, level3Secs].filter { elapsed >= $0 }.count
     }
 
     // MARK: - Logging
 
     private func logTransition(from prevLevel: Int, to newLevel: Int, streak: TimeInterval) {
         guard newLevel != prevLevel else { return }
-        let l1 = self.settings.monologueLevel1Minutes * 60
-        let l2 = self.settings.monologueLevel2Minutes * 60
-        let l3 = self.settings.monologueLevel3Minutes * 60
+        let level1Secs = self.settings.monologueLevel1Minutes * 60
+        let level2Secs = self.settings.monologueLevel2Minutes * 60
+        let level3Secs = self.settings.monologueLevel3Minutes * 60
         let pauseThr = self.settings.monologuePauseThreshold
         Logger.analyzer.info(
-            "monologue: \(prevLevel)→\(newLevel) streak=\(streak, format: .fixed(precision: 1))s pauseThr=\(pauseThr, format: .fixed(precision: 1))s L1=\(l1, format: .fixed(precision: 0)) L2=\(l2, format: .fixed(precision: 0)) L3=\(l3, format: .fixed(precision: 0))"
+            "monologue: \(prevLevel)→\(newLevel) streak=\(streak, format: .fixed(precision: 1))s pauseThr=\(pauseThr, format: .fixed(precision: 1))s L1=\(level1Secs, format: .fixed(precision: 0)) L2=\(level2Secs, format: .fixed(precision: 0)) L3=\(level3Secs, format: .fixed(precision: 0))"
         )
     }
 }

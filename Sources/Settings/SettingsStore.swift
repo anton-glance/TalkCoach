@@ -293,8 +293,13 @@ final class SettingsStore: ObservableObject {
         hasCompletedSetup = true
     }
 
+}
+
+// MARK: - Defaults sync (extracted to keep class body under SwiftLint type_body_length limit)
+
+private extension SettingsStore {
     // swiftlint:disable:next cyclomatic_complexity
-    private func syncFromDefaults() {
+    func syncFromDefaults() {
         isSyncing = true
         defer { isSyncing = false }
 
@@ -347,7 +352,7 @@ final class SettingsStore: ObservableObject {
         syncPositionsFromDefaults()
     }
 
-    private func syncPositionsFromDefaults() {
+    func syncPositionsFromDefaults() {
         guard let data = userDefaults.data(forKey: Keys.widgetPositionByDisplay) else {
             if !widgetPositionByDisplay.isEmpty { widgetPositionByDisplay = [:] }
             return
@@ -360,12 +365,12 @@ final class SettingsStore: ObservableObject {
         if newPositions != widgetPositionByDisplay { widgetPositionByDisplay = newPositions }
     }
 
-    private nonisolated static func encodePositions(_ positions: [String: CGPoint]) -> Data? {
+    nonisolated static func encodePositions(_ positions: [String: CGPoint]) -> Data? {
         let raw = positions.mapValues { [$0.x, $0.y] }
         return try? JSONEncoder().encode(raw)
     }
 
-    private nonisolated static func decodePositions(_ data: Data) -> [String: CGPoint]? {
+    nonisolated static func decodePositions(_ data: Data) -> [String: CGPoint]? {
         guard let raw = try? JSONDecoder().decode([String: [Double]].self, from: data) else {
             return nil
         }

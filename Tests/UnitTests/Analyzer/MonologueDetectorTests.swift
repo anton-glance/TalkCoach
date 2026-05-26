@@ -554,10 +554,10 @@ final class MonologueDetectorTests: XCTestCase {
         sut.sessionActivated()
         // 10 cycles: 5s speech, 2s gap (< 2.5s threshold → bridged)
         // Total elapsed from first streakStart: 10 × (5 + 2) = 70s
-        for i in 0..<10 {
+        for tick in 0..<10 {
             sut.notifyVADEvent(speechStarted())
             clock.advance(by: 5)
-            if i < 9 {  // no speechStopped on last cycle — leave speech active
+            if tick < 9 {  // no speechStopped on last cycle — leave speech active
                 sut.notifyVADEvent(speechStopped())
                 clock.advance(by: 2)
             }
