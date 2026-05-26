@@ -196,7 +196,7 @@ final class WPMCalculator: TokenConsumer {
         let cutoff = currentNow.addingTimeInterval(-Self.windowSeconds)
 
         // Read live settings — changes take effect on the next refresh without session restart.
-        let n = max(1, min(10, settings.wpmMedianWindowHops))
+        let windowHops = max(1, min(10, settings.wpmMedianWindowHops))
         let alpha = max(0.1, min(1.0, settings.wpmEmaAlpha))
 
         // Evict snapshot if it fell outside the window.
@@ -218,7 +218,7 @@ final class WPMCalculator: TokenConsumer {
             wpmRaw = nil
             wpmVoiced = nil
             Logger.analyzer.info(
-                "wpm-refresh: A_median=-1 B_ema=-1 rawThisHop=\(rawThisHop) words=\(words) medianN=\(n) alpha=\(alpha, format: .fixed(precision: 2)) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
+                "wpm-refresh: A_median=-1 B_ema=-1 rawThisHop=\(rawThisHop) words=\(words) medianN=\(windowHops) alpha=\(alpha, format: .fixed(precision: 2)) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
             )
             return
         }
@@ -228,7 +228,7 @@ final class WPMCalculator: TokenConsumer {
         if medianBuffer.count > 10 { medianBuffer.removeFirst() }
 
         // Row A — median of last N raw per-hop values (N=1 ≡ raw, the escape hatch).
-        let slice = Array(medianBuffer.suffix(n))
+        let slice = Array(medianBuffer.suffix(windowHops))
         wpmRaw = median(slice)
 
         // Row B — EMA over raw per-hop; alpha read live from settings.
@@ -237,7 +237,7 @@ final class WPMCalculator: TokenConsumer {
         wpmVoiced = Int(round(smoothed))
 
         Logger.analyzer.info(
-            "wpm-refresh: A_median=\(self.wpmRaw ?? -1) B_ema=\(self.wpmVoiced ?? -1) rawThisHop=\(rawThisHop) words=\(words) medianN=\(n) alpha=\(alpha, format: .fixed(precision: 2)) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
+            "wpm-refresh: A_median=\(self.wpmRaw ?? -1) B_ema=\(self.wpmVoiced ?? -1) rawThisHop=\(rawThisHop) words=\(words) medianN=\(windowHops) alpha=\(alpha, format: .fixed(precision: 2)) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
         )
     }
 

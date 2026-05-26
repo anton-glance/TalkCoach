@@ -2,26 +2,26 @@ import Combine
 import Foundation
 import OSLog
 
+private enum Keys {
+    static let declaredLocales = "declaredLocales"
+    static let wpmTargetMin = "wpmTargetMin"
+    static let wpmTargetMax = "wpmTargetMax"
+    static let coachingEnabled = "coachingEnabled"
+    static let hasCompletedSetup = "hasCompletedSetup"
+    static let fillerDict = "fillerDict"
+    static let widgetPositionByDisplay = "widgetPositionByDisplay"
+    static let widgetLastUsedDisplay = "widgetLastUsedDisplay"
+    static let inactivityThresholdSeconds = "inactivityThresholdSeconds"
+    static let widgetHideDelaySeconds = "widgetHideDelaySeconds"
+    static let probePollIntervalSeconds = "probePollIntervalSeconds"
+    static let wpmRefreshInterval = "wpmRefreshInterval"
+    static let wpmPauseThreshold = "wpmPauseThreshold"
+    static let wpmMedianWindowHops = "wpmMedianWindowHops"
+    static let wpmEmaAlpha = "wpmEmaAlpha"
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
-
-    private enum Keys {
-        static let declaredLocales = "declaredLocales"
-        static let wpmTargetMin = "wpmTargetMin"
-        static let wpmTargetMax = "wpmTargetMax"
-        static let coachingEnabled = "coachingEnabled"
-        static let hasCompletedSetup = "hasCompletedSetup"
-        static let fillerDict = "fillerDict"
-        static let widgetPositionByDisplay = "widgetPositionByDisplay"
-        static let widgetLastUsedDisplay = "widgetLastUsedDisplay"
-        static let inactivityThresholdSeconds = "inactivityThresholdSeconds"
-        static let widgetHideDelaySeconds = "widgetHideDelaySeconds"
-        static let probePollIntervalSeconds = "probePollIntervalSeconds"
-        static let wpmRefreshInterval = "wpmRefreshInterval"
-        static let wpmPauseThreshold = "wpmPauseThreshold"
-        static let wpmMedianWindowHops = "wpmMedianWindowHops"
-        static let wpmEmaAlpha = "wpmEmaAlpha"
-    }
 
     private let userDefaults: UserDefaults
     nonisolated(unsafe) private var observer: (any NSObjectProtocol)?
@@ -120,7 +120,6 @@ final class SettingsStore: ObservableObject {
             userDefaults.set(wpmRefreshInterval, forKey: Keys.wpmRefreshInterval)
         }
     }
-
     /// Stored for M4.3; not used in M4.1 WPM math.
     @Published var wpmPauseThreshold: TimeInterval {
         didSet {
@@ -130,7 +129,6 @@ final class SettingsStore: ObservableObject {
             userDefaults.set(wpmPauseThreshold, forKey: Keys.wpmPauseThreshold)
         }
     }
-
     /// Row A: number of recent raw per-hop WPM values to median over. Clamped 1…10.
     @Published var wpmMedianWindowHops: Int {
         didSet {
@@ -140,7 +138,6 @@ final class SettingsStore: ObservableObject {
             userDefaults.set(wpmMedianWindowHops, forKey: Keys.wpmMedianWindowHops)
         }
     }
-
     /// Row B: EMA smoothing factor. Clamped 0.1…1.0. Default 0.70 (bake-off result).
     @Published var wpmEmaAlpha: Double {
         didSet {
@@ -173,7 +170,6 @@ final class SettingsStore: ObservableObject {
         }
 
         self.widgetLastUsedDisplay = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
-
         let rawThreshold = userDefaults.object(forKey: Keys.inactivityThresholdSeconds) as? Double ?? 15.0
         self.inactivityThresholdSeconds = max(5, min(120, rawThreshold))
         let rawHideDelay = userDefaults.object(forKey: Keys.widgetHideDelaySeconds) as? Double ?? 4.0
@@ -183,13 +179,10 @@ final class SettingsStore: ObservableObject {
 
         let rawRefreshInterval = userDefaults.object(forKey: Keys.wpmRefreshInterval) as? Double ?? 3.0
         self.wpmRefreshInterval = max(1.0, min(10.0, rawRefreshInterval))
-
         let rawPauseThreshold = userDefaults.object(forKey: Keys.wpmPauseThreshold) as? Double ?? 2.0
         self.wpmPauseThreshold = max(0.5, min(10.0, rawPauseThreshold))
-
         let rawMedianN = userDefaults.object(forKey: Keys.wpmMedianWindowHops) as? Int ?? 3
         self.wpmMedianWindowHops = max(1, min(10, rawMedianN))
-
         let rawEmaAlpha = userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70
         self.wpmEmaAlpha = max(0.1, min(1.0, rawEmaAlpha))
 
@@ -273,10 +266,8 @@ final class SettingsStore: ObservableObject {
 
         let newFillers = userDefaults.object(forKey: Keys.fillerDict) as? [String: [String]] ?? [:]
         if newFillers != fillerDict { fillerDict = newFillers }
-
         let newLastUsed = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
         if newLastUsed != widgetLastUsedDisplay { widgetLastUsedDisplay = newLastUsed }
-
         let newThreshold = max(5, min(120, userDefaults.object(forKey: Keys.inactivityThresholdSeconds) as? Double ?? 15.0))
         if newThreshold != inactivityThresholdSeconds { inactivityThresholdSeconds = newThreshold }
 
@@ -288,13 +279,10 @@ final class SettingsStore: ObservableObject {
 
         let newRefreshInterval = max(1.0, min(10.0, userDefaults.object(forKey: Keys.wpmRefreshInterval) as? Double ?? 3.0))
         if newRefreshInterval != wpmRefreshInterval { wpmRefreshInterval = newRefreshInterval }
-
         let newPauseThreshold = max(0.5, min(10.0, userDefaults.object(forKey: Keys.wpmPauseThreshold) as? Double ?? 2.0))
         if newPauseThreshold != wpmPauseThreshold { wpmPauseThreshold = newPauseThreshold }
-
         let newMedianN = max(1, min(10, userDefaults.object(forKey: Keys.wpmMedianWindowHops) as? Int ?? 3))
         if newMedianN != wpmMedianWindowHops { wpmMedianWindowHops = newMedianN }
-
         let newEmaAlpha = max(0.1, min(1.0, userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70))
         if newEmaAlpha != wpmEmaAlpha { wpmEmaAlpha = newEmaAlpha }
 
