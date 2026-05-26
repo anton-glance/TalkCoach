@@ -178,9 +178,9 @@ final class FloatingPanelControllerTests: XCTestCase {
 
         // Rapid reactivation during lingerFull (Phase G)
         await activateMic()
-        // Panel stays in linger until engine-ready
-        XCTAssertEqual(sut.panelState, .lingerFull,
-                       "Phase G: panel must stay in lingerFull between mic-on and engine-ready")
+        // Linger is cancelled immediately at mic-on — panel is warming before engine-ready
+        XCTAssertEqual(sut.panelState, .visible,
+                       "Phase G: mic-on during lingerFull must cancel linger and show .visible immediately")
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()

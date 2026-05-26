@@ -235,12 +235,11 @@ final class FloatingPanelController {
     }
 
     private func handleSessionActive(_ ctx: SessionContext) {
-        // Linger timers survive into Phase G — cancel pending hide only outside linger.
         switch panelState {
         case .hidden, .visible, .dismissed:
             cancelPendingHide()
         case .lingerFull, .lingerFade:
-            break
+            break  // linger cancel handled below in the per-state block
         }
 
         if panelState == .dismissed {
@@ -260,8 +259,19 @@ final class FloatingPanelController {
         case .visible:
             setActivityState(.warming, reason: "session-active")  // rapid restart within same visible state
         case .lingerFull, .lingerFade:
-            // Phase G Branch B: linger continues; sessionStartedAt updated; engine-ready will switch to .counting
-            Logger.floatingPanel.info("Phase G: session-active during linger [\(ctx.id)] — sessionStartedAt updated, waiting for engine-ready")
+            // Phase G: cancel the pending hide immediately so the fade timer cannot fire and
+            // hide the panel before engine-ready arrives (~3s), which would leave panelState
+            // .hidden and trigger assertionFailure in handleEngineReady.
+            cancelPendingHide()
+            panel?.alphaValue = 1.0
+            lingerStartedAt = nil
+            resetViewModel()
+            viewModel.isSessionActive = true
+            viewModel.sessionStartedAt = ctx.startedAt
+            panelState = .visible
+            applyPanelOpacity(animated: false)
+            setActivityState(.warming, reason: "session-active")
+            Logger.floatingPanel.info("Phase G: session-active during linger [\(ctx.id)] — linger cancelled → warming")
         case .dismissed:
             break
         }
