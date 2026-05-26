@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var parakeetBackend: ParakeetBackend?
     private var sileroProcessor: ProductionSileroFrameProcessor?
     private var wpmCalculator: WPMCalculator?
+    private var monologueDetector: MonologueDetector?
 
     override init() {
         super.init()
@@ -35,6 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionCoordinator.addConsumer(wpmCalc)
         sessionCoordinator.setWPMCalculator(wpmCalc)
         wpmCalculator = wpmCalc
+        let monoDetector = MonologueDetector(settings: settingsStore, scheduler: DispatchHideScheduler())
+        sessionCoordinator.setMonologueDetector(monoDetector)
+        monologueDetector = monoDetector
         floatingPanelController = FloatingPanelController(
             sessionCoordinator: sessionCoordinator,
             settingsStore: settingsStore,

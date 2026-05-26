@@ -87,6 +87,7 @@ final class SessionCoordinator: ObservableObject {
     var wiring: SessionWiring?
     private var consumers: [any TokenConsumer] = []
     private var wpmCalculator: WPMCalculator?
+    private var monologueDetector: MonologueDetector?
 
     // Exposed as private(set) so tests can `await sut.sessionWiringTask?.value`
     // to synchronise on wiring completion without polling.
@@ -198,6 +199,10 @@ final class SessionCoordinator: ObservableObject {
         wpmCalculator = calc
     }
 
+    func setMonologueDetector(_ detector: MonologueDetector) {
+        monologueDetector = detector
+    }
+
     /// Called by AudioPipeline when a recovery cycle begins.
     func audioPipelineDidBeginRecovery() {
         isRecovering = true
@@ -224,10 +229,12 @@ final class SessionCoordinator: ObservableObject {
                 case .speechStarted(let sessionTime):
                     self.isVoiceInactive = false
                     self.wpmCalculator?.notifyVADEvent(event)
+                    self.monologueDetector?.notifyVADEvent(event)
                     Logger.session.info("voice-active: true reason=VAD-onset t=\(sessionTime, format: .fixed(precision: 3))s")
                 case .speechStopped(let sessionTime):
                     self.isVoiceInactive = true
                     self.wpmCalculator?.notifyVADEvent(event)
+                    self.monologueDetector?.notifyVADEvent(event)
                     Logger.session.info("voice-active: false reason=VAD-stopped t=\(sessionTime, format: .fixed(precision: 3))s")
                 }
             }
@@ -367,6 +374,7 @@ final class SessionCoordinator: ObservableObject {
             await self?.relayTokens(from: capturedWiring.backend.tokenStream)
         }
         wpmCalculator?.sessionActivated()
+        monologueDetector?.sessionActivated()
         if let gate = activeVADGate { startSpeakingActivityMonitor(gate: gate) }
         startPollTimer()
 
@@ -473,6 +481,7 @@ final class SessionCoordinator: ObservableObject {
         for consumer in consumers {
             await consumer.sessionEnded()
         }
+        monologueDetector?.sessionEnded()
 
         let teardownMs = Int(Date().timeIntervalSince(teardownStart) * 1000)
         let totalTokens = sessionTokenCount

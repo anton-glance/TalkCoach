@@ -420,8 +420,9 @@ final class MonologueDetectorTests: XCTestCase {
 
         clock.advance(by: 55)  // 125s elapsed total > 120s new threshold
         fake.fireNext()
-        XCTAssertEqual(sut.monologueLevel, 1,
-            "125s elapsed must cross new L1 (120s) — live settings change reflected")
+        // 125s crosses both L1=120s and L2=90s (defaults) → level 2, not 1
+        XCTAssertEqual(sut.monologueLevel, 2,
+            "125s elapsed crosses L1 (120s) and L2 (90s) → level 2; live settings change reflected")
     }
 
     // MARK: AC: Second session per launch (S039 lifecycle lesson)
