@@ -76,11 +76,13 @@ final class MonologueDetector {
                 let pauseLength = now().timeIntervalSince(pauseStart)
                 if pauseLength > settings.monologuePauseThreshold {
                     // Path A: supra-threshold pause — cancel stale token, reset streak
+                    let prevLevel = monologueLevel
                     cancelTimer()
                     streakStart = nil
                     streakSeconds = 0
                     monologueLevel = 0
-                    Logger.analyzer.info(
+                    logTransition(from: prevLevel, to: 0, streak: 0.0)
+                    Logger.analyzer.debug(
                         "monologue-vad: path-A reset; pauseLength=\(pauseLength, format: .fixed(precision: 1))s"
                     )
                 }
@@ -123,11 +125,13 @@ final class MonologueDetector {
         if let pauseStart = pauseStartedAt {
             let pauseLength = now().timeIntervalSince(pauseStart)
             if pauseLength > settings.monologuePauseThreshold {
+                let prevLevel = monologueLevel
                 streakStart = nil
                 pauseStartedAt = nil
                 streakSeconds = 0
                 monologueLevel = 0
-                Logger.analyzer.info(
+                logTransition(from: prevLevel, to: 0, streak: 0.0)
+                Logger.analyzer.debug(
                     "monologue-timer: path-B reset; pauseLength=\(pauseLength, format: .fixed(precision: 1))s"
                 )
                 return  // do NOT re-arm — idle until next speechStarted
@@ -139,9 +143,10 @@ final class MonologueDetector {
         let newLevel = computeLevel(elapsed)
         let prevLevel = monologueLevel
         monologueLevel = newLevel
-        Logger.analyzer.info(
-            "monologue-timer: elapsed=\(elapsed, format: .fixed(precision: 1))s level=\(newLevel) prevLevel=\(prevLevel)"
+        Logger.analyzer.debug(
+            "monologue-tick: elapsed=\(elapsed, format: .fixed(precision: 1))s level=\(newLevel)"
         )
+        logTransition(from: prevLevel, to: newLevel, streak: elapsed)
         armTimer()  // re-arm for next 1s cycle
     }
 
@@ -152,5 +157,18 @@ final class MonologueDetector {
         let l2 = settings.monologueLevel2Minutes * 60
         let l3 = settings.monologueLevel3Minutes * 60
         return [l1, l2, l3].filter { elapsed >= $0 }.count
+    }
+
+    // MARK: - Logging
+
+    private func logTransition(from prevLevel: Int, to newLevel: Int, streak: TimeInterval) {
+        guard newLevel != prevLevel else { return }
+        let l1 = self.settings.monologueLevel1Minutes * 60
+        let l2 = self.settings.monologueLevel2Minutes * 60
+        let l3 = self.settings.monologueLevel3Minutes * 60
+        let pauseThr = self.settings.monologuePauseThreshold
+        Logger.analyzer.info(
+            "monologue: \(prevLevel)→\(newLevel) streak=\(streak, format: .fixed(precision: 1))s pauseThr=\(pauseThr, format: .fixed(precision: 1))s L1=\(l1, format: .fixed(precision: 0)) L2=\(l2, format: .fixed(precision: 0)) L3=\(l3, format: .fixed(precision: 0))"
+        )
     }
 }
