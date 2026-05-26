@@ -19,5 +19,6 @@ final class WidgetViewModel: ObservableObject {
     @Published var totalTokens: Int = 0
     @Published var currentWPMRaw: Int?
     @Published var currentWPMVoiced: Int?
-    // REMOVE-IN-M5.1: Phase 5 adds averageWPM, paceZone, monologueLevel
+    @Published var monologueLevel: Int = 0
+    // REMOVE-IN-M5.1: Phase 5 adds averageWPM, paceZone
 }

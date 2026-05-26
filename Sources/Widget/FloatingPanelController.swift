@@ -27,6 +27,7 @@ final class FloatingPanelController {
     private let screenProvider: ScreenProvider
     private let settingsStore: SettingsStore
     private let wpmCalculator: WPMCalculator?
+    private let monologueDetector: MonologueDetector?
     private let now: () -> Date
     private let reducedMotionProvider: () -> Bool
     private let runAnimation: (TimeInterval, @escaping () -> Void) -> Void
@@ -40,6 +41,7 @@ final class FloatingPanelController {
     private var recoverySubscription: AnyCancellable?
     private var wpmRawSubscription: AnyCancellable?
     private var wpmVoicedSubscription: AnyCancellable?
+    private var monologueLevelSubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
     private var dragDebounceToken: HideSchedulerToken?
     private var recoveryEndToken: HideSchedulerToken?
@@ -70,6 +72,7 @@ final class FloatingPanelController {
         screenProvider: ScreenProvider = SystemScreenProvider(),
         settingsStore: SettingsStore = SettingsStore(),
         wpmCalculator: WPMCalculator? = nil,
+        monologueDetector: MonologueDetector? = nil,
         now: @escaping () -> Date = { Date() },
         reducedMotionProvider: @escaping () -> Bool = {
             NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -88,6 +91,7 @@ final class FloatingPanelController {
         self.screenProvider = screenProvider
         self.settingsStore = settingsStore
         self.wpmCalculator = wpmCalculator
+        self.monologueDetector = monologueDetector
         self.now = now
         self.reducedMotionProvider = reducedMotionProvider
         self.runAnimation = runAnimation
@@ -96,6 +100,9 @@ final class FloatingPanelController {
         }
         wpmVoicedSubscription = wpmCalculator?.$wpmVoiced.sink { [weak self] value in
             self?.viewModel.currentWPMVoiced = value
+        }
+        monologueLevelSubscription = monologueDetector?.$monologueLevel.sink { [weak self] value in
+            self?.viewModel.monologueLevel = value
         }
     }
 
@@ -406,6 +413,7 @@ final class FloatingPanelController {
         viewModel.isSessionActive = false
         viewModel.currentWPMRaw = nil
         viewModel.currentWPMVoiced = nil
+        viewModel.monologueLevel = 0
     }
 
     // MARK: - Panel Management
@@ -615,6 +623,7 @@ final class FloatingPanelController {
             guard let self, self.panelState == .visible else { return }
             self.silenceHoldToken = nil
             self.wpmCalculator?.enterWaiting()
+            self.monologueDetector?.enterWaiting()
             self.setActivityState(.waiting, reason: "silence-2s")
         }
     }

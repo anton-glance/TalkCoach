@@ -42,7 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         floatingPanelController = FloatingPanelController(
             sessionCoordinator: sessionCoordinator,
             settingsStore: settingsStore,
-            wpmCalculator: wpmCalc
+            wpmCalculator: wpmCalc,
+            monologueDetector: monoDetector
         )
 
         do {

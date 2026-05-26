@@ -16,6 +16,12 @@ struct PlaceholderWidgetView: View {
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.secondary)
 
+                if viewModel.monologueLevel > 0 {
+                    Text("MONO L\(viewModel.monologueLevel)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.orange)
+                }
+
                 Spacer()
             }
             .padding(.top, 24)

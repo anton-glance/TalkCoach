@@ -155,7 +155,7 @@ final class SettingsStore: ObservableObject {
     @Published var monologueLevel1Minutes: Double {
         didSet {
             guard !isSyncing else { return }
-            let clamped = max(0.25, min(30.0, monologueLevel1Minutes))
+            let clamped = max(0.05, min(30.0, monologueLevel1Minutes))
             if clamped != monologueLevel1Minutes { monologueLevel1Minutes = clamped; return }
             userDefaults.set(monologueLevel1Minutes, forKey: Keys.monologueLevel1Minutes)
         }
@@ -164,7 +164,7 @@ final class SettingsStore: ObservableObject {
     @Published var monologueLevel2Minutes: Double {
         didSet {
             guard !isSyncing else { return }
-            let clamped = max(0.25, min(30.0, monologueLevel2Minutes))
+            let clamped = max(0.05, min(30.0, monologueLevel2Minutes))
             if clamped != monologueLevel2Minutes { monologueLevel2Minutes = clamped; return }
             userDefaults.set(monologueLevel2Minutes, forKey: Keys.monologueLevel2Minutes)
         }
@@ -173,7 +173,7 @@ final class SettingsStore: ObservableObject {
     @Published var monologueLevel3Minutes: Double {
         didSet {
             guard !isSyncing else { return }
-            let clamped = max(0.25, min(30.0, monologueLevel3Minutes))
+            let clamped = max(0.05, min(30.0, monologueLevel3Minutes))
             if clamped != monologueLevel3Minutes { monologueLevel3Minutes = clamped; return }
             userDefaults.set(monologueLevel3Minutes, forKey: Keys.monologueLevel3Minutes)
         }
@@ -226,12 +226,12 @@ final class SettingsStore: ObservableObject {
         let rawEmaAlpha = userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70
         self.wpmEmaAlpha = max(0.1, min(1.0, rawEmaAlpha))
 
-        let rawL1 = userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 1.0
-        self.monologueLevel1Minutes = max(0.25, min(30.0, rawL1))
-        let rawL2 = userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 1.5
-        self.monologueLevel2Minutes = max(0.25, min(30.0, rawL2))
-        let rawL3 = userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 2.5
-        self.monologueLevel3Minutes = max(0.25, min(30.0, rawL3))
+        let rawL1 = userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 0.1667  // DEV default; production 60s — revert before ship
+        self.monologueLevel1Minutes = max(0.05, min(30.0, rawL1))
+        let rawL2 = userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 0.3333  // DEV default; production 90s — revert before ship
+        self.monologueLevel2Minutes = max(0.05, min(30.0, rawL2))
+        let rawL3 = userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 0.5     // DEV default; production 150s — revert before ship
+        self.monologueLevel3Minutes = max(0.05, min(30.0, rawL3))
         let rawMonoPause = userDefaults.object(forKey: Keys.monologuePauseThreshold) as? Double ?? 2.5
         self.monologuePauseThreshold = max(0.5, min(10.0, rawMonoPause))
 
@@ -335,11 +335,11 @@ final class SettingsStore: ObservableObject {
         let newEmaAlpha = max(0.1, min(1.0, userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70))
         if newEmaAlpha != wpmEmaAlpha { wpmEmaAlpha = newEmaAlpha }
 
-        let newL1 = max(0.25, min(30.0, userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 1.0))
+        let newL1 = max(0.05, min(30.0, userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 0.1667))  // DEV default; production 60s — revert before ship
         if newL1 != monologueLevel1Minutes { monologueLevel1Minutes = newL1 }
-        let newL2 = max(0.25, min(30.0, userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 1.5))
+        let newL2 = max(0.05, min(30.0, userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 0.3333))  // DEV default; production 90s — revert before ship
         if newL2 != monologueLevel2Minutes { monologueLevel2Minutes = newL2 }
-        let newL3 = max(0.25, min(30.0, userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 2.5))
+        let newL3 = max(0.05, min(30.0, userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 0.5))     // DEV default; production 150s — revert before ship
         if newL3 != monologueLevel3Minutes { monologueLevel3Minutes = newL3 }
         let newMonoPause = max(0.5, min(10.0, userDefaults.object(forKey: Keys.monologuePauseThreshold) as? Double ?? 2.5))
         if newMonoPause != monologuePauseThreshold { monologuePauseThreshold = newMonoPause }
