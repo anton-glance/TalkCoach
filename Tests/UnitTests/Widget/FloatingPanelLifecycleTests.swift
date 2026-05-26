@@ -935,6 +935,65 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "WidgetViewModel.activityState must initialize to .idle (AC25)")
     }
 
+    // MARK: - Group 16: Phase G crash regression — session start during lingerFade
+
+    /// Regression: session-start during lingerFade must cancel the pending hide and restore
+    /// the panel to warming immediately. Without the fix, handleSessionActive does nothing in
+    /// the lingerFull/lingerFade case — the 2s fade timer fires, hides the panel, then
+    /// engine-ready (finding .hidden) hits assertionFailure and kills the process.
+    ///
+    /// continueAfterFailure = false: in the RED phase the first AC (cancelCount) fails before
+    /// the test reaches the engine-ready line that would otherwise crash the test process.
+    func testPhaseG_SessionStartDuringLingerFade_CancelsLinger_ShowsWarming() async {
+        continueAfterFailure = false
+        makeComponents(reducedMotion: false)
+        sut.start()
+        coordinator.start()
+
+        // Session 1: full cycle → lingerFade
+        coordinator.micActivated()
+        await Task.yield()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        coordinator.micDeactivated()
+        await Task.yield()
+        XCTAssertEqual(sut.panelState, .lingerFull, "Precondition: lingerFull after session end")
+
+        scheduler.fire(delay: 3.0)  // lingerFull → lingerFade
+        XCTAssertEqual(sut.panelState, .lingerFade, "Precondition: lingerFade after 3s timer")
+
+        // Session 2 starts during lingerFade — crash scenario
+        let cancelsBefore = scheduler.cancelCallCount
+
+        coordinator.micActivated()
+        await Task.yield()
+
+        // AC-1: pending 2s hide timer must be cancelled
+        XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
+                             "session-start-during-lingerFade must cancel the pending 2s hide timer")
+        XCTAssertFalse(scheduler.hasEntry(delay: 2.0),
+                       "2s lingerFade scheduler entry must be removed")
+
+        // AC-2: panel must be .visible + .warming immediately — no engine-ready needed
+        XCTAssertEqual(sut.panelState, .visible,
+                       "panel must be .visible immediately on session-start-during-lingerFade")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "activityState must be .warming immediately on session-start-during-lingerFade")
+
+        // AC-3: the cancelled hide timer must be a no-op — panel stays .visible
+        scheduler.fire(delay: 2.0)
+        XCTAssertEqual(sut.panelState, .visible,
+                       "firing cancelled 2s hide must be a no-op — panel must stay .visible")
+
+        // AC-4: engine-ready must produce .counting without hitting assertionFailure
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting,
+                       "engine-ready must produce .counting after session-start-during-lingerFade")
+        XCTAssertEqual(sut.panelState, .visible,
+                       "panel must remain .visible after engine-ready")
+    }
+
     func testHandleSessionIdle_PreservesSessionStartedAt_DuringLinger() async {
         makeComponents()
         sut.start()
