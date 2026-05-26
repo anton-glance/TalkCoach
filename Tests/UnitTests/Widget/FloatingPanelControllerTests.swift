@@ -611,4 +611,42 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertNotNil(fpc.viewModel.currentWPMRaw,
             "viewModel.currentWPMRaw must still be non-nil — median computation continues to run (M4.1.B)")
     }
+
+    // MARK: - M4.2b: Monologue level wiring (failing test — red phase)
+
+    func testMonologueLevelFlowsToViewModel() async {
+        let suite = "MonoWidgetFlow.\(name)"
+        let monoDefaults = UserDefaults(suiteName: suite)!
+        monoDefaults.removePersistentDomain(forName: suite)
+        let monoSettings = SettingsStore(userDefaults: monoDefaults)
+        monoSettings.monologueLevel1Minutes = 0.1667  // 10s — cross quickly in test
+
+        let monoScheduler = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let detector = MonologueDetector(settings: monoSettings, scheduler: monoScheduler, now: { clock })
+
+        let micProvider = FakeCoreAudioDeviceProvider()
+        micProvider.stubbedDefaultDeviceID = 42
+        micProvider.stubbedIsRunning = false
+        let micMonitor = MicMonitor(provider: micProvider)
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: monoSettings)
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: FakeHideScheduler(),
+            settingsStore: monoSettings,
+            monologueDetector: detector,
+            reducedMotionProvider: { true }
+        )
+
+        // speechStarted → 11s elapsed → timer fires → level 1 (crossed L1 = 0.1667 min = 10s)
+        detector.sessionActivated()
+        detector.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock = Date(timeIntervalSinceReferenceDate: 11.0)
+        monoScheduler.fireNext()
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.monologueLevel, 1,
+            "monologueLevel must flow from MonologueDetector to viewModel via FPC Combine sink (M4.2b)")
+    }
 }
