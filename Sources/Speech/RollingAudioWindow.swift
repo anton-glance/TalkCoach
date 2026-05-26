@@ -17,8 +17,8 @@ actor RollingAudioWindow {
     private var converter: AVAudioConverter?
     private var hopTask: Task<Void, Never>?
 
-    private let hopContinuation: AsyncStream<[Float]>.Continuation
-    let hopStream: AsyncStream<[Float]>
+    private var hopContinuation: AsyncStream<[Float]>.Continuation
+    var hopStream: AsyncStream<[Float]>
 
     init() {
         var cont: AsyncStream<[Float]>.Continuation!
@@ -121,16 +121,24 @@ actor RollingAudioWindow {
     private func fireHop() {
         let snapshot = Array(buffer.suffix(Self.windowSamples))
         let bufCount = buffer.count
-        Logger.speech.info("rw: fireHop tick bufferCount=\(bufCount) snapshotCount=\(snapshot.count)")
+        Logger.speech.debug("rw: fireHop tick bufferCount=\(bufCount) snapshotCount=\(snapshot.count)")
         guard !snapshot.isEmpty else { return }
         hopContinuation.yield(snapshot)
     }
 
-    /// Clear buffer and converter for a new session.
-    /// Must be called from `ParakeetBackend.start()` before creating `bufferTask`.
+    /// Clear buffer and converter for a new session, and recreate the hop stream.
+    /// Must be called from `ParakeetBackend.start()` before creating `inferTask`.
+    ///
+    /// The hop stream is recreated because Swift's AsyncStream transitions its internal
+    /// storage to terminal state when the consuming task is cancelled while suspended on
+    /// next(). Session 1's inferTask is cancelled in exactly that state during stop();
+    /// a fresh stream+continuation pair gives session 2's inferTask a live stream to iterate.
     func resetForNewSession() {
         buffer = []
         converter = nil
+        var newCont: AsyncStream<[Float]>.Continuation!
+        hopStream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { newCont = $0 }
+        hopContinuation = newCont
     }
 
     #if DEBUG

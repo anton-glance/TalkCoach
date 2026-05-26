@@ -4,11 +4,13 @@ import OSLog
 
 /// Sliding-window WPM calculator driven by wall-clock token arrivals and Silero VAD events.
 ///
-/// Ships two variants simultaneously for live A/B comparison:
-///   wpmRaw    — words / (10s fixed denominator) — WPM-A (raw)
-///   wpmVoiced — EMA-smoothed raw WPM — WPM-B (smoothed, alpha = emaAlpha)
+/// Ships two variants simultaneously for live A/B bake-off comparison:
+///   wpmRaw    — Row A: median of the last N raw per-hop WPM values (N = wpmMedianWindowHops).
+///               N=1 yields raw exactly (the product owner's raw-baseline escape hatch).
+///   wpmVoiced — Row B: EMA-smoothed raw WPM (alpha = wpmEmaAlpha, default 0.65).
 ///
-/// Both go nil together when data is below the minimum floor.
+/// Both are nil together when data is below the minimum floor.
+/// Raw per-hop WPM is not published but is logged in every wpm-refresh line.
 @MainActor
 final class WPMCalculator: TokenConsumer {
 
@@ -30,8 +32,6 @@ final class WPMCalculator: TokenConsumer {
     static let minWordsForReading: Int = 3
     static let minVoicedSecondsForReading: TimeInterval = 2.0
     static let engineReadyGracePeriod: TimeInterval = 0.5
-    // Provisional EMA weight for B row — product owner picks final value after live A/B comparison.
-    static let emaAlpha: Double = 0.4
 
     // MARK: - Dependencies
 
@@ -48,8 +48,10 @@ final class WPMCalculator: TokenConsumer {
     private var voiceIntervals: [VoiceInterval] = []
     private var currentSpeechStart: Date?
     private var refreshToken: HideSchedulerToken?
-    /// EMA state for B row. nil = no prior reading; first value seeds without smoothing.
+    /// EMA state for Row B. nil = no prior reading; first value seeds without smoothing.
     private var previousSmoothedWPM: Double?
+    /// Ring buffer of raw per-hop WPM values for Row A median. Capped at 10 entries.
+    private var medianBuffer: [Int] = []
     /// true from sessionActivated() until sessionEnded(); guards notifyVADEvent.
     private var isActive = false
 
@@ -94,7 +96,7 @@ final class WPMCalculator: TokenConsumer {
     }
 
     /// Call when the widget enters waiting state (silence-hold fired).
-    /// Cancels the refresh loop, clears in-window state, and publishes nil.
+    /// Cancels the refresh loop, clears in-window state and smoothers, publishes nil.
     /// The loop restarts on the next `notifyVADEvent(.speechStarted)`.
     func enterWaiting() {
         if let token = refreshToken {
@@ -105,6 +107,7 @@ final class WPMCalculator: TokenConsumer {
         voiceIntervals.removeAll()
         currentSpeechStart = nil
         previousSmoothedWPM = nil
+        medianBuffer.removeAll()
         wpmRaw = nil
         wpmVoiced = nil
     }
@@ -163,6 +166,7 @@ final class WPMCalculator: TokenConsumer {
             voiceIntervals.removeAll()
             currentSpeechStart = nil
             previousSmoothedWPM = nil
+            medianBuffer.removeAll()
             wpmRaw = nil
             wpmVoiced = nil
         }
@@ -191,6 +195,10 @@ final class WPMCalculator: TokenConsumer {
         let currentNow = now()
         let cutoff = currentNow.addingTimeInterval(-Self.windowSeconds)
 
+        // Read live settings — changes take effect on the next refresh without session restart.
+        let n = max(1, min(10, settings.wpmMedianWindowHops))
+        let alpha = max(0.1, min(1.0, settings.wpmEmaAlpha))
+
         // Evict snapshot if it fell outside the window.
         if let snap = latestSnapshot, snap.arrivedAt < cutoff {
             latestSnapshot = nil
@@ -210,18 +218,26 @@ final class WPMCalculator: TokenConsumer {
             wpmRaw = nil
             wpmVoiced = nil
             Logger.analyzer.info(
-                "wpm-refresh: A_raw=-1 B_smoothed=-1 rawThisHop=\(rawThisHop) words=\(words) alpha=0.4 tElapsed=\(tElapsed, format: .fixed(precision: 1))"
+                "wpm-refresh: A_median=-1 B_ema=-1 rawThisHop=\(rawThisHop) words=\(words) medianN=\(n) alpha=\(alpha, format: .fixed(precision: 2)) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
             )
             return
         }
 
-        wpmRaw = rawThisHop
-        let smoothed = previousSmoothedWPM.map { Self.emaAlpha * rawDouble + (1 - Self.emaAlpha) * $0 } ?? rawDouble
+        // Update median ring buffer (cap at 10 so memory is bounded regardless of session length).
+        medianBuffer.append(rawThisHop)
+        if medianBuffer.count > 10 { medianBuffer.removeFirst() }
+
+        // Row A — median of last N raw per-hop values (N=1 ≡ raw, the escape hatch).
+        let slice = Array(medianBuffer.suffix(n))
+        wpmRaw = median(slice)
+
+        // Row B — EMA over raw per-hop; alpha read live from settings.
+        let smoothed = previousSmoothedWPM.map { alpha * rawDouble + (1 - alpha) * $0 } ?? rawDouble
         previousSmoothedWPM = smoothed
         wpmVoiced = Int(round(smoothed))
 
         Logger.analyzer.info(
-            "wpm-refresh: A_raw=\(self.wpmRaw ?? -1) B_smoothed=\(self.wpmVoiced ?? -1) rawThisHop=\(rawThisHop) words=\(words) alpha=0.4 tElapsed=\(tElapsed, format: .fixed(precision: 1))"
+            "wpm-refresh: A_median=\(self.wpmRaw ?? -1) B_ema=\(self.wpmVoiced ?? -1) rawThisHop=\(rawThisHop) words=\(words) medianN=\(n) alpha=\(alpha, format: .fixed(precision: 2)) tElapsed=\(tElapsed, format: .fixed(precision: 1))"
         )
     }
 
@@ -257,5 +273,17 @@ final class WPMCalculator: TokenConsumer {
         text.components(separatedBy: .whitespaces)
             .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) }
             .count
+    }
+
+    // MARK: - Median
+
+    private func median(_ values: [Int]) -> Int {
+        let sorted = values.sorted()
+        let mid = sorted.count / 2
+        if sorted.count % 2 == 0 {
+            return Int(round(Double(sorted[mid - 1] + sorted[mid]) / 2.0))
+        } else {
+            return sorted[mid]
+        }
     }
 }

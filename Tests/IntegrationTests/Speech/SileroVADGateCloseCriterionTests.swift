@@ -61,6 +61,11 @@ final class SileroVADGateCloseCriterionTests: XCTestCase {
         await driveFrames(gate, count: 63, prob: 0.9)  // Block 5
 
         await gate.stop()
+        // transitionStream is long-lived (stop() no longer finishes it).
+        // Yield so collectionTask drains the already-buffered events, then cancel
+        // to unblock it from waiting on the empty stream.
+        for _ in 0..<5 { await Task.yield() }
+        collectionTask.cancel()
         let events = await collectionTask.value
 
         // ── AC-G1: exactly 7 transitions

@@ -7,37 +7,18 @@ struct PlaceholderWidgetView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 8) {
-                Spacer()
+                Text(wpmText(viewModel.currentWPMVoiced))
+                    .font(.system(size: 28, weight: .light, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
 
-                // WPM-A row (raw, fixed 10s denominator)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("A")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                    Text(wpmText(viewModel.currentWPMRaw))
-                        .font(.system(size: 28, weight: .light, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(.primary)
-                }
-
-                // Activity state label
                 Text(Self.label(for: viewModel.activityState))
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.secondary)
 
-                // WPM-B row (voiced-seconds denominator)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("B")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                    Text(wpmText(viewModel.currentWPMVoiced))
-                        .font(.system(size: 28, weight: .light, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(.primary)
-                }
-
                 Spacer()
             }
+            .padding(.top, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // REMOVE-IN-M5.7: replace with hover-only close affordance

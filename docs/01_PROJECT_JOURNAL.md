@@ -2,6 +2,71 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 039 — 2026-05-26 — M4.1 COMPLETE: WPM metric shipped + the six-bug multi-session lifecycle saga resolved + linger-race crash fixed + smoothing bake-off → EMA(0.70) chosen. Widget shows a single live WPM number, working across unlimited sessions per launch. Tag m4.1-complete.
+
+**Format:** Architect + product-owner + agent. A long single-arc session: WPM math validated session 1, then a six-bug cascade blocking session-2-per-launch (each bug hid behind the previous), then a fast-restart widget crash the fixes exposed, then a smoothing bake-off and final-display narrowing. Every fix gated on live two-session smoke by Anton; nothing tagged until the final live pass.
+
+### M4.1 — CLOSED ✅ (tag m4.1-complete)
+
+The gate's raw transition stream + Parakeet token word-counts became the v1 WPM metric, displayed as a single live number on the widget, surviving unlimited sessions per launch.
+
+**WPM math (final, locked this session):**
+- raw per-hop WPM = latest hop's `word_count × 6` (60s ÷ 10s window). **NO cross-hop accumulation** — an earlier accumulating form produced 3–4× inflation; the per-hop-only form tracks pace correctly (validated live: Churchill ~128–150 steady, counting-cadence 150→168→216→258→288 tracking a deliberate speed-up).
+- Minimum-data floor: `minWordsForReading=3` AND `minVoicedSecondsForReading=2.0` (code constants, not Settings). Below floor → widget shows "---".
+- Warmup discard: words counted only after engine-ready + cutoff; discard by ARRIVAL time, not token.endTime. (`wpm-consume beforeCutoff=true accepted=false` on the first pre-cutoff token, `accepted=true` after — confirmed live.)
+
+**Smoothing bake-off (the final build):**
+- Row A = median of last N raw per-hop values, `wpmMedianWindowHops` (Int, default 3, clamp 1–10; N=1 = raw escape hatch). Row B = EMA, `wpmEmaAlpha` (Double, default 0.70, clamp 0.1–1.0). Both reset on `enterWaiting()`/`sessionEnded()`, NOT on `engineReadyFired()`. Raw not displayed but always logged as `rawThisHop=`. Both live-tunable mid-session via Settings (read at refresh time, not cached).
+- **Bake-off verdict (Anton, live on Tony Robbins ~201wpm + Churchill ~128wpm): EMA chosen, alpha 0.70.** At the tuned settings (median N≈2–3, alpha 0.70) the two are near-identical, but EMA wins because alpha gives continuous 0.05-step tuning where median can only jump in whole-hop chunks. Refresh cadence 1s confirmed (accurate calc; the "feels frequent" is a widget-UI concern deferred to Phase 5, NOT a calc-rate change).
+- **Final display:** Row A (median) removed from the widget; **Row B (EMA) is the sole WPM number, at the top of the widget.** Median computation + its `wpm-refresh` log line KEPT (display-only surgery) so median stays available in logs for future comparison.
+
+### The six-bug multi-session lifecycle saga (the spine of this session)
+
+Hard v1 requirement: the app sits idle in the menu bar and is ready for repeated meetings WITHOUT quitting. Session 1 always worked; **session 2 per launch was completely dead** — and six interlocking bugs each hid behind the previous. Fixing one exposed the next. All resolved in-session per NO-SKIPPING; each diagnosed on live debug DATA, not theory.
+
+1. **WPMCalculator VAD-guard** — engine-ready cutoff wrongly applied to VAD events, starving voiced-seconds. Fix: VAD events recorded from session start; cutoff applies to WORDS only.
+2. **SileroVADGate.stop() called `transitionCont.finish()`** → permanently dead continuation on session 2. Fix: removed `finish()`; monitor task exits via cancellation.
+3. **RollingAudioWindow buffer never reset between sessions** → session 2 inherited a stale full 192000-sample buffer pinned at cap, transcribed stale audio → 0 words. Fix: `resetForNewSession()` clears buffer + converter, called at top of `ParakeetBackend.start()`. (Diagnosed via instrumented logging: `converterWasNil=false` + `bufferCount=192000` from first append on session 2.)
+4. **ParakeetBackend engine destroy/recreate per session** → ORT v2.0.0-rc.12 cannot cleanly reinit OrtSessions in-process; the second session transcribed empty. Fix: **keep the engine ALIVE across sessions** (lazy-create once, reuse; `pk_engine_destroy` only in `deinit`). Confirmed safe in Rust source (`PkEngine = Mutex<ParakeetTDT>`, `transcribe_samples` stateless). Side effect: session-2 wiring dropped from ~6s cold to ~36–46ms.
+5. **RollingAudioWindow.hopStream terminal** after session-1 `inferTask` was cancelled-while-suspended → session-2 hops fired into a dead stream, `pk_transcribe` never called (proven: 7 `fireHop` ticks, zero `pk_transcribe` = "Scenario C"). Fix: recreate `hopStream`+continuation in `resetForNewSession()`.
+6. **ParakeetBackend.tokenStream terminal** — same mechanism on the sibling stream. Session-2 tokens never reached `WPMCalculator.consume` (zero `wpm-consume` lines). **KEY INSIGHT:** the kill vector is NOT explicit `finish()` (the prior "don't finish in stop()" fix was insufficient) — it's `relayTask?.cancel()` firing AsyncStream's `onCancel` → `storage.cancel()` → terminal, while `relayTask` is suspended in `for-await`. `relayTask` loops forever so it's ALWAYS suspended when cancelled, so cancel ALWAYS terminalizes `tokenStream`. `engineReadyStream` escapes only because its task `break`s before teardown cancels it (cancel on an already-finished task is a no-op). Fix: recreate `tokenStream`/`engineReadyStream` + continuations in `start()` before the first await; coordinator reads the stream fresh AFTER `await start()` (the await is the happens-before fence making `nonisolated(unsafe) var` genuinely safe, not just silenced).
+
+### The widget linger-race crash (exposed by the saga fix succeeding)
+
+After bug #4 made restart ~36ms, a `fatalError` at `FloatingPanelController.swift:294` ("engine-ready while hidden") fired when a new session started DURING the previous session's 2s linger-fade. **DETERMINISTIC, not flaky:** engine-ready always fires ~3s after session start (first hop); the linger-fade hide always fires ≤2s after a session that starts during the fade; the hide ALWAYS wins, so the panel is ALWAYS hidden when engine-ready arrives → crash → mic never freed (the "doesn't release the mic" symptom was the crash's consequence). The `handleSessionActive` `.lingerFull/.lingerFade` case did nothing but log — it never cancelled the pending hide.
+
+**Fix (Option A, cancel-linger-restore-warming — NOT the flicker-inducing soften-the-assert Option B):** in `handleSessionActive`'s linger cases, synchronously on MainActor with NO await: `cancelPendingHide()` (invalidates the timer), alpha=1.0, `lingerStartedAt=nil`, reset+populate viewModel, `panelState=.visible`, `applyPanelOpacity(animated:false)`, `setActivityState(.warming)`. Engine-ready now always arrives into `.visible`+warming → normal warming→counting; the line-294 assert is unreachable. Validated live by deliberately starting session 2 during the fade: no crash, widget snaps to warming, WPM counts, mic releases clean.
+
+### Live evidence (the close gate)
+Final run: session 1 tracked counting pace (162→174), session 2 reused engine (`reusing existing engine`, wiring 46ms) and produced real WPM (`wpm-consume accepted=true`, `wpm-refresh A_median/B_ema` real numbers), the mid-fade restart did NOT crash. Earlier `code 9: killed` log endings were Anton stopping the debugger, not fatalErrors. The six-bug saga is OVER — WPM works across unlimited sessions.
+
+### Lessons logged
+- **The prior fix's blind spot becomes the next bug.** Bug #6: "don't call finish() in stop()" covered explicit finishing but not consumer-task-cancellation terminalizing the stream. When a fix narrows a failure class, name the EXACT mechanism it covers — the uncovered sibling mechanism is the next bug.
+- **A successful fix exposes latent races.** The keep-alive fix (~36ms restart) made the deterministic linger-race reachable in normal use. Fast-path optimizations should trigger a re-audit of any timing-dependent code downstream.
+- **"Behavior correct under design A becomes wrong under design B"** (also the Session 032 lesson) recurred: the linger-fade was correct when restart was slow; it became a guaranteed crash when restart got fast.
+- **Diagnose on DATA, not theory.** Bugs #4–#6 had several rounds of confident-but-wrong agent hypotheses on UNLOGGED branches (both `pk_transcribe` failure paths returned null silently). Resolved only by instrumenting the silent branches and running live to DISTINGUISH scenarios. The "Scenario C" proof (fireHop ticks with zero pk_transcribe) is the canonical example.
+- **TDD-lock deviation (justified, logged):** `testPhaseG_RapidReactivation_DuringLingerFull` had a stale intermediate assertion (`.lingerFull` after mic-on) updated to `.visible` in the green phase — the old test asserted the OLD buggy behavior. Same justified category as the M2.6 deviation. Flagged explicitly, not folded silently into "no regressions."
+
+### Spike #20 — CLOSED (folded into M4.1)
+Opened mid-session for "Parakeet/ORT multi-session reuse." Resolved: Direction 2 (ORT upgrade) dead (rc.12 is latest); Direction 3 (XPC process isolation) correctly avoided once Scenario C proved the failure was a Swift stream-lifecycle bug, not ORT; the working path is **engine keep-alive + per-session stream recreation** (bugs #4/#5/#6 above). No separate spike doc verdict needed — the saga fixes ARE the resolution.
+
+### Carryover / known follow-ups (NOT M4.1 blockers)
+- **SwiftLint not on PATH** for the last three agent sessions (binary not installed in the agent shell). Code followed conventions by inspection, but the lint gate was skipped. Anton runs `swiftlint` manually at terminal before the tag. Install in the agent environment to restore the automated gate.
+- **`rw: append`/`pk:` diagnostic logging** — `rw: fireHop` dropped to `.debug` this session; the per-append `rw: append` spam (hundreds of lines/session) should also drop to `.debug` or be removed before real use. Partially done.
+- **Cold-start first-hop wrong-language tokens** (carried from S038): saw a Russian fragment on hop 1 again. M4 word-count concern — WPM should down-weight/discard the first cold hop; investigate forcing English-only decode in `parakeet-rs`.
+- **Settings housekeeping (deferred, scoped this session):** audit SettingsStore for declared-but-unread settings and remove dead ones; the language control is almost certainly dead UI under the English-only lock and should be REMOVED (not turned into a dropdown — a dropdown would add multi-language UI to an English-only v1). Agent to inventory read-sites and report the dead-settings list for approval BEFORE deleting.
+- **AppKit `layoutSubtreeIfNeeded` recursion warning** at teardown (carried from M3.7.4) — non-fatal, investigate in Phase 5.
+
+### Parked widget-polish items (next, after M4.1)
+- **waiting→visible 2s debounce:** when widget is in `waiting` and voice resumes, count IMMEDIATELY but return to 100% visibility only after voice sustains ~2s (uses `wpmPauseThreshold`). Prevents a backchannel "yeah"/"right" yanking the widget to full.
+- **every-1s refresh feels frequent** — make the 1s update feel non-distracting (UI smoothing/animation, NOT a calc-rate change).
+
+### M4 status after M4.1
+M4.1 (WPM) DONE. Remaining M4: **M4.2 MonologueDetector** (next), M4.3 wire widget fade to `wpmPauseThreshold` (replaces the M3.7.6 temporary 2s `static let`), M4.6 EffectiveSpeakingDuration, M4.7 session aggregation. Monologue 2.5s-reset validation still gated behind Spike #11.
+
+---
+
+
 ## Session 038 — 2026-05-24 — M3.7.6 COMPLETE: VAD master-clock gate + broadcaster fan-out + 2s UI silence-hold, FULL PIPELINE validated on live natural speech (Parakeet + gate + widget together). Phase 3 DONE. M4 (WPM + Monologue) scope locked. Tagged m3.7.6-complete.
 
 **Format:** Architect + product-owner + agent. Plan → approve → implement → live smoke (3 sessions) found a real integration bug → fix-plan → approve → implement → live smoke PASS → close.

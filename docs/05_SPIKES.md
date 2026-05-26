@@ -1340,6 +1340,27 @@ The token-ceiling is the inverse of whisper's 30s-mel floor: whisper pads short 
 
 ---
 
+## Spike #20 — Parakeet/ORT multi-session reuse (in-process session 2+ per launch)
+
+**Status:** ✅ RESOLVED (Session 039) — folded into M4.1. **No standalone verdict needed: the resolution IS the M4.1 lifecycle fixes.** The working path is engine keep-alive + per-session Swift stream recreation.
+
+### Question
+The app must sit idle in the menu bar and serve repeated meetings WITHOUT quitting. Session 1 worked; session 2 per launch produced zero transcription. Is this an ORT/Parakeet limitation (can ORT v2.0.0-rc.12 reinit OrtSessions in-process?) or a Swift-side lifecycle bug?
+
+### Three directions considered
+1. **Engine keep-alive** (lazy-create the Parakeet engine once, reuse across sessions; `pk_engine_destroy` only in `deinit`). — **TAKEN.** Confirmed safe in `parakeet-rs` source (`PkEngine = Mutex<ParakeetTDT>`, `transcribe_samples` is stateless). Dropped session-2 wiring from ~6s cold to ~36–46ms.
+2. **ORT upgrade** (newer ort that cleanly reinits sessions). — **DEAD.** rc.12 is the latest; the destroy/recreate-per-session path genuinely transcribes empty on the second OrtSession in-process.
+3. **XPC process isolation** (run the engine in a separate process, kill/respawn per session). — **CORRECTLY AVOIDED.** Once the "Scenario C" diagnostic (session-2 `fireHop` ticks with zero `pk_transcribe` calls) proved the dead path was a Swift AsyncStream-lifecycle bug — not ORT — process isolation became unnecessary complexity.
+
+### Resolution (the M4.1 saga, bugs #4/#5/#6)
+- Keep the engine alive (Direction 1).
+- **Recreate the Swift streams that get terminalized by consumer-task cancellation:** `hopStream` (RollingAudioWindow) and `tokenStream`/`engineReadyStream` (ParakeetBackend). Root mechanism: a forever-looping consumer task cancelled-while-suspended in `for-await` fires AsyncStream's `onCancel` → `storage.cancel()` → terminal; the next session's consumer gets `nil` immediately. Fix recreates the stream + continuation in `start()`/`resetForNewSession()` before the first await, with the coordinator reading fresh after the await (happens-before fence).
+
+### Finding (locked)
+**ORT v2.0.0-rc.12 cannot cleanly reinitialize OrtSessions in the same process; the correct pattern is to create the engine once and keep it alive for the app's lifetime, resetting only the surrounding Swift audio/stream state per session.** Cross-session AsyncStream lifecycle is the real hazard, not the ML runtime — any long-lived stream consumed by a forever-looping task must be recreated per session, because task cancellation terminalizes it regardless of whether the continuation was explicitly finished.
+
+---
+
 ## Spike status summary (Session 033)
 
 Phase 0 spikes (locked Session 014):

@@ -17,6 +17,10 @@ final class SettingsStore: ObservableObject {
         static let inactivityThresholdSeconds = "inactivityThresholdSeconds"
         static let widgetHideDelaySeconds = "widgetHideDelaySeconds"
         static let probePollIntervalSeconds = "probePollIntervalSeconds"
+        static let wpmRefreshInterval = "wpmRefreshInterval"
+        static let wpmPauseThreshold = "wpmPauseThreshold"
+        static let wpmMedianWindowHops = "wpmMedianWindowHops"
+        static let wpmEmaAlpha = "wpmEmaAlpha"
     }
 
     private let userDefaults: UserDefaults
@@ -108,6 +112,45 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var wpmRefreshInterval: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(1.0, min(10.0, wpmRefreshInterval))
+            if clamped != wpmRefreshInterval { wpmRefreshInterval = clamped; return }
+            userDefaults.set(wpmRefreshInterval, forKey: Keys.wpmRefreshInterval)
+        }
+    }
+
+    /// Stored for M4.3; not used in M4.1 WPM math.
+    @Published var wpmPauseThreshold: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(0.5, min(10.0, wpmPauseThreshold))
+            if clamped != wpmPauseThreshold { wpmPauseThreshold = clamped; return }
+            userDefaults.set(wpmPauseThreshold, forKey: Keys.wpmPauseThreshold)
+        }
+    }
+
+    /// Row A: number of recent raw per-hop WPM values to median over. Clamped 1…10.
+    @Published var wpmMedianWindowHops: Int {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(1, min(10, wpmMedianWindowHops))
+            if clamped != wpmMedianWindowHops { wpmMedianWindowHops = clamped; return }
+            userDefaults.set(wpmMedianWindowHops, forKey: Keys.wpmMedianWindowHops)
+        }
+    }
+
+    /// Row B: EMA smoothing factor. Clamped 0.1…1.0. Default 0.70 (bake-off result).
+    @Published var wpmEmaAlpha: Double {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(0.1, min(1.0, wpmEmaAlpha))
+            if clamped != wpmEmaAlpha { wpmEmaAlpha = clamped; return }
+            userDefaults.set(wpmEmaAlpha, forKey: Keys.wpmEmaAlpha)
+        }
+    }
+
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
 
@@ -137,6 +180,18 @@ final class SettingsStore: ObservableObject {
         self.widgetHideDelaySeconds = max(1, min(30, rawHideDelay))
         let rawPollInterval = userDefaults.object(forKey: Keys.probePollIntervalSeconds) as? Double ?? 1.0
         self.probePollIntervalSeconds = max(0.05, min(5.0, rawPollInterval))
+
+        let rawRefreshInterval = userDefaults.object(forKey: Keys.wpmRefreshInterval) as? Double ?? 3.0
+        self.wpmRefreshInterval = max(1.0, min(10.0, rawRefreshInterval))
+
+        let rawPauseThreshold = userDefaults.object(forKey: Keys.wpmPauseThreshold) as? Double ?? 2.0
+        self.wpmPauseThreshold = max(0.5, min(10.0, rawPauseThreshold))
+
+        let rawMedianN = userDefaults.object(forKey: Keys.wpmMedianWindowHops) as? Int ?? 3
+        self.wpmMedianWindowHops = max(1, min(10, rawMedianN))
+
+        let rawEmaAlpha = userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70
+        self.wpmEmaAlpha = max(0.1, min(1.0, rawEmaAlpha))
 
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -196,6 +251,7 @@ final class SettingsStore: ObservableObject {
         hasCompletedSetup = true
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     private func syncFromDefaults() {
         isSyncing = true
         defer { isSyncing = false }
@@ -229,6 +285,18 @@ final class SettingsStore: ObservableObject {
 
         let newPollInterval = max(0.05, min(5.0, userDefaults.object(forKey: Keys.probePollIntervalSeconds) as? Double ?? 1.0))
         if newPollInterval != probePollIntervalSeconds { probePollIntervalSeconds = newPollInterval }
+
+        let newRefreshInterval = max(1.0, min(10.0, userDefaults.object(forKey: Keys.wpmRefreshInterval) as? Double ?? 3.0))
+        if newRefreshInterval != wpmRefreshInterval { wpmRefreshInterval = newRefreshInterval }
+
+        let newPauseThreshold = max(0.5, min(10.0, userDefaults.object(forKey: Keys.wpmPauseThreshold) as? Double ?? 2.0))
+        if newPauseThreshold != wpmPauseThreshold { wpmPauseThreshold = newPauseThreshold }
+
+        let newMedianN = max(1, min(10, userDefaults.object(forKey: Keys.wpmMedianWindowHops) as? Int ?? 3))
+        if newMedianN != wpmMedianWindowHops { wpmMedianWindowHops = newMedianN }
+
+        let newEmaAlpha = max(0.1, min(1.0, userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70))
+        if newEmaAlpha != wpmEmaAlpha { wpmEmaAlpha = newEmaAlpha }
 
         syncPositionsFromDefaults()
     }

@@ -502,10 +502,13 @@ final class WPMCalculatorTests: XCTestCase {
     }
 
     func testSmoothedWPMAppliesEMA() async {
-        // B = alpha * rawWPM + (1 - alpha) * prevB, alpha = 0.4.
+        // B = alpha * rawWPM + (1 - alpha) * prevB.
         // First reading seeds to rawWPM (no prior smoothed value).
+        // Uses N=1 to isolate raw per-hop for Row A; alpha=0.4 for exact expected values.
         let clock = MockClock(reference: 0)
         let settings = makeSettings()
+        settings.wpmMedianWindowHops = 1  // isolate Row A to raw per-hop
+        settings.wpmEmaAlpha = 0.4         // use explicit alpha for expected values
         let fake = WPMFakeHideScheduler()
         let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
 
@@ -519,7 +522,7 @@ final class WPMCalculatorTests: XCTestCase {
         await sut.consume(makeToken("one two three four five six seven eight nine ten"))
         fake.fireNext()
 
-        XCTAssertEqual(sut.wpmRaw, 60, "hop-1 rawWPM")
+        XCTAssertEqual(sut.wpmRaw, 60, "hop-1 rawWPM (N=1 median=raw)")
         XCTAssertEqual(sut.wpmVoiced, 60, "hop-1 B seeds to rawWPM — no prior smoothed value")
 
         // Hop 2: 20 words at t=8 → rawWPM2 = 120; B = 0.4*120 + 0.6*60 = 48+36 = 84
@@ -530,15 +533,18 @@ final class WPMCalculatorTests: XCTestCase {
         ))
         fake.fireNext()
 
-        XCTAssertEqual(sut.wpmRaw, 120, "hop-2 rawWPM")
+        XCTAssertEqual(sut.wpmRaw, 120, "hop-2 rawWPM (N=1 median=raw)")
         XCTAssertEqual(sut.wpmVoiced, 84, "hop-2 B = 0.4*120 + 0.6*60 = 84")
     }
 
     func testSmoothedResetsAfterWaiting() async {
         // After enterWaiting(), previousSmoothedWPM is cleared.
         // The first reading after resume seeds B to rawWPM (no carryover from pre-waiting B).
+        // Uses N=1 + alpha=0.4 to get exact expected pre-waiting value of 84.
         let clock = MockClock(reference: 0)
         let settings = makeSettings()
+        settings.wpmMedianWindowHops = 1  // isolate Row A to raw per-hop
+        settings.wpmEmaAlpha = 0.4         // use explicit alpha for expected values
         let fake = WPMFakeHideScheduler()
         let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
 
@@ -666,6 +672,259 @@ final class WPMCalculatorTests: XCTestCase {
         await sut.consume(makeToken("one two three four five"))
         fake.fireNext()
         XCTAssertNotNil(sut.wpmRaw, "fresh window after resume must produce wpmRaw")
+    }
+
+    // MARK: M4.1 — Median window (Row A)
+
+    func testMedianWindowN1EqualsRaw() async {
+        // N=1 must yield raw exactly — the product owner's raw-baseline escape hatch.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 1
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+
+        XCTAssertEqual(sut.wpmRaw, 60, "N=1 median equals rawThisHop exactly")
+    }
+
+    func testMedianWindowN3ThreeHops() async {
+        // N=3: three hops producing [60, 120, 90] → sorted [60, 90, 120] → median = 90.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 3
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1: 10 words → raw = 60
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 60, "hop 1 median([60]) = 60")
+
+        // Hop 2: 20 words → raw = 120; median([60, 120]) = (60+120)/2 = 90
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 90, "hop 2 median([60,120]) = 90")
+
+        // Hop 3: 15 words → raw = 90; median([60, 120, 90]) sorted = [60, 90, 120], mid=1 → 90
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 90, "hop 3 median([60,120,90]) = 90")
+    }
+
+    func testMedianWindowFewerThanNHops() async {
+        // N=5 but only 2 hops available → take median of the 2 present values.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 5
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1: 10 words → raw = 60; median([60]) = 60
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 60, "1 of 5 hops: median([60]) = 60")
+
+        // Hop 2: 20 words → raw = 120; median([60, 120]) = 90
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 90, "2 of 5 hops: median([60,120]) = 90 (fewer than N)")
+    }
+
+    func testMedianBufferResetOnEnterWaiting() async {
+        // enterWaiting() must clear the median buffer so the next hop seeds fresh.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 3
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1 → 60, hop 2 → median([60, 120]) = 90
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 90, "setup: pre-waiting median = 90")
+
+        sut.enterWaiting()
+
+        clock.advance(by: 2.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // After reset, hop 3 feeds [60] only → median = 60, not 90.
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 60, "enterWaiting resets median buffer — fresh hop = raw")
+    }
+
+    func testMedianBufferResetOnSessionEnded() async {
+        // sessionEnded() must clear the median buffer so session 2 seeds its own buffer.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 3
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 60, "session 1 hop 1 = 60")
+
+        await sut.sessionEnded()
+        XCTAssertNil(sut.wpmRaw, "sessionEnded clears output")
+
+        // Session 2: 20 words on hop 1 → raw=120.
+        // If buffer was NOT cleared: median([60, 120]) = 90.
+        // If buffer WAS cleared:     median([120])     = 120.
+        sut.sessionActivated()
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 120, "sessionEnded clears median buffer — session 2 hop 1 = raw")
+    }
+
+    // MARK: M4.1 — Settings-driven EMA alpha (Row B)
+
+    func testEmaAlphaFromSettings() async {
+        // B uses settings.wpmEmaAlpha, not a hardcoded constant.
+        // alpha=0.65: B = 0.65*120 + 0.35*60 = 78 + 21 = 99.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 1  // isolate from median
+        settings.wpmEmaAlpha = 0.65
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1: 10 words → raw=60. Seeds to raw (no prior).
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmVoiced, 60, "hop 1 seeds to rawWPM")
+
+        // Hop 2: 20 words → raw=120. B = 0.65*120 + 0.35*60 = 99.
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmVoiced, 99, "B = 0.65*120 + 0.35*60 = 99 — reads alpha from settings")
+    }
+
+    func testEmaAlphaLiveUpdate() async {
+        // Changing wpmEmaAlpha between hops takes effect on the very next refresh.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 1
+        settings.wpmEmaAlpha = 0.4
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1 with alpha=0.4 → seeds to 60.
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmVoiced, 60, "hop 1 seeds to raw")
+
+        // Change alpha live — must take effect on next refresh.
+        settings.wpmEmaAlpha = 0.65
+
+        // Hop 2: 20 words → raw=120. B = 0.65*120 + 0.35*60 = 99 (new alpha).
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmVoiced, 99, "alpha change takes effect on next refresh")
+    }
+
+    func testMedianNLiveUpdate() async {
+        // Changing wpmMedianWindowHops between hops takes effect on the very next refresh.
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        settings.wpmMedianWindowHops = 1  // start N=1 (raw)
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.engineReadyFired(at: clock.current.addingTimeInterval(-1.0))
+        clock.advance(by: 1.0)
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+
+        // Hop 1 with N=1: 10 words → raw=60; median([60])=60.
+        clock.advance(by: 4.0)
+        await sut.consume(makeToken("one two three four five six seven eight nine ten"))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 60, "N=1: median = raw = 60")
+
+        // Change N to 2 live.
+        settings.wpmMedianWindowHops = 2
+
+        // Hop 2: 20 words → raw=120; medianBuffer=[60,120]; N=2: median=90.
+        clock.advance(by: 3.0)
+        await sut.consume(makeToken(
+            "one two three four five six seven eight nine ten " +
+            "one two three four five six seven eight nine twenty"
+        ))
+        fake.fireNext()
+        XCTAssertEqual(sut.wpmRaw, 90, "N=2 takes effect on next refresh: median([60,120])=90")
     }
 
     // MARK: AC8-isActive — post-teardown guard via isActive flag

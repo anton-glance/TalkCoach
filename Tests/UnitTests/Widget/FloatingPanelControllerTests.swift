@@ -51,6 +51,18 @@ private final class FakeHideScheduler: HideScheduler, @unchecked Sendable {
     @MainActor func fire() { scheduledAction?(); scheduledAction = nil }
 }
 
+private final class WPMTestScheduler: HideScheduler, @unchecked Sendable {
+    nonisolated(unsafe) private(set) var lastAction: (@MainActor @Sendable () -> Void)?
+    @MainActor func schedule(
+        delay: TimeInterval, action: @escaping @MainActor @Sendable () -> Void
+    ) -> HideSchedulerToken {
+        lastAction = action
+        return HideSchedulerToken()
+    }
+    @MainActor func cancel(_ token: HideSchedulerToken) { lastAction = nil }
+    @MainActor func fireNext() { lastAction?(); lastAction = nil }
+}
+
 // MARK: - Tests
 
 @MainActor
@@ -556,5 +568,47 @@ final class FloatingPanelControllerTests: XCTestCase {
 
         XCTAssertNotEqual(sut.viewModel.activityState, .waiting,
             "cancelled hold timer must not set .waiting after teardown")
+    }
+
+    // MARK: - M4.1.B: WPM subscription wiring (confirming test)
+
+    func testWPMVoicedFlowsToViewModel() async {
+        let suite = "WPMWidgetFlow.\(name)"
+        let wpmDefaults = UserDefaults(suiteName: suite)!
+        wpmDefaults.removePersistentDomain(forName: suite)
+        let wpmSettings = SettingsStore(userDefaults: wpmDefaults)
+        let wpmScheduler = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: wpmSettings, scheduler: wpmScheduler, now: { clock })
+
+        let micProvider = FakeCoreAudioDeviceProvider()
+        micProvider.stubbedDefaultDeviceID = 42
+        micProvider.stubbedIsRunning = false
+        let micMonitor = MicMonitor(provider: micProvider)
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: wpmSettings)
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: FakeHideScheduler(),
+            settingsStore: wpmSettings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true }
+        )
+
+        // Drive WPMCalculator: speechStarted → engineReady → consume 3-word token → refresh
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))  // t=0: currentSpeechStart=0
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))  // cutoff=1.0
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)                     // arrival > cutoff ✓
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)                     // voicedSec=2.1 ≥ 2.0 ✓
+        wpmScheduler.fireNext()
+        await Task.yield()
+
+        XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
+            "viewModel.currentWPMVoiced must be non-nil — EMA path flows through FPC subscription (M4.1.B)")
+        XCTAssertNotNil(fpc.viewModel.currentWPMRaw,
+            "viewModel.currentWPMRaw must still be non-nil — median computation continues to run (M4.1.B)")
     }
 }

@@ -177,4 +177,42 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.widgetHideDelaySeconds, 30.0, accuracy: 0.001,
                        "widgetHideDelaySeconds above 30 must be clamped to 30 (BC-4)")
     }
+
+    // MARK: - M4.1: wpmMedianWindowHops
+
+    func testWpmMedianWindowHopsDefaultsTo3() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.wpmMedianWindowHops, 3)
+    }
+
+    func testWpmMedianWindowHopsClampedToMin1() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.wpmMedianWindowHops = 0
+        XCTAssertEqual(store.wpmMedianWindowHops, 1)
+    }
+
+    func testWpmMedianWindowHopsClampedToMax10() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.wpmMedianWindowHops = 11
+        XCTAssertEqual(store.wpmMedianWindowHops, 10)
+    }
+
+    // MARK: - M4.1: wpmEmaAlpha
+
+    func testWpmEmaAlphaDefaultsTo0_70() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.wpmEmaAlpha, 0.70, accuracy: 0.001)
+    }
+
+    func testWpmEmaAlphaClampedToMin0_1() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.wpmEmaAlpha = 0.0
+        XCTAssertEqual(store.wpmEmaAlpha, 0.1, accuracy: 0.001)
+    }
+
+    func testWpmEmaAlphaClampedToMax1_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.wpmEmaAlpha = 1.5
+        XCTAssertEqual(store.wpmEmaAlpha, 1.0, accuracy: 0.001)
+    }
 }

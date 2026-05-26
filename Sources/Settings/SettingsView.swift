@@ -18,9 +18,35 @@ struct SettingsView: View {
                 Text("Select 1\u{2013}2 languages for speech coaching.")
             }
 
-            Section("Speaking Pace") {
-                Text("WPM target band: \(settingsStore.wpmTargetMin)\u{2013}\(settingsStore.wpmTargetMax) WPM")
-                    .foregroundStyle(.secondary)
+            Section {
+                Stepper(
+                    "Refresh every \(Int(settingsStore.wpmRefreshInterval))s",
+                    value: $settingsStore.wpmRefreshInterval,
+                    in: 1.0...10.0,
+                    step: 1.0
+                )
+                Stepper(
+                    "Pause threshold: \(String(format: "%.1f", settingsStore.wpmPauseThreshold))s",
+                    value: $settingsStore.wpmPauseThreshold,
+                    in: 0.5...10.0,
+                    step: 0.5
+                )
+                Stepper(
+                    "Row A median window: \(settingsStore.wpmMedianWindowHops) hops",
+                    value: $settingsStore.wpmMedianWindowHops,
+                    in: 1...10,
+                    step: 1
+                )
+                Stepper(
+                    "Row B EMA alpha: \(String(format: "%.2f", settingsStore.wpmEmaAlpha))",
+                    value: $settingsStore.wpmEmaAlpha,
+                    in: 0.1...1.0,
+                    step: 0.05
+                )
+            } header: {
+                Text("Speaking Pace (WPM)")
+            } footer: {
+                Text("Pause threshold is reserved \u{2014} not used until M4.3.\nRow A: median of last N hops (N=1 = raw). Row B: EMA alpha (higher = more responsive).")
             }
 
             Section {

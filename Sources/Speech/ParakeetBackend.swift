@@ -16,11 +16,20 @@ actor ParakeetBackend: TranscriberBackend {
     private var bufferTask: Task<Void, Never>?
     private var engineReadyFired = false
 
-    private let tokenCont: AsyncStream<TranscribedToken>.Continuation
-    nonisolated let tokenStream: AsyncStream<TranscribedToken>
+    // tokenCont and engineReadyCont are private actor state — written only from actor-isolated
+    // methods (init, start), so no nonisolated qualifier is needed.
+    private var tokenCont: AsyncStream<TranscribedToken>.Continuation
+    // tokenStream is read by SessionCoordinator from outside the actor (through any TranscriberBackend)
+    // without await. nonisolated(unsafe) is safe here because:
+    //   1. Writes happen only in init() and at the synchronous start of start() (before any await),
+    //      both under actor isolation.
+    //   2. The coordinator awaits start() before creating relayTask, so reads always happen after
+    //      writes complete — no concurrent read/write is possible in practice.
+    // This is the same ordered-timing guarantee as RollingAudioWindow.hopStream's resetForNewSession().
+    nonisolated(unsafe) var tokenStream: AsyncStream<TranscribedToken>
 
-    private let engineReadyCont: AsyncStream<Void>.Continuation
-    nonisolated let engineReadyStream: AsyncStream<Void>
+    private var engineReadyCont: AsyncStream<Void>.Continuation
+    nonisolated(unsafe) var engineReadyStream: AsyncStream<Void>
 
     private var sessionWallStart: TimeInterval = 0
 
@@ -36,9 +45,27 @@ actor ParakeetBackend: TranscriberBackend {
         // swiftlint:enable identifier_name
     }
 
+    /// Recreates tokenStream+tokenCont and engineReadyStream+engineReadyCont as a matched pair.
+    /// Called from start() before any await, so the coordinator's `await start()` provides a
+    /// happens-before fence: the new streams are visible to relayTask and engineReadyTask
+    /// which are created in runSession() after start() returns.
+    private func recreateStreams() {
+        // swiftlint:disable identifier_name
+        var tc: AsyncStream<TranscribedToken>.Continuation!
+        tokenStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { tc = $0 }
+        tokenCont = tc
+        var ec: AsyncStream<Void>.Continuation!
+        engineReadyStream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { ec = $0 }
+        engineReadyCont = ec
+        // swiftlint:enable identifier_name
+    }
+
     func start(locale: Locale, audioProvider: (any AudioBufferProvider)?) async throws {
         sessionWallStart = Date().timeIntervalSinceReferenceDate
         engineReadyFired = false
+
+        // Recreate streams synchronously before any await or throw — see recreateStreams().
+        recreateStreams()
 
         if engine == nil {
             let modelDir: URL

@@ -99,6 +99,46 @@ final class RollingAudioWindowTests: XCTestCase {
         XCTAssertLessThan(countAfter, 1_000, "buffer must start from zero after reset, not from old cap level")
     }
 
+    /// Regression: hopStream must be live after resetForNewSession() so session 2's inferTask
+    /// receives hops. With the bug, cancelling session 1's inferTask while it is suspended on
+    /// next() transitions the AsyncStream storage to terminal state; session 2's iterator
+    /// immediately gets nil and exits without processing any hops (Scenario C, Spike #20).
+    func testHopStreamLiveAfterReset() async throws {
+        let window = RollingAudioWindow()
+
+        // Session 1: attach a consumer and let it suspend on next().
+        let session1Stream = await window.hopStream
+        let session1Task = Task<[Float]?, Never> { @MainActor in
+            for await hop in session1Stream { return hop }
+            return nil
+        }
+        await Task.yield()  // guarantee session1Task reaches its for-await suspension
+
+        // Simulate session 1 teardown — cancel while suspended on next(), exactly as stop() does.
+        session1Task.cancel()
+        _ = await session1Task.value  // wait for the task (and its cancellation handler) to finish
+
+        // resetForNewSession() must produce a fresh, non-terminal hopStream.
+        await window.resetForNewSession()
+
+        // Session 2: new consumer on the post-reset stream.
+        let session2Stream = await window.hopStream
+        let session2Task = Task<[Float]?, Never> { @MainActor in
+            for await hop in session2Stream { return hop }
+            return nil
+        }
+        await Task.yield()  // guarantee session2Task reaches its for-await suspension
+
+        // Yield a hop after session 2's consumer is waiting.
+        await window.yieldHopForTesting([1.0, 2.0, 3.0])
+
+        let received = await session2Task.value
+        XCTAssertNotNil(received,
+            "hopStream must be live after resetForNewSession — session 2 consumer must receive the hop")
+        XCTAssertEqual(received, [1.0, 2.0, 3.0],
+            "session 2 consumer must receive exactly the yielded samples")
+    }
+
     /// stopHopTimer() must NOT finish hopStream — the stream lives for the backend's lifetime.
     /// A consumer already waiting on the stream must receive an element yielded after stop.
     func testStopDoesNotFinishHopStream() async throws {
