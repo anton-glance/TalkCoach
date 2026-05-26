@@ -55,8 +55,15 @@ actor SileroVADGate {
 
     // MARK: Output stream
 
-    private let transitionCont: AsyncStream<VADTransitionEvent>.Continuation
-    nonisolated let transitionStream: AsyncStream<VADTransitionEvent>
+    private var transitionCont: AsyncStream<VADTransitionEvent>.Continuation
+    // transitionStream is read by SessionCoordinator from outside the actor (in startSpeakingActivityMonitor)
+    // without await. nonisolated(unsafe) is safe here because:
+    //   1. Writes happen only in init() and at the synchronous start of start() (before any Task creation),
+    //      both under actor isolation.
+    //   2. The coordinator awaits startBroadcasterAndGate() → gate.start() before reading transitionStream
+    //      in startSpeakingActivityMonitor, so reads always happen after writes complete.
+    // This is the same ordered-timing guarantee as ParakeetBackend.tokenStream.
+    nonisolated(unsafe) var transitionStream: AsyncStream<VADTransitionEvent>
 
     // MARK: Init
 
@@ -67,10 +74,23 @@ actor SileroVADGate {
         transitionCont = cont
     }
 
+    /// Recreates transitionStream+transitionCont as a matched pair.
+    /// Called from start() before any other work, so the coordinator's
+    /// `await startBroadcasterAndGate()` provides a happens-before fence:
+    /// the new stream is visible to speakingMonitorTask which is created
+    /// in runSession() after startBroadcasterAndGate() returns.
+    private func recreateTransitionStream() {
+        var cont: AsyncStream<VADTransitionEvent>.Continuation!
+        transitionStream = AsyncStream(bufferingPolicy: .bufferingNewest(32)) { cont = $0 }
+        transitionCont = cont
+    }
+
     // MARK: Lifecycle
 
     /// Begin consuming `stream`, resampling and chunking into VAD frames.
     func start(stream: AsyncStream<CapturedAudioBuffer>) async {
+        // Recreate the stream before any other work — see recreateTransitionStream().
+        recreateTransitionStream()
         frameProcessor.reset()
         processedFrames = 0
         isSpeaking = false
