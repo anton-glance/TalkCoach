@@ -149,6 +149,36 @@ final class MonologueDetectorTests: XCTestCase {
         XCTAssertEqual(sut.monologueLevel, 3, "streak of 151s must cross L3 (150s)")
     }
 
+    // MARK: AC: Level transition sequence 0→1→2 at correct boundaries
+
+    func testStreakEscalatesInSequence0To1To2() {
+        // Verifies that monologueLevel reflects each transition at the correct
+        // elapsed-time boundary. These are the transition events that the spec'd
+        // "monologue: <prev>→<next>" log line (and the live smoke gate) must capture.
+        let clock = MonologueMockClock()
+        let fake = MonologueFakeHideScheduler()
+        let settings = makeSettings()  // L1=60s, L2=90s, L3=150s
+        let sut = MonologueDetector(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.notifyVADEvent(speechStarted())
+
+        // 59s — still below L1 (60s): level stays 0
+        clock.advance(by: 59)
+        fake.fireNext()
+        XCTAssertEqual(sut.monologueLevel, 0, "59s: must stay at level 0 (below L1=60s)")
+
+        // 61s total — crosses L1 (60s): transition 0→1
+        clock.advance(by: 2)
+        fake.fireNext()
+        XCTAssertEqual(sut.monologueLevel, 1, "61s: must transition to level 1 (crossed L1=60s)")
+
+        // 91s total — crosses L2 (90s): transition 1→2
+        clock.advance(by: 30)
+        fake.fireNext()
+        XCTAssertEqual(sut.monologueLevel, 2, "91s: must transition to level 2 (crossed L2=90s)")
+    }
+
     // MARK: AC: Sub-threshold pause bridges the streak
 
     func testSubThresholdPauseDoesNotResetStreak() {
