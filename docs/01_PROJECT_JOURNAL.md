@@ -2,6 +2,42 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 041 — 2026-05-27 — Bug investigation only (no code). AirPods/HFP 24kHz mid-warming device-switch wedges the audio engine into a `-10868` start-failure loop → widget stuck Warming + CPU pegged + overheat. Filed M6.8 (pre-ship re-test + fix). No tag.
+
+**Format:** Architect investigation from Anton's live failure logs (Google Meet in Chrome, AirPods). No implementation. Deliverable: root-cause + M6.8 backlog item to fix and re-test during end-to-end pre-ship testing.
+
+### Symptom (Anton, repro'd 2×)
+Started Locto normally, opened Google Meet in Chrome, started session. Mic in Meet was Built-in Mac while AirPods were the active output. Widget did not pick up. Switched Meet's mic to AirPods → widget appeared but never left Warming, Mac began overheating. Switched back to System mic → widget vanished. Same behavior both runs.
+
+### Root cause (from log 1)
+A device-switch race that wedges the single shared `AVAudioEngine` into a permanent start-failure loop. The chain:
+
+1. **Device churn during warming.** Log shows `Default input device changed 96→164`, `164→96`, repeatedly, as Anton/Meet move the input between Built-in (id 96, 48kHz) and AirPods (id 164). AirPods, once they become the *input* for a real-time bidirectional call (Meet), drop to the HFP/hands-free codec → input clamps to **24000 Hz**. Built-in mic is 48000 Hz.
+
+2. **The engine carries a stale tap format.** `SystemAudioEngineProvider` creates ONE `AVAudioEngine` at init and never recreates it. `installTap(format: nil)` resolves the tap format from `inputNode.outputFormat(forBus:0)` **at install time**. When the tap was installed while the device was 48kHz (built-in) and the hardware then flips to 24kHz (AirPods), the next `engine.start()` blows up:
+   `Error, formats don't match! Input HW format: 1 ch, 24000 Hz, tap format: 1 ch, 48000 Hz` → `AUGraphParser::InitializeActiveNodesInInputChain … error -10868` → `AVAudioEngine could not initialize, error = -10868`.
+
+3. **`AVAudioEngineConfigurationChange` recovery does NOT cure it.** `AudioPipeline.recover()` does `stop` → `removeTap` → `installTap(format: nil)` → `prepare` → `start`. That SHOULD re-resolve the format. But the log shows recovery itself failing with the SAME `-10868` and the SAME stale `tap format: 48000 Hz` — meaning at the instant the tap is reinstalled, `inputNode.outputFormat(forBus:0)` is still reporting 48000 while the actual HW is 24000. The node's cached format hasn't caught up to the device flip on the same run-loop turn the config-change fires. (`HALPlugIn::StopIOProc got an error … 560227702 (!dev)`, `no device`, `AudioObjectRemovePropertyListener: no object with given ID 169` confirm the device object is being torn down underneath us mid-recovery.) So recover() reinstalls against the stale node format and re-fails.
+
+4. **The failure loop pegs the CPU / overheats.** Once wedged: `SessionCoordinator: wiring failed at AudioPipeline.start … -10868. Rollback complete`. Meanwhile Parakeet's `bufferTask` is left running on a **frozen 70203-sample window** (`rw: fireHop tick bufferCount=70203 snapshotCount=70203` repeating, `ParakeetBackend: hop — 0 words` every hop, `wpm-refresh … A_median=-1 B_ema=-1 rawThisHop=0` for 120s+). The engine never delivers new audio (start failed) but the hop timer + Parakeet inference keep firing on stale data, and mic on/off churn keeps re-triggering warming → start-fail. That sustained spin is the overheat. Widget sits in Warming the whole time because warming→counting is gated on the engine-ready event, which never arrives.
+
+5. **Why "back to System mic = widget disappears":** going back to built-in flips the HW to 48kHz, which now MATCHES the stale tap format, so `-10868` stops — but by then the mic-process churn has driven a session end, so the panel lingers out and hides.
+
+### This is the documented Spike #4 hazard, partially uncaught
+CLAUDE.md already says: install taps with `format: nil`, observe `AVAudioEngineConfigurationChange`, recover by restart + reinstall. All three are implemented. The gap Spike #4 did NOT cover: a **sample-rate change** (not just channel-count) arriving via a *device swap to a call-codec device* (AirPods on HFP), where `inputNode.outputFormat` lags the hardware on the config-change turn so the `format: nil` reinstall binds the stale rate. Spike #4 validated Chrome/Safari Meet joining mid-session on a STABLE input device; it did not validate switching the input device to a 24kHz Bluetooth call profile mid-warming.
+
+### Fix direction (for M6.8 — NOT implemented this session)
+Strawman, medium confidence:
+- **Primary:** in `AudioPipeline.recover()` (and `start()`), do not trust the cached node format. After `provider.stop()`, fully reset the input node's format binding before reinstalling — the reliable way is to **recreate the `AVAudioEngine` instance** on a config-change/start-failure (the node's format cache is owned by the engine; a fresh engine re-queries the HW). `SystemAudioEngineProvider` currently holds one engine for the process lifetime; M6.8 makes it recreatable.
+- **Secondary / belt-and-suspenders:** detect `-10868` specifically on `start()` and retry recovery with a fresh engine + a short backoff, with a bounded retry count so a genuinely-broken device can't infinite-loop the CPU. The current `recover()` has no `-10868`-specific path and no retry ceiling — the infinite spin is what overheats the Mac.
+- **Stop the stale-data spin:** when `start()` fails, the Parakeet `bufferTask` / hop timer must be torn down, not left firing on a frozen window. Right now wiring rolls back the pipeline but the log shows hops still firing on 70203 — confirm teardown actually stops the hop timer on a wiring-failure rollback.
+- **Open question for Anton (product):** AirPods-as-input is a legitimate real-world setup (wireless headset in a meeting). Do we (a) support AirPods input properly at 24kHz — our whole chain already resamples to 16k so 24kHz input is fine once the engine binds it — or (b) treat Bluetooth-call-codec input as a known-degraded path? Recommend (a): nothing downstream cares about the input rate; only the engine-bind race needs fixing.
+
+### Filed
+- **M6.8** added to Phase 6 (pre-ship): "Audio-engine device-switch robustness — AirPods/HFP 24kHz mid-session, and the device-swap re-test in end-to-end testing." Must be re-tested as part of the pre-ship end-to-end pass.
+
+### No code, no tag this session.
+
 ## Session 040 — 2026-05-26 — M4.2 Monologue COMPLETE + M4.4 Settings consolidation & widget-timing exposure COMPLETE + M4.4b Languages removed. v1 metrics (WPM + Monologue) both shipped & live-validated; every adjustable behavior now in Settings; English-only locked. Tags m4.2-complete, m4.4-complete, m4.4b-complete.
 
 **Format:** Architect + product-owner + agent. Single arc: built MonologueDetector (M4.2), surfaced it on the widget + dev thresholds (M4.2b), lint cleanup (M4.2c), then a product-owner-driven Settings consolidation that also folded in M4.3 and reverted the dev-threshold leak (M4.4), then removed the Languages picker for the English-only v1 (M4.4b). Every metric and timing live-validated by Anton before each tag.
