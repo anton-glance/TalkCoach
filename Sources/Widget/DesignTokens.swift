@@ -147,36 +147,36 @@ enum DesignTokens {
     // tokens.js uses 60/90/120 as defaults; SettingsStore defaults are 60/90/150 seconds.
     //
     // Boundary semantics — strict < at every stage, matching JS:
-    //   s < l1        → greenBase (pure)
-    //   l1 ≤ s < l2   → mix(green, gold,  (s-l1)/(l2-l1))
-    //   l2 ≤ s < l3   → mix(gold,  coral, (s-l2)/(l3-l2))
-    //   s ≥ l3        → coralBase (pure)
+    //   s < level1Seconds                         → greenBase (pure)
+    //   level1Seconds ≤ s < level2Seconds         → mix(green, gold,  (s-l1)/(l2-l1))
+    //   level2Seconds ≤ s < level3Seconds         → mix(gold,  coral, (s-l2)/(l3-l2))
+    //   s ≥ level3Seconds                         → coralBase (pure)
     //
-    // Boundary note: s==l1 enters the second branch at blend=0 (mathematically pure green).
-    // s==l3 hits the final else (pure coral). Do NOT add equality guards — this is intentional.
+    // Boundary note: s==level1Seconds enters the second branch at blend=0 (pure green).
+    // s==level3Seconds hits the final else (pure coral). Do NOT add equality guards — intentional.
 
     /// Raw RGB components for monologue tint and deep color.
     /// Extracted from monoColors() so tests can assert Double component values without Color equality.
     static func monoRGB(
         seconds: TimeInterval,
-        l1: TimeInterval,
-        l2: TimeInterval,
-        l3: TimeInterval
+        level1Seconds: TimeInterval,
+        level2Seconds: TimeInterval,
+        level3Seconds: TimeInterval
     ) -> (tint: SIMD3<Double>, deep: SIMD3<Double>) {
         let elapsed = max(0, seconds)
         let tintRGB: SIMD3<Double>
         let deepRGB: SIMD3<Double>
-        if elapsed < l1 {
+        if elapsed < level1Seconds {
             tintRGB = MonoStops.greenBase
             deepRGB = MonoStops.greenDeep
-        } else if elapsed < l2 {
-            let denom = l2 - l1
-            let blend = denom > 0 ? (elapsed - l1) / denom : 1.0
+        } else if elapsed < level2Seconds {
+            let denom = level2Seconds - level1Seconds
+            let blend = denom > 0 ? (elapsed - level1Seconds) / denom : 1.0
             tintRGB = mix(MonoStops.greenBase, MonoStops.goldBase, blend)
             deepRGB = mix(MonoStops.greenDeep, MonoStops.goldDeep, blend)
-        } else if elapsed < l3 {
-            let denom = l3 - l2
-            let blend = denom > 0 ? (elapsed - l2) / denom : 1.0
+        } else if elapsed < level3Seconds {
+            let denom = level3Seconds - level2Seconds
+            let blend = denom > 0 ? (elapsed - level2Seconds) / denom : 1.0
             tintRGB = mix(MonoStops.goldBase, MonoStops.coralBase, blend)
             deepRGB = mix(MonoStops.goldDeep, MonoStops.coralDeep, blend)
         } else {
@@ -188,11 +188,11 @@ enum DesignTokens {
 
     static func monoColors(
         seconds: TimeInterval,
-        l1: TimeInterval,
-        l2: TimeInterval,
-        l3: TimeInterval
+        level1Seconds: TimeInterval,
+        level2Seconds: TimeInterval,
+        level3Seconds: TimeInterval
     ) -> (tint: Color, deep: Color) {
-        let rgb = monoRGB(seconds: seconds, l1: l1, l2: l2, l3: l3)
+        let rgb = monoRGB(seconds: seconds, level1Seconds: level1Seconds, level2Seconds: level2Seconds, level3Seconds: level3Seconds)
         return (
             rgba(red: rgb.tint.x, green: rgb.tint.y, blue: rgb.tint.z, alpha: 1.0),
             rgba(red: rgb.deep.x, green: rgb.deep.y, blue: rgb.deep.z, alpha: 1.0)

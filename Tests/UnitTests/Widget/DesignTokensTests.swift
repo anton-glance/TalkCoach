@@ -88,28 +88,28 @@ final class DesignTokensTests: XCTestCase {
     // MARK: - ColorStops
 
     func testColorStopsBase() {
-        approxEqual(DesignTokens.ColorStops.slowBase,  SIMD3<Double>(86, 135, 197))
+        approxEqual(DesignTokens.ColorStops.slowBase, SIMD3<Double>(86, 135, 197))
         approxEqual(DesignTokens.ColorStops.idealBase, SIMD3<Double>(108, 207, 160))
-        approxEqual(DesignTokens.ColorStops.fastBase,  SIMD3<Double>(216, 98, 90))
+        approxEqual(DesignTokens.ColorStops.fastBase, SIMD3<Double>(216, 98, 90))
     }
 
     func testColorStopsDeep() {
-        approxEqual(DesignTokens.ColorStops.slowDeep,  SIMD3<Double>(29, 68, 118))
+        approxEqual(DesignTokens.ColorStops.slowDeep, SIMD3<Double>(29, 68, 118))
         approxEqual(DesignTokens.ColorStops.idealDeep, SIMD3<Double>(31, 90, 64))
-        approxEqual(DesignTokens.ColorStops.fastDeep,  SIMD3<Double>(110, 50, 32))
+        approxEqual(DesignTokens.ColorStops.fastDeep, SIMD3<Double>(110, 50, 32))
     }
 
     // MARK: - MonoStops
 
     func testMonoStopsBase() {
         approxEqual(DesignTokens.MonoStops.greenBase, SIMD3<Double>(108, 207, 160))
-        approxEqual(DesignTokens.MonoStops.goldBase,  SIMD3<Double>(220, 175, 80))
+        approxEqual(DesignTokens.MonoStops.goldBase, SIMD3<Double>(220, 175, 80))
         approxEqual(DesignTokens.MonoStops.coralBase, SIMD3<Double>(216, 98, 90))
     }
 
     func testMonoStopsDeep() {
         approxEqual(DesignTokens.MonoStops.greenDeep, SIMD3<Double>(31, 90, 64))
-        approxEqual(DesignTokens.MonoStops.goldDeep,  SIMD3<Double>(110, 84, 25))
+        approxEqual(DesignTokens.MonoStops.goldDeep, SIMD3<Double>(110, 84, 25))
         approxEqual(DesignTokens.MonoStops.coralDeep, SIMD3<Double>(110, 50, 32))
     }
 
@@ -164,7 +164,7 @@ final class DesignTokensTests: XCTestCase {
     // MARK: - zoneForWPM
 
     func testZoneForWPMTooSlow() {
-        XCTAssertEqual(DesignTokens.zoneForWPM(80),  .tooSlow)
+        XCTAssertEqual(DesignTokens.zoneForWPM(80), .tooSlow)
         XCTAssertEqual(DesignTokens.zoneForWPM(114), .tooSlow)
     }
 
@@ -191,7 +191,7 @@ final class DesignTokensTests: XCTestCase {
 
     func testZoneLabels() {
         XCTAssertEqual(DesignTokens.zoneLabel(.tooSlow), "Too slow")
-        XCTAssertEqual(DesignTokens.zoneLabel(.ideal),   "Ideal")
+        XCTAssertEqual(DesignTokens.zoneLabel(.ideal), "Ideal")
         XCTAssertEqual(DesignTokens.zoneLabel(.tooFast), "Too fast")
     }
 
@@ -254,10 +254,10 @@ final class DesignTokensTests: XCTestCase {
         approxEqual(result.tint, expectedTint, accuracy: 1e-6)
     }
 
-    // MARK: - monoRGB (default SettingsStore thresholds: l1=60s, l2=90s, l3=150s)
+    // MARK: - monoRGB (default SettingsStore thresholds: level1=60s, level2=90s, level3=150s)
 
     func testMonoRGBAtZeroIsGreen() {
-        let result = DesignTokens.monoRGB(seconds: 0, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: 0, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, DesignTokens.MonoStops.greenBase)
         approxEqual(result.deep, DesignTokens.MonoStops.greenDeep)
     }
@@ -265,7 +265,7 @@ final class DesignTokensTests: XCTestCase {
     func testMonoRGBAtL1BoundaryIsGreen() {
         // s==l1 enters the green→gold branch at t=0; result is pure greenBase.
         // Correct per the JS spec — second branch fires with t=(l1-l1)/(l2-l1)=0.
-        let result = DesignTokens.monoRGB(seconds: 60, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: 60, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, DesignTokens.MonoStops.greenBase)
     }
 
@@ -273,13 +273,13 @@ final class DesignTokensTests: XCTestCase {
         // s=75, t=(75-60)/30=0.5 → mix(green, gold, 0.5)
         let expected = DesignTokens.MonoStops.greenBase
             + (DesignTokens.MonoStops.goldBase - DesignTokens.MonoStops.greenBase) * 0.5
-        let result = DesignTokens.monoRGB(seconds: 75, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: 75, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, expected)
     }
 
     func testMonoRGBAtL2BoundaryIsGold() {
         // s==l2 enters the gold→coral branch at t=0; result is pure goldBase.
-        let result = DesignTokens.monoRGB(seconds: 90, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: 90, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, DesignTokens.MonoStops.goldBase)
     }
 
@@ -287,24 +287,24 @@ final class DesignTokensTests: XCTestCase {
         // s=120, t=(120-90)/60=0.5 → mix(gold, coral, 0.5)
         let expected = DesignTokens.MonoStops.goldBase
             + (DesignTokens.MonoStops.coralBase - DesignTokens.MonoStops.goldBase) * 0.5
-        let result = DesignTokens.monoRGB(seconds: 120, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: 120, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, expected)
     }
 
     func testMonoRGBAtL3BoundaryIsCoralNotMix() {
         // s==l3 hits the final else (pure coral) — strict < means s==l3 is NOT in gold→coral.
-        let result = DesignTokens.monoRGB(seconds: 150, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: 150, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, DesignTokens.MonoStops.coralBase)
         approxEqual(result.deep, DesignTokens.MonoStops.coralDeep)
     }
 
     func testMonoRGBPastL3IsCoral() {
-        let result = DesignTokens.monoRGB(seconds: 200, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: 200, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, DesignTokens.MonoStops.coralBase)
     }
 
     func testMonoRGBNegativeSecondsClampedToGreen() {
-        let result = DesignTokens.monoRGB(seconds: -5, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoRGB(seconds: -5, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         approxEqual(result.tint, DesignTokens.MonoStops.greenBase)
     }
 
@@ -312,7 +312,7 @@ final class DesignTokensTests: XCTestCase {
         // l1=30, l2=60, l3=90; s=45 is midway in [l1,l2): t=0.5 → mix(green, gold, 0.5)
         let expected = DesignTokens.MonoStops.greenBase
             + (DesignTokens.MonoStops.goldBase - DesignTokens.MonoStops.greenBase) * 0.5
-        let result = DesignTokens.monoRGB(seconds: 45, l1: 30, l2: 60, l3: 90)
+        let result = DesignTokens.monoRGB(seconds: 45, level1Seconds: 30, level2Seconds: 60, level3Seconds: 90)
         approxEqual(result.tint, expected)
     }
 
@@ -326,7 +326,7 @@ final class DesignTokensTests: XCTestCase {
     }
 
     func testMonoColorsReturnsTwoColors() {
-        let result = DesignTokens.monoColors(seconds: 60, l1: 60, l2: 90, l3: 150)
+        let result = DesignTokens.monoColors(seconds: 60, level1Seconds: 60, level2Seconds: 90, level3Seconds: 150)
         _ = result.tint
         _ = result.deep
         // Math correctness is covered by monoRGB tests above.
