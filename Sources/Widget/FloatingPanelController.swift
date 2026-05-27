@@ -48,8 +48,6 @@ final class FloatingPanelController {
     private var silenceHoldToken: HideSchedulerToken?
     private var moveObserver: (any NSObjectProtocol)?
 
-    // TEMPORARY UI hold — M4 replaces with the WPM-pause-threshold setting.
-    private static let silenceHoldSeconds: TimeInterval = 2.0
     private var isProgrammaticMove = false
     private var isStarted = false
     private var lastTokenObservedAtNs: UInt64 = 0
@@ -215,7 +213,7 @@ final class FloatingPanelController {
             case .lingerFade, .lingerFull:
                 panelState = .lingerFull
                 lingerStartedAt = now()
-                hideToken = hideScheduler.schedule(delay: 3.0) { [weak self] in
+                hideToken = hideScheduler.schedule(delay: settingsStore.lingerFullSeconds) { [weak self] in
                     guard let self else { return }
                     self.lingerFullTimerFired()
                 }
@@ -370,11 +368,11 @@ final class FloatingPanelController {
     private func startLingerFull() {
         panelState = .lingerFull
         lingerStartedAt = now()
-        hideToken = hideScheduler.schedule(delay: 3.0) { [weak self] in
+        hideToken = hideScheduler.schedule(delay: settingsStore.lingerFullSeconds) { [weak self] in
             guard let self else { return }
             self.lingerFullTimerFired()
         }
-        Logger.floatingPanel.info("LingerFull started — 3s countdown")
+        Logger.floatingPanel.info("LingerFull started — \(self.settingsStore.lingerFullSeconds, format: .fixed(precision: 1))s countdown")
     }
 
     private func lingerFullTimerFired() {
@@ -384,14 +382,14 @@ final class FloatingPanelController {
             completeLingerHide()
         } else {
             panelState = .lingerFade
-            runAnimation(2.0) { [weak self] in
+            runAnimation(settingsStore.lingerFadeSeconds) { [weak self] in
                 self?.panel?.animator().alphaValue = 0.0
             }
-            hideToken = hideScheduler.schedule(delay: 2.0) { [weak self] in
+            hideToken = hideScheduler.schedule(delay: settingsStore.lingerFadeSeconds) { [weak self] in
                 guard let self else { return }
                 self.completeLingerHide()
             }
-            Logger.floatingPanel.info("LingerFull expired — starting lingerFade (2s)")
+            Logger.floatingPanel.info("LingerFull expired — starting lingerFade (\(self.settingsStore.lingerFadeSeconds, format: .fixed(precision: 1))s)")
         }
     }
 
@@ -593,12 +591,12 @@ final class FloatingPanelController {
         let remaining: TimeInterval
         if let start = lingerStartedAt {
             let elapsed = now().timeIntervalSince(start)
-            remaining = max(0.5, 3.0 - elapsed)
+            remaining = max(0.5, settingsStore.lingerFullSeconds - elapsed)
         } else {
             // lingerStartedAt is nil — entered lingerFull from lingerFade via hover.
-            // Restart the full 3-second countdown.
+            // Restart the full countdown.
             lingerStartedAt = now()
-            remaining = 3.0
+            remaining = settingsStore.lingerFullSeconds
         }
         hideToken = hideScheduler.schedule(delay: remaining) { [weak self] in
             guard let self else { return }
@@ -619,7 +617,7 @@ final class FloatingPanelController {
 
     private func startSilenceHoldTimer() {
         cancelSilenceHoldTimer()
-        silenceHoldToken = hideScheduler.schedule(delay: Self.silenceHoldSeconds) { [weak self] in
+        silenceHoldToken = hideScheduler.schedule(delay: settingsStore.wpmPauseThreshold) { [weak self] in
             guard let self, self.panelState == .visible else { return }
             self.silenceHoldToken = nil
             self.wpmCalculator?.enterWaiting()
@@ -651,7 +649,7 @@ final class FloatingPanelController {
         guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
         let targetAlpha: CGFloat?
         switch viewModel.activityState {
-        case .waiting: targetAlpha = 0.5
+        case .waiting: targetAlpha = settingsStore.waitingOpacity
         case .warming, .counting, .recovering: targetAlpha = 1.0
         case .idle, .wrapping, .dismissed: targetAlpha = nil
         }
@@ -674,11 +672,11 @@ final class FloatingPanelController {
 
     private func handleRecoveryEnded() {
         cancelRecoveryEndTimer()
-        recoveryEndToken = hideScheduler.schedule(delay: 2.0) { [weak self] in
+        recoveryEndToken = hideScheduler.schedule(delay: settingsStore.recoveryGraceSeconds) { [weak self] in
             guard let self else { return }
             self.handleRecoveryTimeout()
         }
-        Logger.floatingPanel.info("Recovery ended — 2s window for token before fallback to waiting")
+        Logger.floatingPanel.info("Recovery ended — \(self.settingsStore.recoveryGraceSeconds, format: .fixed(precision: 1))s window for token before fallback to waiting")
     }
 
     private func handleRecoveryTimeout() {

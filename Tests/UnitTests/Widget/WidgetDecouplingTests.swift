@@ -52,7 +52,6 @@ final class WidgetDecouplingTests: XCTestCase {
 
     // swiftlint:disable large_tuple
     private func makeComponents(
-        widgetHideDelay: TimeInterval? = nil,
         alertPresenter: (any AlertPresenter)? = nil
     ) -> (
         coordinator: SessionCoordinator,
@@ -65,9 +64,6 @@ final class WidgetDecouplingTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
         defaults.set(true, forKey: "coachingEnabled")
         let settingsStore = SettingsStore(userDefaults: defaults)
-        if let delay = widgetHideDelay {
-            settingsStore.widgetHideDelaySeconds = delay
-        }
         let micMonitor = MicMonitor(provider: MinimalCoreAudioProvider())
         let coordinator = SessionCoordinator(
             micMonitor: micMonitor,
@@ -85,28 +81,6 @@ final class WidgetDecouplingTests: XCTestCase {
         return (coordinator, settingsStore, scheduler, fpc)
     }
     // swiftlint:enable large_tuple
-
-    // MARK: - T17: widgetHideDelaySeconds default is 4
-
-    func testWidgetHideDelaySeconds_DefaultIs4() {
-        let suiteName = "WD-default.\(UUID())"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        let store = SettingsStore(userDefaults: defaults)
-        XCTAssertEqual(store.widgetHideDelaySeconds, 4.0, accuracy: 0.001,
-                       "widgetHideDelaySeconds must default to 4.0 seconds (AC-2)")
-    }
-
-    // MARK: - T18: inactivityThresholdSeconds default is 15
-
-    func testInactivityThresholdSeconds_DefaultIs15() {
-        let suiteName = "IT-default.\(UUID())"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        let store = SettingsStore(userDefaults: defaults)
-        XCTAssertEqual(store.inactivityThresholdSeconds, 15.0, accuracy: 0.001,
-                       "inactivityThresholdSeconds must default to 15.0 seconds (AC-1)")
-    }
 
     // MARK: - T20: Session end without tokens → widget shows warming then enters lingerFull (AC-FIX7)
 
@@ -135,7 +109,6 @@ final class WidgetDecouplingTests: XCTestCase {
 
     func testWidgetDoesNotReshow_AfterDismiss() async throws {
         let (coordinator, _, _, fpc) = makeComponents(
-            widgetHideDelay: 4.0,
             alertPresenter: ConfirmingWidgetAlertPresenter()
         )
 
@@ -177,7 +150,6 @@ final class WidgetDecouplingTests: XCTestCase {
 
     func testRequestDismiss_FinalizesSession_OnConfirmedDismiss() async throws {
         let (coordinator, _, _, fpc) = makeComponents(
-            widgetHideDelay: 4.0,
             alertPresenter: ConfirmingWidgetAlertPresenter()
         )
 

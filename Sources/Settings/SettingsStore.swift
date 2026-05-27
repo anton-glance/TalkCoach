@@ -4,24 +4,22 @@ import OSLog
 
 private enum Keys {
     static let declaredLocales = "declaredLocales"
-    static let wpmTargetMin = "wpmTargetMin"
-    static let wpmTargetMax = "wpmTargetMax"
     static let coachingEnabled = "coachingEnabled"
     static let hasCompletedSetup = "hasCompletedSetup"
-    static let fillerDict = "fillerDict"
     static let widgetPositionByDisplay = "widgetPositionByDisplay"
     static let widgetLastUsedDisplay = "widgetLastUsedDisplay"
-    static let inactivityThresholdSeconds = "inactivityThresholdSeconds"
-    static let widgetHideDelaySeconds = "widgetHideDelaySeconds"
     static let probePollIntervalSeconds = "probePollIntervalSeconds"
     static let wpmRefreshInterval = "wpmRefreshInterval"
     static let wpmPauseThreshold = "wpmPauseThreshold"
-    static let wpmMedianWindowHops = "wpmMedianWindowHops"
     static let wpmEmaAlpha = "wpmEmaAlpha"
     static let monologueLevel1Minutes = "monologueLevel1Minutes"
     static let monologueLevel2Minutes = "monologueLevel2Minutes"
     static let monologueLevel3Minutes = "monologueLevel3Minutes"
     static let monologuePauseThreshold = "monologuePauseThreshold"
+    static let waitingOpacity = "waitingOpacity"
+    static let lingerFullSeconds = "lingerFullSeconds"
+    static let lingerFadeSeconds = "lingerFadeSeconds"
+    static let recoveryGraceSeconds = "recoveryGraceSeconds"
 }
 
 @MainActor
@@ -35,20 +33,6 @@ final class SettingsStore: ObservableObject {
         didSet {
             guard !isSyncing else { return }
             userDefaults.set(declaredLocales, forKey: Keys.declaredLocales)
-        }
-    }
-
-    @Published var wpmTargetMin: Int {
-        didSet {
-            guard !isSyncing else { return }
-            userDefaults.set(wpmTargetMin, forKey: Keys.wpmTargetMin)
-        }
-    }
-
-    @Published var wpmTargetMax: Int {
-        didSet {
-            guard !isSyncing else { return }
-            userDefaults.set(wpmTargetMax, forKey: Keys.wpmTargetMax)
         }
     }
 
@@ -66,13 +50,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    @Published var fillerDict: [String: [String]] {
-        didSet {
-            guard !isSyncing else { return }
-            userDefaults.set(fillerDict, forKey: Keys.fillerDict)
-        }
-    }
-
     @Published var widgetPositionByDisplay: [String: CGPoint] {
         didSet {
             guard !isSyncing else { return }
@@ -86,24 +63,6 @@ final class SettingsStore: ObservableObject {
         didSet {
             guard !isSyncing else { return }
             userDefaults.set(widgetLastUsedDisplay, forKey: Keys.widgetLastUsedDisplay)
-        }
-    }
-
-    @Published var inactivityThresholdSeconds: TimeInterval {
-        didSet {
-            guard !isSyncing else { return }
-            let clamped = max(5, min(120, inactivityThresholdSeconds))
-            if clamped != inactivityThresholdSeconds { inactivityThresholdSeconds = clamped; return }
-            userDefaults.set(inactivityThresholdSeconds, forKey: Keys.inactivityThresholdSeconds)
-        }
-    }
-
-    @Published var widgetHideDelaySeconds: TimeInterval {
-        didSet {
-            guard !isSyncing else { return }
-            let clamped = max(1, min(30, widgetHideDelaySeconds))
-            if clamped != widgetHideDelaySeconds { widgetHideDelaySeconds = clamped; return }
-            userDefaults.set(widgetHideDelaySeconds, forKey: Keys.widgetHideDelaySeconds)
         }
     }
 
@@ -124,7 +83,7 @@ final class SettingsStore: ObservableObject {
             userDefaults.set(wpmRefreshInterval, forKey: Keys.wpmRefreshInterval)
         }
     }
-    /// Stored for M4.3; not used in M4.1 WPM math.
+
     @Published var wpmPauseThreshold: TimeInterval {
         didSet {
             guard !isSyncing else { return }
@@ -133,16 +92,7 @@ final class SettingsStore: ObservableObject {
             userDefaults.set(wpmPauseThreshold, forKey: Keys.wpmPauseThreshold)
         }
     }
-    /// Row A: number of recent raw per-hop WPM values to median over. Clamped 1…10.
-    @Published var wpmMedianWindowHops: Int {
-        didSet {
-            guard !isSyncing else { return }
-            let clamped = max(1, min(10, wpmMedianWindowHops))
-            if clamped != wpmMedianWindowHops { wpmMedianWindowHops = clamped; return }
-            userDefaults.set(wpmMedianWindowHops, forKey: Keys.wpmMedianWindowHops)
-        }
-    }
-    /// Row B: EMA smoothing factor. Clamped 0.1…1.0. Default 0.70 (bake-off result).
+
     @Published var wpmEmaAlpha: Double {
         didSet {
             guard !isSyncing else { return }
@@ -155,7 +105,7 @@ final class SettingsStore: ObservableObject {
     @Published var monologueLevel1Minutes: Double {
         didSet {
             guard !isSyncing else { return }
-            let clamped = max(0.05, min(30.0, monologueLevel1Minutes))
+            let clamped = max(0.25, min(30.0, monologueLevel1Minutes))
             if clamped != monologueLevel1Minutes { monologueLevel1Minutes = clamped; return }
             userDefaults.set(monologueLevel1Minutes, forKey: Keys.monologueLevel1Minutes)
         }
@@ -164,7 +114,7 @@ final class SettingsStore: ObservableObject {
     @Published var monologueLevel2Minutes: Double {
         didSet {
             guard !isSyncing else { return }
-            let clamped = max(0.05, min(30.0, monologueLevel2Minutes))
+            let clamped = max(0.25, min(30.0, monologueLevel2Minutes))
             if clamped != monologueLevel2Minutes { monologueLevel2Minutes = clamped; return }
             userDefaults.set(monologueLevel2Minutes, forKey: Keys.monologueLevel2Minutes)
         }
@@ -173,7 +123,7 @@ final class SettingsStore: ObservableObject {
     @Published var monologueLevel3Minutes: Double {
         didSet {
             guard !isSyncing else { return }
-            let clamped = max(0.05, min(30.0, monologueLevel3Minutes))
+            let clamped = max(0.25, min(30.0, monologueLevel3Minutes))
             if clamped != monologueLevel3Minutes { monologueLevel3Minutes = clamped; return }
             userDefaults.set(monologueLevel3Minutes, forKey: Keys.monologueLevel3Minutes)
         }
@@ -188,15 +138,52 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Panel alpha while widget is in .waiting state (silence hold active). Clamped 0.1…1.0.
+    @Published var waitingOpacity: Double {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(0.1, min(1.0, waitingOpacity))
+            if clamped != waitingOpacity { waitingOpacity = clamped; return }
+            userDefaults.set(waitingOpacity, forKey: Keys.waitingOpacity)
+        }
+    }
+
+    /// Full-opacity hold duration after session ends before fade begins. Clamped 1.0…10.0s.
+    @Published var lingerFullSeconds: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(1.0, min(10.0, lingerFullSeconds))
+            if clamped != lingerFullSeconds { lingerFullSeconds = clamped; return }
+            userDefaults.set(lingerFullSeconds, forKey: Keys.lingerFullSeconds)
+        }
+    }
+
+    /// Fade-out animation duration + hide-after-fade delay. Clamped 0.5…5.0s.
+    @Published var lingerFadeSeconds: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(0.5, min(5.0, lingerFadeSeconds))
+            if clamped != lingerFadeSeconds { lingerFadeSeconds = clamped; return }
+            userDefaults.set(lingerFadeSeconds, forKey: Keys.lingerFadeSeconds)
+        }
+    }
+
+    /// Grace window after audio recovery for a token to restore .counting. Clamped 0.5…5.0s.
+    @Published var recoveryGraceSeconds: TimeInterval {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(0.5, min(5.0, recoveryGraceSeconds))
+            if clamped != recoveryGraceSeconds { recoveryGraceSeconds = clamped; return }
+            userDefaults.set(recoveryGraceSeconds, forKey: Keys.recoveryGraceSeconds)
+        }
+    }
+
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
 
         self.declaredLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String] ?? []
-        self.wpmTargetMin = userDefaults.object(forKey: Keys.wpmTargetMin) as? Int ?? 130
-        self.wpmTargetMax = userDefaults.object(forKey: Keys.wpmTargetMax) as? Int ?? 170
         self.coachingEnabled = userDefaults.object(forKey: Keys.coachingEnabled) as? Bool ?? true
         self.hasCompletedSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? false
-        self.fillerDict = userDefaults.object(forKey: Keys.fillerDict) as? [String: [String]] ?? [:]
 
         if let data = userDefaults.data(forKey: Keys.widgetPositionByDisplay) {
             if let decoded = Self.decodePositions(data) {
@@ -210,10 +197,7 @@ final class SettingsStore: ObservableObject {
         }
 
         self.widgetLastUsedDisplay = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
-        let rawThreshold = userDefaults.object(forKey: Keys.inactivityThresholdSeconds) as? Double ?? 15.0
-        self.inactivityThresholdSeconds = max(5, min(120, rawThreshold))
-        let rawHideDelay = userDefaults.object(forKey: Keys.widgetHideDelaySeconds) as? Double ?? 4.0
-        self.widgetHideDelaySeconds = max(1, min(30, rawHideDelay))
+
         let rawPollInterval = userDefaults.object(forKey: Keys.probePollIntervalSeconds) as? Double ?? 1.0
         self.probePollIntervalSeconds = max(0.05, min(5.0, rawPollInterval))
 
@@ -221,19 +205,26 @@ final class SettingsStore: ObservableObject {
         self.wpmRefreshInterval = max(1.0, min(10.0, rawRefreshInterval))
         let rawPauseThreshold = userDefaults.object(forKey: Keys.wpmPauseThreshold) as? Double ?? 2.0
         self.wpmPauseThreshold = max(0.5, min(10.0, rawPauseThreshold))
-        let rawMedianN = userDefaults.object(forKey: Keys.wpmMedianWindowHops) as? Int ?? 3
-        self.wpmMedianWindowHops = max(1, min(10, rawMedianN))
         let rawEmaAlpha = userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70
         self.wpmEmaAlpha = max(0.1, min(1.0, rawEmaAlpha))
 
-        let rawL1 = userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 0.1667  // DEV default; production 60s — revert before ship
-        self.monologueLevel1Minutes = max(0.05, min(30.0, rawL1))
-        let rawL2 = userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 0.3333  // DEV default; production 90s — revert before ship
-        self.monologueLevel2Minutes = max(0.05, min(30.0, rawL2))
-        let rawL3 = userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 0.5     // DEV default; production 150s — revert before ship
-        self.monologueLevel3Minutes = max(0.05, min(30.0, rawL3))
+        let rawL1 = userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 1.0
+        self.monologueLevel1Minutes = max(0.25, min(30.0, rawL1))
+        let rawL2 = userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 1.5
+        self.monologueLevel2Minutes = max(0.25, min(30.0, rawL2))
+        let rawL3 = userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 2.5
+        self.monologueLevel3Minutes = max(0.25, min(30.0, rawL3))
         let rawMonoPause = userDefaults.object(forKey: Keys.monologuePauseThreshold) as? Double ?? 2.5
         self.monologuePauseThreshold = max(0.5, min(10.0, rawMonoPause))
+
+        let rawWaitingOpacity = userDefaults.object(forKey: Keys.waitingOpacity) as? Double ?? 0.5
+        self.waitingOpacity = max(0.1, min(1.0, rawWaitingOpacity))
+        let rawLingerFull = userDefaults.object(forKey: Keys.lingerFullSeconds) as? Double ?? 3.0
+        self.lingerFullSeconds = max(1.0, min(10.0, rawLingerFull))
+        let rawLingerFade = userDefaults.object(forKey: Keys.lingerFadeSeconds) as? Double ?? 2.0
+        self.lingerFadeSeconds = max(0.5, min(5.0, rawLingerFade))
+        let rawRecoveryGrace = userDefaults.object(forKey: Keys.recoveryGraceSeconds) as? Double ?? 2.0
+        self.recoveryGraceSeconds = max(0.5, min(5.0, rawRecoveryGrace))
 
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -306,27 +297,14 @@ private extension SettingsStore {
         let newDeclaredLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String] ?? []
         if newDeclaredLocales != declaredLocales { declaredLocales = newDeclaredLocales }
 
-        let newWpmMin = userDefaults.object(forKey: Keys.wpmTargetMin) as? Int ?? 130
-        if newWpmMin != wpmTargetMin { wpmTargetMin = newWpmMin }
-
-        let newWpmMax = userDefaults.object(forKey: Keys.wpmTargetMax) as? Int ?? 170
-        if newWpmMax != wpmTargetMax { wpmTargetMax = newWpmMax }
-
         let newCoaching = userDefaults.object(forKey: Keys.coachingEnabled) as? Bool ?? true
         if newCoaching != coachingEnabled { coachingEnabled = newCoaching }
 
         let newSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? false
         if newSetup != hasCompletedSetup { hasCompletedSetup = newSetup }
 
-        let newFillers = userDefaults.object(forKey: Keys.fillerDict) as? [String: [String]] ?? [:]
-        if newFillers != fillerDict { fillerDict = newFillers }
         let newLastUsed = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
         if newLastUsed != widgetLastUsedDisplay { widgetLastUsedDisplay = newLastUsed }
-        let newThreshold = max(5, min(120, userDefaults.object(forKey: Keys.inactivityThresholdSeconds) as? Double ?? 15.0))
-        if newThreshold != inactivityThresholdSeconds { inactivityThresholdSeconds = newThreshold }
-
-        let newHideDelay = max(1, min(30, userDefaults.object(forKey: Keys.widgetHideDelaySeconds) as? Double ?? 4.0))
-        if newHideDelay != widgetHideDelaySeconds { widgetHideDelaySeconds = newHideDelay }
 
         let newPollInterval = max(0.05, min(5.0, userDefaults.object(forKey: Keys.probePollIntervalSeconds) as? Double ?? 1.0))
         if newPollInterval != probePollIntervalSeconds { probePollIntervalSeconds = newPollInterval }
@@ -335,19 +313,26 @@ private extension SettingsStore {
         if newRefreshInterval != wpmRefreshInterval { wpmRefreshInterval = newRefreshInterval }
         let newPauseThreshold = max(0.5, min(10.0, userDefaults.object(forKey: Keys.wpmPauseThreshold) as? Double ?? 2.0))
         if newPauseThreshold != wpmPauseThreshold { wpmPauseThreshold = newPauseThreshold }
-        let newMedianN = max(1, min(10, userDefaults.object(forKey: Keys.wpmMedianWindowHops) as? Int ?? 3))
-        if newMedianN != wpmMedianWindowHops { wpmMedianWindowHops = newMedianN }
         let newEmaAlpha = max(0.1, min(1.0, userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70))
         if newEmaAlpha != wpmEmaAlpha { wpmEmaAlpha = newEmaAlpha }
 
-        let newL1 = max(0.05, min(30.0, userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 0.1667))  // DEV default; production 60s — revert before ship
+        let newL1 = max(0.25, min(30.0, userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 1.0))
         if newL1 != monologueLevel1Minutes { monologueLevel1Minutes = newL1 }
-        let newL2 = max(0.05, min(30.0, userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 0.3333))  // DEV default; production 90s — revert before ship
+        let newL2 = max(0.25, min(30.0, userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 1.5))
         if newL2 != monologueLevel2Minutes { monologueLevel2Minutes = newL2 }
-        let newL3 = max(0.05, min(30.0, userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 0.5))     // DEV default; production 150s — revert before ship
+        let newL3 = max(0.25, min(30.0, userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 2.5))
         if newL3 != monologueLevel3Minutes { monologueLevel3Minutes = newL3 }
         let newMonoPause = max(0.5, min(10.0, userDefaults.object(forKey: Keys.monologuePauseThreshold) as? Double ?? 2.5))
         if newMonoPause != monologuePauseThreshold { monologuePauseThreshold = newMonoPause }
+
+        let newWaitingOpacity = max(0.1, min(1.0, userDefaults.object(forKey: Keys.waitingOpacity) as? Double ?? 0.5))
+        if newWaitingOpacity != waitingOpacity { waitingOpacity = newWaitingOpacity }
+        let newLingerFull = max(1.0, min(10.0, userDefaults.object(forKey: Keys.lingerFullSeconds) as? Double ?? 3.0))
+        if newLingerFull != lingerFullSeconds { lingerFullSeconds = newLingerFull }
+        let newLingerFade = max(0.5, min(5.0, userDefaults.object(forKey: Keys.lingerFadeSeconds) as? Double ?? 2.0))
+        if newLingerFade != lingerFadeSeconds { lingerFadeSeconds = newLingerFade }
+        let newRecoveryGrace = max(0.5, min(5.0, userDefaults.object(forKey: Keys.recoveryGraceSeconds) as? Double ?? 2.0))
+        if newRecoveryGrace != recoveryGraceSeconds { recoveryGraceSeconds = newRecoveryGrace }
 
         syncPositionsFromDefaults()
     }

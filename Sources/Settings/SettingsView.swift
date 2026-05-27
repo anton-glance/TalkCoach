@@ -32,13 +32,7 @@ struct SettingsView: View {
                     step: 0.5
                 )
                 Stepper(
-                    "Row A median window: \(settingsStore.wpmMedianWindowHops) hops",
-                    value: $settingsStore.wpmMedianWindowHops,
-                    in: 1...10,
-                    step: 1
-                )
-                Stepper(
-                    "Row B EMA alpha: \(String(format: "%.2f", settingsStore.wpmEmaAlpha))",
+                    "EMA smoothing: \(String(format: "%.2f", settingsStore.wpmEmaAlpha))",
                     value: $settingsStore.wpmEmaAlpha,
                     in: 0.1...1.0,
                     step: 0.05
@@ -46,7 +40,69 @@ struct SettingsView: View {
             } header: {
                 Text("Speaking Pace (WPM)")
             } footer: {
-                Text("Pause threshold is reserved \u{2014} not used until M4.3.\nRow A: median of last N hops (N=1 = raw). Row B: EMA alpha (higher = more responsive).")
+                Text("Pause threshold: silence longer than this fades the widget to dim waiting state. EMA alpha: smoothing factor for WPM display (higher = more responsive, lower = smoother).")
+            }
+
+            Section {
+                Stepper(
+                    "Pause resets streak: \(String(format: "%.1f", settingsStore.monologuePauseThreshold))s",
+                    value: $settingsStore.monologuePauseThreshold,
+                    in: 0.5...10.0,
+                    step: 0.5
+                )
+                Stepper(
+                    "Level 1 at: \(String(format: "%.2f", settingsStore.monologueLevel1Minutes)) min",
+                    value: $settingsStore.monologueLevel1Minutes,
+                    in: 0.25...30.0,
+                    step: 0.25
+                )
+                Stepper(
+                    "Level 2 at: \(String(format: "%.2f", settingsStore.monologueLevel2Minutes)) min",
+                    value: $settingsStore.monologueLevel2Minutes,
+                    in: 0.25...30.0,
+                    step: 0.25
+                )
+                Stepper(
+                    "Level 3 at: \(String(format: "%.2f", settingsStore.monologueLevel3Minutes)) min",
+                    value: $settingsStore.monologueLevel3Minutes,
+                    in: 0.25...30.0,
+                    step: 0.25
+                )
+            } header: {
+                Text("Monologue")
+            } footer: {
+                Text("Streak resets when you yield longer than the pause threshold. Levels 1\u{2013}3 trigger the monologue indicator (v1.x widget feature). Defaults: 2.5s pause, 1 / 1.5 / 2.5 min.")
+            }
+
+            Section {
+                Stepper(
+                    "Dim opacity: \(String(format: "%.2f", settingsStore.waitingOpacity))",
+                    value: $settingsStore.waitingOpacity,
+                    in: 0.1...1.0,
+                    step: 0.05
+                )
+                Stepper(
+                    "Stay visible after session: \(String(format: "%.1f", settingsStore.lingerFullSeconds))s",
+                    value: $settingsStore.lingerFullSeconds,
+                    in: 1.0...10.0,
+                    step: 0.5
+                )
+                Stepper(
+                    "Fade-out duration: \(String(format: "%.1f", settingsStore.lingerFadeSeconds))s",
+                    value: $settingsStore.lingerFadeSeconds,
+                    in: 0.5...5.0,
+                    step: 0.5
+                )
+                Stepper(
+                    "Recovery grace: \(String(format: "%.1f", settingsStore.recoveryGraceSeconds))s",
+                    value: $settingsStore.recoveryGraceSeconds,
+                    in: 0.5...5.0,
+                    step: 0.5
+                )
+            } header: {
+                Text("Widget Behavior")
+            } footer: {
+                Text("Dim opacity: panel alpha during pauses. Stay visible: full-opacity hold after session ends. Fade-out: animation duration. Recovery grace: window after audio recovery for a token before dimming.")
             }
 
             Section {
@@ -56,30 +112,10 @@ struct SettingsView: View {
                     in: 0.5...5.0,
                     step: 0.5
                 )
-                Stepper(
-                    "Widget hide delay: \(Int(settingsStore.widgetHideDelaySeconds))s",
-                    value: $settingsStore.widgetHideDelaySeconds,
-                    in: 1...30,
-                    step: 1
-                )
             } header: {
-                Text("Session Behavior")
+                Text("Session")
             } footer: {
-                Text("Mic poll interval: how often Locto checks whether another app has claimed the mic. Default 1s.\nWidget hide delay: how long the widget stays visible after the last word before fading out. Default 4s.")
-            }
-
-            Section("Filler Words") {
-                if settingsStore.declaredLocales.isEmpty {
-                    Text("Pick a language to configure fillers.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(settingsStore.declaredLocales, id: \.self) { localeID in
-                        let name = LocaleRegistry.allLocales
-                            .first { $0.identifier == localeID }?.displayName ?? localeID
-                        Text("Filler dictionary for \(name) \u{2014} editor coming soon")
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Text("How often the app checks whether another app has claimed the microphone. Default 1s.")
             }
         }
         .formStyle(.grouped)

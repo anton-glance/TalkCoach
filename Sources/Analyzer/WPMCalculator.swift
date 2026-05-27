@@ -4,10 +4,9 @@ import OSLog
 
 /// Sliding-window WPM calculator driven by wall-clock token arrivals and Silero VAD events.
 ///
-/// Ships two variants simultaneously for live A/B bake-off comparison:
-///   wpmRaw    — Row A: median of the last N raw per-hop WPM values (N = wpmMedianWindowHops).
-///               N=1 yields raw exactly (the product owner's raw-baseline escape hatch).
-///   wpmVoiced — Row B: EMA-smoothed raw WPM (alpha = wpmEmaAlpha, default 0.65).
+/// Ships two variants simultaneously for future comparison:
+///   wpmRaw    — Row A: median of the last N raw per-hop WPM values (N = medianWindowHops, code constant).
+///   wpmVoiced — Row B: EMA-smoothed raw WPM (alpha = wpmEmaAlpha, default 0.70).
 ///
 /// Both are nil together when data is below the minimum floor.
 /// Raw per-hop WPM is not published but is logged in every wpm-refresh line.
@@ -32,6 +31,7 @@ final class WPMCalculator: TokenConsumer {
     static let minWordsForReading: Int = 3
     static let minVoicedSecondsForReading: TimeInterval = 2.0
     static let engineReadyGracePeriod: TimeInterval = 0.5
+    private static let medianWindowHops: Int = 3
 
     // MARK: - Dependencies
 
@@ -196,7 +196,7 @@ final class WPMCalculator: TokenConsumer {
         let cutoff = currentNow.addingTimeInterval(-Self.windowSeconds)
 
         // Read live settings — changes take effect on the next refresh without session restart.
-        let windowHops = max(1, min(10, settings.wpmMedianWindowHops))
+        let windowHops = Self.medianWindowHops
         let alpha = max(0.1, min(1.0, settings.wpmEmaAlpha))
 
         // Evict snapshot if it fell outside the window.
