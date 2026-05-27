@@ -570,7 +570,11 @@ final class FloatingPanelControllerTests: XCTestCase {
             "cancelled hold timer must not set .waiting after teardown")
     }
 
-    // MARK: - M4.1.B: WPM subscription wiring (confirming test)
+    // MARK: - M5.1: WPM wiring via 1s widget timer (TDD-lock deviation from M4.1.B)
+    // TDD-lock deviation (logged): test rewritten for M5.1. Old test drove WPMCalculator in isolation
+    // and asserted via the direct Combine wpmVoicedSubscription/wpmRawSubscription. Those subscriptions
+    // are removed in M5.1 and replaced by a 1s re-arming timer. New test drives FPC session lifecycle,
+    // then fires the 1s widget refresh timer to prove the new data path works end-to-end.
 
     func testWPMVoicedFlowsToViewModel() async {
         let suite = "WPMWidgetFlow.\(name)"
@@ -586,38 +590,51 @@ final class FloatingPanelControllerTests: XCTestCase {
         micProvider.stubbedIsRunning = false
         let micMonitor = MicMonitor(provider: micProvider)
         let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: wpmSettings)
+        let fpcScheduler = FakeHideScheduler()
         let fpc = FloatingPanelController(
             sessionCoordinator: coord,
             alertPresenter: FakeAlertPresenter(),
-            hideScheduler: FakeHideScheduler(),
+            hideScheduler: fpcScheduler,
             settingsStore: wpmSettings,
             wpmCalculator: calc,
             reducedMotionProvider: { true }
         )
 
-        // Drive WPMCalculator: speechStarted → engineReady → consume 3-word token → refresh
+        // Start FPC session lifecycle: mic-on → engine-ready → .counting (immediate snapshot, WPM nil)
+        fpc.start()
+        coord.start()
+        micProvider.stubbedIsRunning = true
+        micProvider.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
+
+        // Drive WPMCalculator to produce wpmVoiced after FPC entered .counting
         calc.sessionActivated()
-        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))  // t=0: currentSpeechStart=0
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
         clock = Date(timeIntervalSinceReferenceDate: 0.6)
-        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))  // cutoff=1.0
-        clock = Date(timeIntervalSinceReferenceDate: 1.1)                     // arrival > cutoff ✓
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
         await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
-        clock = Date(timeIntervalSinceReferenceDate: 3.1)                     // voicedSec=2.1 ≥ 2.0 ✓
-        wpmScheduler.fireNext()
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmScheduler.fireNext()   // → calc.wpmVoiced = non-nil
+        await Task.yield()
+
+        // Fire the 1s widget refresh timer → snapshotNow() → viewModel updated from wpmCalculator
+        fpcScheduler.fire()
         await Task.yield()
 
         XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
-            "viewModel.currentWPMVoiced must be non-nil — EMA path flows through FPC subscription (M4.1.B)")
-        XCTAssertNotNil(fpc.viewModel.currentWPMRaw,
-            "viewModel.currentWPMRaw must still be non-nil — median computation continues to run (M4.1.B)")
+            "viewModel.currentWPMVoiced must be non-nil after 1s widget timer fires (M5.1)")
     }
 
-    // MARK: - M4.2b: Monologue level wiring
-    // TDD-lock deviation (logged): monologueLevel1Minutes changed from 0.1667→0.5 and clock from
-    // 11→31s. Reason: Part C of M4.4 raises the clamp minimum to 0.25 min (production floor),
-    // making 0.1667 invalid. 0.5 min (30s) is the lowest clean round value above the new floor.
-    // The test's purpose — confirming monologueLevel flows MonologueDetector→viewModel via FPC
-    // subscription — is unchanged.
+    // MARK: - M5.1: Monologue level + streakSeconds wiring via 1s widget timer (TDD-lock deviation from M4.2b)
+    // TDD-lock deviation (logged): test rewritten for M5.1. Old test drove MonologueDetector in
+    // isolation and asserted via the direct Combine monologueLevelSubscription. That subscription is
+    // removed in M5.1 and replaced by a 1s re-arming timer. New test drives FPC session lifecycle,
+    // fires the 1s widget refresh timer, and asserts both monologueLevel and streakSeconds.
+    // monologueLevel1Minutes = 0.5 min (30s) and clock = 31s preserved from M4.4 deviation.
 
     func testMonologueLevelFlowsToViewModel() async {
         let suite = "MonoWidgetFlow.\(name)"
@@ -635,24 +652,41 @@ final class FloatingPanelControllerTests: XCTestCase {
         micProvider.stubbedIsRunning = false
         let micMonitor = MicMonitor(provider: micProvider)
         let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: monoSettings)
+        let fpcScheduler = FakeHideScheduler()
         let fpc = FloatingPanelController(
             sessionCoordinator: coord,
             alertPresenter: FakeAlertPresenter(),
-            hideScheduler: FakeHideScheduler(),
+            hideScheduler: fpcScheduler,
             settingsStore: monoSettings,
             monologueDetector: detector,
             reducedMotionProvider: { true }
         )
 
-        // speechStarted → 31s elapsed → timer fires → level 1 (crossed L1 = 0.5 min = 30s)
+        // Start FPC session lifecycle: mic-on → engine-ready → .counting
+        fpc.start()
+        coord.start()
+        micProvider.stubbedIsRunning = true
+        micProvider.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
+
+        // Drive MonologueDetector past L1 (0.5 min = 30s)
         detector.sessionActivated()
         detector.notifyVADEvent(.speechStarted(sessionTime: 0))
         clock = Date(timeIntervalSinceReferenceDate: 31.0)
-        monoScheduler.fireNext()
+        monoScheduler.fireNext()   // → detector.monologueLevel = 1, streakSeconds ≈ 31
+        await Task.yield()
+
+        // Fire the 1s widget refresh timer → snapshotNow() → viewModel updated
+        fpcScheduler.fire()
         await Task.yield()
 
         XCTAssertEqual(fpc.viewModel.monologueLevel, 1,
-            "monologueLevel must flow from MonologueDetector to viewModel via FPC Combine sink (M4.2b)")
+            "monologueLevel must flow from MonologueDetector to viewModel via 1s widget timer (M5.1)")
+        XCTAssertGreaterThan(fpc.viewModel.streakSeconds, 30.0,
+            "streakSeconds must flow from MonologueDetector to viewModel via 1s widget timer (M5.1)")
     }
 
     // MARK: - M4.4: Settings-propagation tests (red phase)
@@ -765,5 +799,257 @@ final class FloatingPanelControllerTests: XCTestCase {
         }
         XCTAssertEqual(delay, 4.0, accuracy: 0.001,
             "recovery grace timer delay must read from settingsStore.recoveryGraceSeconds (M4.4)")
+    }
+
+    // MARK: - M5.1: Widget refresh timer lifecycle
+
+    func testWidgetTimerStartsOnEngineReady() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        XCTAssertEqual(fakeScheduler.scheduledDelay, 1.0, accuracy: 0.001,
+            "widget refresh timer must be scheduled at 1.0s on engine-ready (M5.1)")
+    }
+
+    func testWidgetTimerStopsOnSessionIdle() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: timer must be running")
+        let cancelsBefore = fakeScheduler.cancelCallCount
+
+        await deactivateMic()
+
+        XCTAssertGreaterThan(fakeScheduler.cancelCallCount, cancelsBefore,
+            "widget refresh timer must be cancelled when session ends (M5.1)")
+    }
+
+    func testWidgetTimerStopsOnStop() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: timer must be running")
+        let cancelsBefore = fakeScheduler.cancelCallCount
+
+        sut.stop()
+
+        XCTAssertGreaterThan(fakeScheduler.cancelCallCount, cancelsBefore,
+            "widget refresh timer must be cancelled on stop() (M5.1)")
+    }
+
+    func testStreakSecondsFlowsToViewModel() async {
+        let suite = "StreakFlow.\(name)"
+        let streakDefaults = UserDefaults(suiteName: suite)!
+        streakDefaults.removePersistentDomain(forName: suite)
+        let streakSettings = SettingsStore(userDefaults: streakDefaults)
+
+        let monoScheduler = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let detector = MonologueDetector(settings: streakSettings, scheduler: monoScheduler, now: { clock })
+
+        let micProvider = FakeCoreAudioDeviceProvider()
+        micProvider.stubbedDefaultDeviceID = 42
+        micProvider.stubbedIsRunning = false
+        let micMonitor = MicMonitor(provider: micProvider)
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: streakSettings)
+        let fpcScheduler = FakeHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: fpcScheduler,
+            settingsStore: streakSettings,
+            monologueDetector: detector,
+            reducedMotionProvider: { true }
+        )
+
+        fpc.start()
+        coord.start()
+        micProvider.stubbedIsRunning = true
+        micProvider.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
+
+        // Drive detector to 45s streak (below default L1=60s → monologueLevel stays 0)
+        detector.sessionActivated()
+        detector.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock = Date(timeIntervalSinceReferenceDate: 45.0)
+        monoScheduler.fireNext()   // → detector.streakSeconds ≈ 45
+        await Task.yield()
+
+        fpcScheduler.fire()
+        await Task.yield()
+
+        XCTAssertGreaterThan(fpc.viewModel.streakSeconds, 40.0,
+            "streakSeconds must flow from MonologueDetector to viewModel via 1s widget timer (M5.1)")
+    }
+
+    func testResetViewModelZerosStreakSeconds() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+
+        sut.viewModel.streakSeconds = 30.0
+        XCTAssertEqual(sut.viewModel.streakSeconds, 30.0, "precondition")
+
+        // Session ends → lingerFull starts, then fires → completeLingerHide → resetViewModel
+        await deactivateMic()   // → lingerFull scheduled (overwrites widget timer cancel)
+        fakeScheduler.fire()    // → completeLingerHide → resetViewModel → streakSeconds = 0
+
+        XCTAssertEqual(sut.viewModel.streakSeconds, 0,
+            "resetViewModel must zero streakSeconds (M5.1)")
+    }
+
+    // MARK: - M5.1: Immediate snapshot on .counting transition
+
+    func testCountingTransitionForcesImmediateSnapshot() async {
+        let suite = "ImmediateSnap.\(name)"
+        let snapDefaults = UserDefaults(suiteName: suite)!
+        snapDefaults.removePersistentDomain(forName: suite)
+        let snapSettings = SettingsStore(userDefaults: snapDefaults)
+        snapSettings.monologueLevel1Minutes = 0.5  // 30s
+
+        let wpmScheduler = WPMTestScheduler()
+        let monoScheduler = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: snapSettings, scheduler: wpmScheduler, now: { clock })
+        let detector = MonologueDetector(settings: snapSettings, scheduler: monoScheduler, now: { clock })
+
+        let micProvider = FakeCoreAudioDeviceProvider()
+        micProvider.stubbedDefaultDeviceID = 42
+        micProvider.stubbedIsRunning = false
+        let micMonitor = MicMonitor(provider: micProvider)
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: snapSettings)
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: FakeHideScheduler(),
+            settingsStore: snapSettings,
+            wpmCalculator: calc,
+            monologueDetector: detector,
+            reducedMotionProvider: { true }
+        )
+
+        // Drive WPM and streak to known values BEFORE engine-ready fires
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmScheduler.fireNext()   // → calc.wpmVoiced = non-nil
+        await Task.yield()
+
+        detector.sessionActivated()
+        detector.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock = Date(timeIntervalSinceReferenceDate: 31.0)
+        monoScheduler.fireNext()   // → detector.streakSeconds ≈ 31
+        await Task.yield()
+
+        // Trigger engine-ready → setActivityState(.counting) → snapshotNow() synchronously
+        fpc.start()
+        coord.start()
+        micProvider.stubbedIsRunning = true
+        micProvider.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()   // → snapshotNow fires here
+        await Task.yield()
+
+        // Values must be present WITHOUT firing the 1s widget timer
+        XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
+            "immediate snapshot on .counting entry must capture WPM synchronously — no timer fire needed (M5.1)")
+        XCTAssertGreaterThan(fpc.viewModel.streakSeconds, 30.0,
+            "immediate snapshot on .counting entry must capture streakSeconds synchronously (M5.1)")
+    }
+
+    func testWaitingToCountingResumeForcesImmediateSnapshot() async {
+        let suite = "ResumeSnap.\(name)"
+        let resumeDefaults = UserDefaults(suiteName: suite)!
+        resumeDefaults.removePersistentDomain(forName: suite)
+        let resumeSettings = SettingsStore(userDefaults: resumeDefaults)
+
+        let wpmScheduler = WPMTestScheduler()
+        let monoScheduler = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: resumeSettings, scheduler: wpmScheduler, now: { clock })
+        let detector = MonologueDetector(settings: resumeSettings, scheduler: monoScheduler, now: { clock })
+
+        let micProvider = FakeCoreAudioDeviceProvider()
+        micProvider.stubbedDefaultDeviceID = 42
+        micProvider.stubbedIsRunning = false
+        let micMonitor = MicMonitor(provider: micProvider)
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: resumeSettings)
+        let fpcScheduler = FakeHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: fpcScheduler,
+            settingsStore: resumeSettings,
+            wpmCalculator: calc,
+            monologueDetector: detector,
+            reducedMotionProvider: { true }
+        )
+
+        // Reach .waiting via full session lifecycle
+        fpc.start()
+        coord.start()
+        micProvider.stubbedIsRunning = true
+        micProvider.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()   // → .counting
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
+
+        // Silence hold → .waiting (silence hold overwrites widget timer in fpcScheduler)
+        coord.isVoiceInactive = true
+        await Task.yield()
+        fpcScheduler.fire()   // → silence hold fires → enterWaiting() on both → .waiting
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .waiting, "precondition: must reach .waiting")
+
+        // Drive WPM and streak to known values while in .waiting
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmScheduler.fireNext()
+        await Task.yield()
+
+        detector.sessionActivated()
+        detector.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock = Date(timeIntervalSinceReferenceDate: 45.0)
+        monoScheduler.fireNext()   // → detector.streakSeconds ≈ 45
+        await Task.yield()
+
+        // Voice resumes → .waiting → .counting → snapshotNow() synchronously
+        coord.isVoiceInactive = false
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.activityState, .counting,
+            "precondition: voice resume must restore .counting")
+        XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
+            "immediate snapshot on .waiting→.counting must capture WPM synchronously — no timer fire needed (M5.1)")
+        XCTAssertGreaterThan(fpc.viewModel.streakSeconds, 40.0,
+            "immediate snapshot on .waiting→.counting must capture streakSeconds synchronously (M5.1)")
     }
 }
