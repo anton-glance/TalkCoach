@@ -10,6 +10,7 @@
 import XCTest
 @testable import TalkCoach
 
+@MainActor
 final class DesignTokensTests: XCTestCase {
 
     // MARK: - Approximate-equality helper
