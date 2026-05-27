@@ -41,6 +41,7 @@ final class FloatingPanelController {
     private var recoverySubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
     private var widgetRefreshToken: HideSchedulerToken?
+    private var wpmFirstValueSubscription: AnyCancellable?
     private var dragDebounceToken: HideSchedulerToken?
     private var recoveryEndToken: HideSchedulerToken?
     private var silenceHoldToken: HideSchedulerToken?
@@ -637,6 +638,7 @@ final class FloatingPanelController {
             snapshotNow()
             startWidgetRefreshTimer()
         } else if state != .counting && prev == .counting {
+            snapshotNow()
             stopWidgetRefreshTimer()
         }
         applyPanelOpacity(animated: true)
@@ -655,6 +657,7 @@ final class FloatingPanelController {
         widgetRefreshToken = hideScheduler.schedule(delay: 1.0) { [weak self] in
             self?.onWidgetRefreshFired()
         }
+        startWPMFirstValueSubscription()
     }
 
     private func stopWidgetRefreshTimer() {
@@ -662,6 +665,30 @@ final class FloatingPanelController {
             hideScheduler.cancel(token)
             widgetRefreshToken = nil
         }
+        wpmFirstValueSubscription = nil
+    }
+
+    // Subscribe to the WPM calculator's published value so the first non-nil reading
+    // lands in the viewModel immediately — without waiting up to 1s for the display timer.
+    // Also re-phases the 1s timer from the moment data appears, keeping updates coherent.
+    // Uses the publisher value directly because @Published fires on willSet; the property
+    // itself still holds the old value when the sink runs.
+    private func startWPMFirstValueSubscription() {
+        guard let calc = wpmCalculator else { return }
+        wpmFirstValueSubscription = calc.$wpmVoiced
+            .compactMap { $0 }
+            .sink { [weak self] newWPM in
+                guard let self else { return }
+                self.viewModel.currentWPMVoiced = newWPM
+                self.viewModel.streakSeconds    = self.monologueDetector?.streakSeconds ?? 0
+                self.viewModel.monologueLevel   = self.monologueDetector?.monologueLevel ?? 0
+                if let token = self.widgetRefreshToken {
+                    self.hideScheduler.cancel(token)
+                }
+                self.widgetRefreshToken = self.hideScheduler.schedule(delay: 1.0) { [weak self] in
+                    self?.onWidgetRefreshFired()
+                }
+            }
     }
 
     private func onWidgetRefreshFired() {

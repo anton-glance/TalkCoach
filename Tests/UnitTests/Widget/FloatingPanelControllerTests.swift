@@ -1087,7 +1087,11 @@ final class FloatingPanelControllerTests: XCTestCase {
 
         XCTAssertGreaterThan(fpcScheduler.cancelCallCount, cancelCountAfterCounting,
             "first WPM value must cancel existing timer token to re-phase from current moment (M5.1 Bug 1)")
-        XCTAssertEqual(fpcScheduler.scheduledDelay, 1.0, accuracy: 0.001,
+        guard let rePhasedDelay = fpcScheduler.scheduledDelay else {
+            XCTFail("no timer rescheduled after first WPM value — re-phasing did not fire (M5.1 Bug 1)")
+            return
+        }
+        XCTAssertEqual(rePhasedDelay, 1.0, accuracy: 0.001,
             "fresh 1s timer must be re-armed after first WPM value arrives (M5.1 Bug 1)")
     }
 
