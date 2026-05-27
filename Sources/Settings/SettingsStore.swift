@@ -181,9 +181,16 @@ final class SettingsStore: ObservableObject {
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
 
-        self.declaredLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String] ?? []
+        // v1 locale lock: on first launch (no stored declaredLocales key), write en_US and mark
+        // setup complete into UserDefaults before applicationDidFinishLaunching reads them.
+        let rawLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String]
+        if rawLocales == nil {
+            userDefaults.set(["en_US"], forKey: Keys.declaredLocales)
+            userDefaults.set(true, forKey: Keys.hasCompletedSetup)
+        }
+        self.declaredLocales = rawLocales ?? ["en_US"]
         self.coachingEnabled = userDefaults.object(forKey: Keys.coachingEnabled) as? Bool ?? true
-        self.hasCompletedSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? false
+        self.hasCompletedSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? true
 
         if let data = userDefaults.data(forKey: Keys.widgetPositionByDisplay) {
             if let decoded = Self.decodePositions(data) {
@@ -294,13 +301,13 @@ private extension SettingsStore {
         isSyncing = true
         defer { isSyncing = false }
 
-        let newDeclaredLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String] ?? []
+        let newDeclaredLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String] ?? ["en_US"]
         if newDeclaredLocales != declaredLocales { declaredLocales = newDeclaredLocales }
 
         let newCoaching = userDefaults.object(forKey: Keys.coachingEnabled) as? Bool ?? true
         if newCoaching != coachingEnabled { coachingEnabled = newCoaching }
 
-        let newSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? false
+        let newSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? true
         if newSetup != hasCompletedSetup { hasCompletedSetup = newSetup }
 
         let newLastUsed = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)

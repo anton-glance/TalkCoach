@@ -21,12 +21,8 @@ final class SettingsViewTests: XCTestCase {
     // MARK: - Locale toggle behavior
 
     func testFirstSelectionSetsHasCompletedSetup() {
+        // v1 locale lock: fresh store starts with en_US selected and setup already complete.
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertFalse(store.hasCompletedSetup)
-        XCTAssertTrue(store.declaredLocales.isEmpty)
-
-        store.toggleLocale("en_US")
-
         XCTAssertTrue(store.hasCompletedSetup)
         XCTAssertEqual(store.declaredLocales, ["en_US"])
     }
@@ -56,24 +52,19 @@ final class SettingsViewTests: XCTestCase {
     // MARK: - Silent system-locale commit
 
     func testFirstLaunchSilentCommitsSystemLocaleWhenSupported() {
+        // v1 locale lock: hasCompletedSetup starts true, so commitSystemLocaleIfApplicable
+        // is always a no-op — its guard fires immediately.
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertTrue(store.declaredLocales.isEmpty)
-        XCTAssertFalse(store.hasCompletedSetup)
-
         store.commitSystemLocaleIfApplicable(systemLocaleIdentifier: "en_US")
-
         XCTAssertEqual(store.declaredLocales, ["en_US"])
         XCTAssertTrue(store.hasCompletedSetup)
     }
 
     func testFirstLaunchDoesNothingWhenSystemLocaleNotInRegistry() {
+        // v1 locale lock: commitSystemLocaleIfApplicable is always a no-op (setup starts complete).
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertTrue(store.declaredLocales.isEmpty)
-        XCTAssertFalse(store.hasCompletedSetup)
-
         store.commitSystemLocaleIfApplicable(systemLocaleIdentifier: "ka_GE")
-
-        XCTAssertTrue(store.declaredLocales.isEmpty)
-        XCTAssertFalse(store.hasCompletedSetup)
+        XCTAssertEqual(store.declaredLocales, ["en_US"])
+        XCTAssertTrue(store.hasCompletedSetup)
     }
 }

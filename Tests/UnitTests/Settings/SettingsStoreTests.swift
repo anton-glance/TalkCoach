@@ -15,14 +15,27 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(store.coachingEnabled)
     }
 
-    func testHasCompletedSetupDefaultsToFalse() {
+
+    func testDeclaredLocalesDefaultsToEnglish() {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertFalse(store.hasCompletedSetup)
+        XCTAssertEqual(store.declaredLocales, ["en_US"])
     }
 
-    func testDeclaredLocalesDefaultsToEmpty() {
+    func testHasCompletedSetupDefaultsToTrue() {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.declaredLocales, [])
+        XCTAssertTrue(store.hasCompletedSetup)
+    }
+
+    func testFreshStoreLocaleLockedToEnglish() {
+        let defaults = makeIsolatedDefaults()
+        let store = SettingsStore(userDefaults: defaults)
+        XCTAssertEqual(store.declaredLocales, ["en_US"],
+                       "v1 locale lock: fresh store must default to en_US")
+        XCTAssertTrue(store.hasCompletedSetup,
+                      "v1 locale lock: fresh store must report setup complete")
+        // Verify the lock was written to UserDefaults (so AppDelegate's direct UDs read sees it)
+        XCTAssertEqual(defaults.object(forKey: "declaredLocales") as? [String], ["en_US"])
+        XCTAssertEqual(defaults.bool(forKey: "hasCompletedSetup"), true)
     }
 
     func testWidgetPositionByDisplayDefaultsToEmpty() {

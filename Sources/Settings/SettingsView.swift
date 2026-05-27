@@ -11,14 +11,6 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                LanguagePickerView()
-            } header: {
-                Text("Languages")
-            } footer: {
-                Text("Select 1\u{2013}2 languages for speech coaching.")
-            }
-
-            Section {
                 Stepper(
                     "Refresh every \(Int(settingsStore.wpmRefreshInterval))s",
                     value: $settingsStore.wpmRefreshInterval,
