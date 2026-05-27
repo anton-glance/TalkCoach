@@ -205,33 +205,19 @@ final class SettingsStore: ObservableObject {
 
         self.widgetLastUsedDisplay = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
 
-        let rawPollInterval = userDefaults.object(forKey: Keys.probePollIntervalSeconds) as? Double ?? 1.0
-        self.probePollIntervalSeconds = max(0.05, min(5.0, rawPollInterval))
-
-        let rawRefreshInterval = userDefaults.object(forKey: Keys.wpmRefreshInterval) as? Double ?? 3.0
-        self.wpmRefreshInterval = max(1.0, min(10.0, rawRefreshInterval))
-        let rawPauseThreshold = userDefaults.object(forKey: Keys.wpmPauseThreshold) as? Double ?? 2.0
-        self.wpmPauseThreshold = max(0.5, min(10.0, rawPauseThreshold))
-        let rawEmaAlpha = userDefaults.object(forKey: Keys.wpmEmaAlpha) as? Double ?? 0.70
-        self.wpmEmaAlpha = max(0.1, min(1.0, rawEmaAlpha))
-
-        let rawL1 = userDefaults.object(forKey: Keys.monologueLevel1Minutes) as? Double ?? 1.0
-        self.monologueLevel1Minutes = max(0.25, min(30.0, rawL1))
-        let rawL2 = userDefaults.object(forKey: Keys.monologueLevel2Minutes) as? Double ?? 1.5
-        self.monologueLevel2Minutes = max(0.25, min(30.0, rawL2))
-        let rawL3 = userDefaults.object(forKey: Keys.monologueLevel3Minutes) as? Double ?? 2.5
-        self.monologueLevel3Minutes = max(0.25, min(30.0, rawL3))
-        let rawMonoPause = userDefaults.object(forKey: Keys.monologuePauseThreshold) as? Double ?? 2.5
-        self.monologuePauseThreshold = max(0.5, min(10.0, rawMonoPause))
-
-        let rawWaitingOpacity = userDefaults.object(forKey: Keys.waitingOpacity) as? Double ?? 0.5
-        self.waitingOpacity = max(0.1, min(1.0, rawWaitingOpacity))
-        let rawLingerFull = userDefaults.object(forKey: Keys.lingerFullSeconds) as? Double ?? 3.0
-        self.lingerFullSeconds = max(1.0, min(10.0, rawLingerFull))
-        let rawLingerFade = userDefaults.object(forKey: Keys.lingerFadeSeconds) as? Double ?? 2.0
-        self.lingerFadeSeconds = max(0.5, min(5.0, rawLingerFade))
-        let rawRecoveryGrace = userDefaults.object(forKey: Keys.recoveryGraceSeconds) as? Double ?? 2.0
-        self.recoveryGraceSeconds = max(0.5, min(5.0, rawRecoveryGrace))
+        let nums = Self.loadNumericSettings(from: userDefaults)
+        self.probePollIntervalSeconds = nums.probePollIntervalSeconds
+        self.wpmRefreshInterval = nums.wpmRefreshInterval
+        self.wpmPauseThreshold = nums.wpmPauseThreshold
+        self.wpmEmaAlpha = nums.wpmEmaAlpha
+        self.monologueLevel1Minutes = nums.monologueLevel1Minutes
+        self.monologueLevel2Minutes = nums.monologueLevel2Minutes
+        self.monologueLevel3Minutes = nums.monologueLevel3Minutes
+        self.monologuePauseThreshold = nums.monologuePauseThreshold
+        self.waitingOpacity = nums.waitingOpacity
+        self.lingerFullSeconds = nums.lingerFullSeconds
+        self.lingerFadeSeconds = nums.lingerFadeSeconds
+        self.recoveryGraceSeconds = nums.recoveryGraceSeconds
 
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -249,6 +235,43 @@ final class SettingsStore: ObservableObject {
         if let observer {
             NotificationCenter.default.removeObserver(observer)
         }
+    }
+
+    // MARK: - Numeric settings loader (extracted to keep init body under SwiftLint limit)
+
+    private struct NumericSettings {
+        let probePollIntervalSeconds: Double
+        let wpmRefreshInterval: Double
+        let wpmPauseThreshold: Double
+        let wpmEmaAlpha: Double
+        let monologueLevel1Minutes: Double
+        let monologueLevel2Minutes: Double
+        let monologueLevel3Minutes: Double
+        let monologuePauseThreshold: Double
+        let waitingOpacity: Double
+        let lingerFullSeconds: Double
+        let lingerFadeSeconds: Double
+        let recoveryGraceSeconds: Double
+    }
+
+    private static func loadNumericSettings(from defaults: UserDefaults) -> NumericSettings {
+        func field(_ key: String, fallback: Double, lower: Double, upper: Double) -> Double {
+            max(lower, min(upper, defaults.object(forKey: key) as? Double ?? fallback))
+        }
+        return NumericSettings(
+            probePollIntervalSeconds: field(Keys.probePollIntervalSeconds, fallback: 1.0, lower: 0.05, upper: 5.0),
+            wpmRefreshInterval: field(Keys.wpmRefreshInterval, fallback: 3.0, lower: 1.0, upper: 10.0),
+            wpmPauseThreshold: field(Keys.wpmPauseThreshold, fallback: 2.0, lower: 0.5, upper: 10.0),
+            wpmEmaAlpha: field(Keys.wpmEmaAlpha, fallback: 0.70, lower: 0.1, upper: 1.0),
+            monologueLevel1Minutes: field(Keys.monologueLevel1Minutes, fallback: 1.0, lower: 0.25, upper: 30.0),
+            monologueLevel2Minutes: field(Keys.monologueLevel2Minutes, fallback: 1.5, lower: 0.25, upper: 30.0),
+            monologueLevel3Minutes: field(Keys.monologueLevel3Minutes, fallback: 2.5, lower: 0.25, upper: 30.0),
+            monologuePauseThreshold: field(Keys.monologuePauseThreshold, fallback: 2.5, lower: 0.5, upper: 10.0),
+            waitingOpacity: field(Keys.waitingOpacity, fallback: 0.5, lower: 0.1, upper: 1.0),
+            lingerFullSeconds: field(Keys.lingerFullSeconds, fallback: 3.0, lower: 1.0, upper: 10.0),
+            lingerFadeSeconds: field(Keys.lingerFadeSeconds, fallback: 2.0, lower: 0.5, upper: 5.0),
+            recoveryGraceSeconds: field(Keys.recoveryGraceSeconds, fallback: 2.0, lower: 0.5, upper: 5.0)
+        )
     }
 
     // MARK: - Widget position

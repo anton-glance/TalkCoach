@@ -15,7 +15,6 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(store.coachingEnabled)
     }
 
-
     func testDeclaredLocalesDefaultsToEnglish() {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
         XCTAssertEqual(store.declaredLocales, ["en_US"])

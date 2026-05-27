@@ -1147,18 +1147,29 @@ final class FloatingPanelControllerTests: XCTestCase {
             "stale WPM must be cleared synchronously by exit snapshot before timer stops (M5.1 Bug 2)")
     }
 
-    func testWaitingToCountingResumeForcesImmediateSnapshot() async {
+    // MARK: - Resume-snapshot fixture (extracted to keep testWaitingToCountingResumeForcesImmediateSnapshot under 50 lines)
+
+    private struct ResumeFPCComponents {
+        let resumeSettings: SettingsStore
+        let wpmScheduler: WPMTestScheduler
+        let monoScheduler: WPMTestScheduler
+        let calc: WPMCalculator
+        let detector: MonologueDetector
+        let micProvider: FakeCoreAudioDeviceProvider
+        let coord: SessionCoordinator
+        let fpcScheduler: FakeHideScheduler
+        let fpc: FloatingPanelController
+    }
+
+    private func makeResumeFPCComponents(clock: @escaping () -> Date) -> ResumeFPCComponents {
         let suite = "ResumeSnap.\(name)"
         let resumeDefaults = UserDefaults(suiteName: suite)!
         resumeDefaults.removePersistentDomain(forName: suite)
         let resumeSettings = SettingsStore(userDefaults: resumeDefaults)
-
         let wpmScheduler = WPMTestScheduler()
         let monoScheduler = WPMTestScheduler()
-        var clock = Date(timeIntervalSinceReferenceDate: 0)
-        let calc = WPMCalculator(settings: resumeSettings, scheduler: wpmScheduler, now: { clock })
-        let detector = MonologueDetector(settings: resumeSettings, scheduler: monoScheduler, now: { clock })
-
+        let calc = WPMCalculator(settings: resumeSettings, scheduler: wpmScheduler, now: clock)
+        let detector = MonologueDetector(settings: resumeSettings, scheduler: monoScheduler, now: clock)
         let micProvider = FakeCoreAudioDeviceProvider()
         micProvider.stubbedDefaultDeviceID = 42
         micProvider.stubbedIsRunning = false
@@ -1174,50 +1185,59 @@ final class FloatingPanelControllerTests: XCTestCase {
             monologueDetector: detector,
             reducedMotionProvider: { true }
         )
+        return ResumeFPCComponents(
+            resumeSettings: resumeSettings, wpmScheduler: wpmScheduler, monoScheduler: monoScheduler,
+            calc: calc, detector: detector, micProvider: micProvider,
+            coord: coord, fpcScheduler: fpcScheduler, fpc: fpc
+        )
+    }
+
+    func testWaitingToCountingResumeForcesImmediateSnapshot() async {
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let fix = makeResumeFPCComponents(clock: { clock })
 
         // Reach .waiting via full session lifecycle
-        fpc.start()
-        coord.start()
-        micProvider.stubbedIsRunning = true
-        micProvider.simulateIsRunningChange()
+        fix.fpc.start()
+        fix.coord.start()
+        fix.micProvider.stubbedIsRunning = true
+        fix.micProvider.simulateIsRunningChange()
         await Task.yield()
-        coord.lastEngineReadyAt = Date()   // → .counting
+        fix.coord.lastEngineReadyAt = Date()   // → .counting
         await Task.yield()
-        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
+        XCTAssertEqual(fix.fpc.viewModel.activityState, .counting, "precondition")
 
-        // Silence hold → .waiting (silence hold overwrites widget timer in fpcScheduler)
-        coord.isVoiceInactive = true
+        // Silence hold → .waiting
+        fix.coord.isVoiceInactive = true
         await Task.yield()
-        fpcScheduler.fire()   // → silence hold fires → enterWaiting() on both → .waiting
+        fix.fpcScheduler.fire()   // → silence hold fires → enterWaiting() → .waiting
         await Task.yield()
-        XCTAssertEqual(fpc.viewModel.activityState, .waiting, "precondition: must reach .waiting")
+        XCTAssertEqual(fix.fpc.viewModel.activityState, .waiting, "precondition: must reach .waiting")
 
         // Drive WPM and streak to known values while in .waiting
-        calc.sessionActivated()
-        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        fix.calc.sessionActivated()
+        fix.calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
         clock = Date(timeIntervalSinceReferenceDate: 0.6)
-        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        fix.calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
         clock = Date(timeIntervalSinceReferenceDate: 1.1)
-        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        await fix.calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
         clock = Date(timeIntervalSinceReferenceDate: 3.1)
-        wpmScheduler.fireNext()
+        fix.wpmScheduler.fireNext()
         await Task.yield()
-
-        detector.sessionActivated()
-        detector.notifyVADEvent(.speechStarted(sessionTime: 0))
+        fix.detector.sessionActivated()
+        fix.detector.notifyVADEvent(.speechStarted(sessionTime: 0))
         clock = Date(timeIntervalSinceReferenceDate: 45.0)
-        monoScheduler.fireNext()   // → detector.streakSeconds ≈ 45
+        fix.monoScheduler.fireNext()   // → detector.streakSeconds ≈ 45
         await Task.yield()
 
-        // Voice resumes → .waiting → .counting → snapshotNow() synchronously
-        coord.isVoiceInactive = false
+        // Voice resumes → .counting → snapshotNow() synchronously
+        fix.coord.isVoiceInactive = false
         await Task.yield()
 
-        XCTAssertEqual(fpc.viewModel.activityState, .counting,
+        XCTAssertEqual(fix.fpc.viewModel.activityState, .counting,
             "precondition: voice resume must restore .counting")
-        XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
-            "immediate snapshot on .waiting→.counting must capture WPM synchronously — no timer fire needed (M5.1)")
-        XCTAssertGreaterThan(fpc.viewModel.streakSeconds, 40.0,
+        XCTAssertNotNil(fix.fpc.viewModel.currentWPMVoiced,
+            "immediate snapshot on .waiting→.counting must capture WPM synchronously (M5.1)")
+        XCTAssertGreaterThan(fix.fpc.viewModel.streakSeconds, 40.0,
             "immediate snapshot on .waiting→.counting must capture streakSeconds synchronously (M5.1)")
     }
 }
