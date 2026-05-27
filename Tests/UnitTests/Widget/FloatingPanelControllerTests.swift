@@ -987,6 +987,162 @@ final class FloatingPanelControllerTests: XCTestCase {
             "immediate snapshot on .counting entry must capture streakSeconds synchronously (M5.1)")
     }
 
+    // MARK: - M5.1 Bug 1: first WPM value subscription
+    // RED: without a wpmCalculator.$wpmVoiced subscription, the nil→non-nil transition doesn't
+    // fire snapshotNow. viewModel.currentWPMVoiced stays nil until the 1s timer fires.
+
+    func testWPMFirstValueArrivalForcesImmediateSnapshot() async {
+        let suite = "WPMFirstValue.\(name)"
+        let wpmDefaults = UserDefaults(suiteName: suite)!
+        wpmDefaults.removePersistentDomain(forName: suite)
+        let wpmSettings = SettingsStore(userDefaults: wpmDefaults)
+        let wpmScheduler = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: wpmSettings, scheduler: wpmScheduler, now: { clock })
+
+        let micProvider = FakeCoreAudioDeviceProvider()
+        micProvider.stubbedDefaultDeviceID = 42
+        micProvider.stubbedIsRunning = false
+        let micMonitor = MicMonitor(provider: micProvider)
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: wpmSettings)
+        let fpcScheduler = FakeHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: fpcScheduler,
+            settingsStore: wpmSettings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true }
+        )
+
+        fpc.start()
+        coord.start()
+        micProvider.stubbedIsRunning = true
+        micProvider.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
+        XCTAssertNil(fpc.viewModel.currentWPMVoiced,
+            "precondition: WPM must be nil at .counting entry — first hop not yet computed")
+
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmScheduler.fireNext()  // → calc.wpmVoiced becomes non-nil → subscription → snapshotNow()
+        await Task.yield()
+
+        // No fpcScheduler.fire() — the subscription must push the value without timer fire
+        XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
+            "first WPM value arriving must immediately snapshot to viewModel without 1s timer fire (M5.1 Bug 1)")
+    }
+
+    func testWPMFirstValueArrivalRePhasesTimer() async {
+        let suite = "WPMRePhase.\(name)"
+        let wpmDefaults = UserDefaults(suiteName: suite)!
+        wpmDefaults.removePersistentDomain(forName: suite)
+        let wpmSettings = SettingsStore(userDefaults: wpmDefaults)
+        let wpmScheduler = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: wpmSettings, scheduler: wpmScheduler, now: { clock })
+
+        let micProvider = FakeCoreAudioDeviceProvider()
+        micProvider.stubbedDefaultDeviceID = 42
+        micProvider.stubbedIsRunning = false
+        let micMonitor = MicMonitor(provider: micProvider)
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: wpmSettings)
+        let fpcScheduler = FakeHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: fpcScheduler,
+            settingsStore: wpmSettings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true }
+        )
+
+        fpc.start()
+        coord.start()
+        micProvider.stubbedIsRunning = true
+        micProvider.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
+        let cancelCountAfterCounting = fpcScheduler.cancelCallCount
+
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmScheduler.fireNext()  // → calc.wpmVoiced non-nil → subscription fires → re-phases timer
+        await Task.yield()
+
+        XCTAssertGreaterThan(fpcScheduler.cancelCallCount, cancelCountAfterCounting,
+            "first WPM value must cancel existing timer token to re-phase from current moment (M5.1 Bug 1)")
+        XCTAssertEqual(fpcScheduler.scheduledDelay, 1.0, accuracy: 0.001,
+            "fresh 1s timer must be re-armed after first WPM value arrives (M5.1 Bug 1)")
+    }
+
+    // MARK: - M5.1 Bug 2: exit snapshot on .counting → non-.counting
+    // RED: without snapshotNow() in the exit branch, stale WPM and streakSeconds values set during
+    // .counting persist into .waiting because the timer stops before it can write the nil/0 snapshot.
+
+    func testCountingToWaitingForcesFinalSnapshot() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        // Simulate stale values that would persist without an exit snapshot
+        sut.viewModel.currentWPMVoiced = 120
+        sut.viewModel.streakSeconds = 45.0
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        fakeScheduler.fire()  // silence hold fires → enterWaiting() on nil calculators → .waiting
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition")
+        XCTAssertNil(sut.viewModel.currentWPMVoiced,
+            "exit from .counting must snapshot nil — stale WPM must not persist into .waiting (M5.1 Bug 2)")
+        XCTAssertEqual(sut.viewModel.streakSeconds, 0.0, accuracy: 0.001,
+            "exit from .counting must snapshot 0 — stale streakSeconds must not persist into .waiting (M5.1 Bug 2)")
+    }
+
+    func testCountingToWaitingStopsTimerAfterSnapshot() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        sut.viewModel.currentWPMVoiced = 99
+        let cancelsBefore = fakeScheduler.cancelCallCount
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        fakeScheduler.fire()  // silence hold → snapshotNow() + stopWidgetRefreshTimer()
+        await Task.yield()
+
+        XCTAssertGreaterThan(fakeScheduler.cancelCallCount, cancelsBefore,
+            "widget refresh timer must be cancelled when .counting exits to .waiting (M5.1 Bug 2)")
+        XCTAssertNil(sut.viewModel.currentWPMVoiced,
+            "stale WPM must be cleared synchronously by exit snapshot before timer stops (M5.1 Bug 2)")
+    }
+
     func testWaitingToCountingResumeForcesImmediateSnapshot() async {
         let suite = "ResumeSnap.\(name)"
         let resumeDefaults = UserDefaults(suiteName: suite)!
