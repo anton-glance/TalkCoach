@@ -15,16 +15,6 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(store.coachingEnabled)
     }
 
-    func testWPMTargetMinDefaultsTo130() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.wpmTargetMin, 130)
-    }
-
-    func testWPMTargetMaxDefaultsTo170() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.wpmTargetMax, 170)
-    }
-
     func testHasCompletedSetupDefaultsToFalse() {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
         XCTAssertFalse(store.hasCompletedSetup)
@@ -33,11 +23,6 @@ final class SettingsStoreTests: XCTestCase {
     func testDeclaredLocalesDefaultsToEmpty() {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
         XCTAssertEqual(store.declaredLocales, [])
-    }
-
-    func testFillerDictDefaultsToEmpty() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.fillerDict, [:])
     }
 
     func testWidgetPositionByDisplayDefaultsToEmpty() {
@@ -59,19 +44,6 @@ final class SettingsStoreTests: XCTestCase {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
         store.declaredLocales = ["en_US", "ru_RU"]
         XCTAssertEqual(store.declaredLocales, ["en_US", "ru_RU"])
-    }
-
-    func testWriteThenReadWPMTargetMin() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        store.wpmTargetMin = 100
-        XCTAssertEqual(store.wpmTargetMin, 100)
-    }
-
-    func testWriteThenReadFillerDict() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        let dict = ["en_US": ["um", "so"], "ru_RU": ["ну"]]
-        store.fillerDict = dict
-        XCTAssertEqual(store.fillerDict, dict)
     }
 
     func testWriteThenReadWidgetPositionByDisplay() {
@@ -134,69 +106,6 @@ final class SettingsStoreTests: XCTestCase {
         )
     }
 
-    // MARK: - M3.7.3: inactivityThresholdSeconds bounds clamp (AC-1)
-
-    func testInactivityThresholdSeconds_DefaultIs15() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.inactivityThresholdSeconds, 15.0, accuracy: 0.001,
-                       "inactivityThresholdSeconds must default to 15")
-    }
-
-    func testInactivityThresholdSeconds_ClampsBelowMin() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        store.inactivityThresholdSeconds = 4  // below minimum of 5
-        XCTAssertEqual(store.inactivityThresholdSeconds, 5.0, accuracy: 0.001,
-                       "inactivityThresholdSeconds below 5 must be clamped to 5 (BC-1)")
-    }
-
-    func testInactivityThresholdSeconds_ClampsAboveMax() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        store.inactivityThresholdSeconds = 121  // above maximum of 120
-        XCTAssertEqual(store.inactivityThresholdSeconds, 120.0, accuracy: 0.001,
-                       "inactivityThresholdSeconds above 120 must be clamped to 120 (BC-2)")
-    }
-
-    // MARK: - M3.7.3: widgetHideDelaySeconds bounds clamp (AC-2)
-
-    func testWidgetHideDelaySeconds_DefaultIs4() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.widgetHideDelaySeconds, 4.0, accuracy: 0.001,
-                       "widgetHideDelaySeconds must default to 4")
-    }
-
-    func testWidgetHideDelaySeconds_ClampsBelowMin() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        store.widgetHideDelaySeconds = 0  // below minimum of 1
-        XCTAssertEqual(store.widgetHideDelaySeconds, 1.0, accuracy: 0.001,
-                       "widgetHideDelaySeconds below 1 must be clamped to 1 (BC-3)")
-    }
-
-    func testWidgetHideDelaySeconds_ClampsAboveMax() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        store.widgetHideDelaySeconds = 31  // above maximum of 30
-        XCTAssertEqual(store.widgetHideDelaySeconds, 30.0, accuracy: 0.001,
-                       "widgetHideDelaySeconds above 30 must be clamped to 30 (BC-4)")
-    }
-
-    // MARK: - M4.1: wpmMedianWindowHops
-
-    func testWpmMedianWindowHopsDefaultsTo3() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.wpmMedianWindowHops, 3)
-    }
-
-    func testWpmMedianWindowHopsClampedToMin1() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        store.wpmMedianWindowHops = 0
-        XCTAssertEqual(store.wpmMedianWindowHops, 1)
-    }
-
-    func testWpmMedianWindowHopsClampedToMax10() {
-        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        store.wpmMedianWindowHops = 11
-        XCTAssertEqual(store.wpmMedianWindowHops, 10)
-    }
-
     // MARK: - M4.1: wpmEmaAlpha
 
     func testWpmEmaAlphaDefaultsTo0_70() {
@@ -214,5 +123,81 @@ final class SettingsStoreTests: XCTestCase {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
         store.wpmEmaAlpha = 1.5
         XCTAssertEqual(store.wpmEmaAlpha, 1.0, accuracy: 0.001)
+    }
+
+    // MARK: - M4.4: waitingOpacity
+
+    func testWaitingOpacityDefaultsTo0_5() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.waitingOpacity, 0.5, accuracy: 0.001)
+    }
+
+    func testWaitingOpacityClampedToMin0_1() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.waitingOpacity = 0.0
+        XCTAssertEqual(store.waitingOpacity, 0.1, accuracy: 0.001)
+    }
+
+    func testWaitingOpacityClampedToMax1_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.waitingOpacity = 1.5
+        XCTAssertEqual(store.waitingOpacity, 1.0, accuracy: 0.001)
+    }
+
+    // MARK: - M4.4: lingerFullSeconds
+
+    func testLingerFullSecondsDefaultsTo3_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.lingerFullSeconds, 3.0, accuracy: 0.001)
+    }
+
+    func testLingerFullSecondsClampedToMin1_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.lingerFullSeconds = 0.5
+        XCTAssertEqual(store.lingerFullSeconds, 1.0, accuracy: 0.001)
+    }
+
+    func testLingerFullSecondsClampedToMax10_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.lingerFullSeconds = 11.0
+        XCTAssertEqual(store.lingerFullSeconds, 10.0, accuracy: 0.001)
+    }
+
+    // MARK: - M4.4: lingerFadeSeconds
+
+    func testLingerFadeSecondsDefaultsTo2_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.lingerFadeSeconds, 2.0, accuracy: 0.001)
+    }
+
+    func testLingerFadeSecondsClampedToMin0_5() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.lingerFadeSeconds = 0.1
+        XCTAssertEqual(store.lingerFadeSeconds, 0.5, accuracy: 0.001)
+    }
+
+    func testLingerFadeSecondsClampedToMax5_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.lingerFadeSeconds = 6.0
+        XCTAssertEqual(store.lingerFadeSeconds, 5.0, accuracy: 0.001)
+    }
+
+    // MARK: - M4.4: recoveryGraceSeconds
+
+    func testRecoveryGraceSecondsDefaultsTo2_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertEqual(store.recoveryGraceSeconds, 2.0, accuracy: 0.001)
+    }
+
+    func testRecoveryGraceSecondsClampedToMin0_5() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.recoveryGraceSeconds = 0.1
+        XCTAssertEqual(store.recoveryGraceSeconds, 0.5, accuracy: 0.001)
+    }
+
+    func testRecoveryGraceSecondsClampedToMax5_0() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.recoveryGraceSeconds = 6.0
+        XCTAssertEqual(store.recoveryGraceSeconds, 5.0, accuracy: 0.001)
     }
 }

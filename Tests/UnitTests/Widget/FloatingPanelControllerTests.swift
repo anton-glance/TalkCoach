@@ -612,14 +612,19 @@ final class FloatingPanelControllerTests: XCTestCase {
             "viewModel.currentWPMRaw must still be non-nil — median computation continues to run (M4.1.B)")
     }
 
-    // MARK: - M4.2b: Monologue level wiring (failing test — red phase)
+    // MARK: - M4.2b: Monologue level wiring
+    // TDD-lock deviation (logged): monologueLevel1Minutes changed from 0.1667→0.5 and clock from
+    // 11→31s. Reason: Part C of M4.4 raises the clamp minimum to 0.25 min (production floor),
+    // making 0.1667 invalid. 0.5 min (30s) is the lowest clean round value above the new floor.
+    // The test's purpose — confirming monologueLevel flows MonologueDetector→viewModel via FPC
+    // subscription — is unchanged.
 
     func testMonologueLevelFlowsToViewModel() async {
         let suite = "MonoWidgetFlow.\(name)"
         let monoDefaults = UserDefaults(suiteName: suite)!
         monoDefaults.removePersistentDomain(forName: suite)
         let monoSettings = SettingsStore(userDefaults: monoDefaults)
-        monoSettings.monologueLevel1Minutes = 0.1667  // 10s — cross quickly in test
+        monoSettings.monologueLevel1Minutes = 0.5  // 30s — lowest round value above 0.25-min floor
 
         let monoScheduler = WPMTestScheduler()
         var clock = Date(timeIntervalSinceReferenceDate: 0)
@@ -639,14 +644,126 @@ final class FloatingPanelControllerTests: XCTestCase {
             reducedMotionProvider: { true }
         )
 
-        // speechStarted → 11s elapsed → timer fires → level 1 (crossed L1 = 0.1667 min = 10s)
+        // speechStarted → 31s elapsed → timer fires → level 1 (crossed L1 = 0.5 min = 30s)
         detector.sessionActivated()
         detector.notifyVADEvent(.speechStarted(sessionTime: 0))
-        clock = Date(timeIntervalSinceReferenceDate: 11.0)
+        clock = Date(timeIntervalSinceReferenceDate: 31.0)
         monoScheduler.fireNext()
         await Task.yield()
 
         XCTAssertEqual(fpc.viewModel.monologueLevel, 1,
             "monologueLevel must flow from MonologueDetector to viewModel via FPC Combine sink (M4.2b)")
+    }
+
+    // MARK: - M4.4: Settings-propagation tests (red phase)
+
+    func testSilenceHoldDelayReadsWpmPauseThreshold() async {
+        makeSUT()
+        settingsStore.wpmPauseThreshold = 3.0
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+
+        guard let delay = fakeScheduler.scheduledDelay else {
+            XCTFail("No delay scheduled for silence hold timer")
+            return
+        }
+        XCTAssertEqual(delay, 3.0, accuracy: 0.001,
+            "silence hold timer delay must read from settingsStore.wpmPauseThreshold (M4.4 / M4.3)")
+    }
+
+    func testLingerFullDelayReadsFromSettings() async {
+        makeSUT()
+        settingsStore.lingerFullSeconds = 5.0
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        await deactivateMic()
+
+        XCTAssertEqual(sut.panelState, .lingerFull, "precondition: session-end while counting starts lingerFull")
+        guard let delay = fakeScheduler.scheduledDelay else {
+            XCTFail("No delay scheduled for lingerFull timer")
+            return
+        }
+        XCTAssertEqual(delay, 5.0, accuracy: 0.001,
+            "lingerFull timer delay must read from settingsStore.lingerFullSeconds (M4.4)")
+    }
+
+    func testLingerFadeDelayReadsFromSettings() async {
+        defaults = UserDefaults(suiteName: "FloatingPanelTests.\(name)")!
+        defaults.removePersistentDomain(forName: "FloatingPanelTests.\(name)")
+        settingsStore = SettingsStore(userDefaults: defaults)
+        settingsStore.lingerFadeSeconds = 4.0
+        fake = FakeCoreAudioDeviceProvider()
+        fake.stubbedDefaultDeviceID = 42
+        fake.stubbedIsRunning = false
+        fakeAlert = FakeAlertPresenter()
+        fakeScheduler = FakeHideScheduler()
+        var capturedAnimationDuration: TimeInterval?
+        let micMonitor = MicMonitor(provider: fake)
+        coordinator = SessionCoordinator(micMonitor: micMonitor, settingsStore: settingsStore)
+        sut = FloatingPanelController(
+            sessionCoordinator: coordinator,
+            alertPresenter: fakeAlert,
+            hideScheduler: fakeScheduler,
+            settingsStore: settingsStore,
+            reducedMotionProvider: { false },
+            runAnimation: { duration, block in
+                capturedAnimationDuration = duration
+                block()
+            }
+        )
+
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        await deactivateMic()
+        XCTAssertEqual(sut.panelState, .lingerFull, "precondition")
+
+        fakeScheduler.fire()  // fires lingerFull timer → runs fade path (reducedMotion=false)
+
+        XCTAssertEqual(sut.panelState, .lingerFade, "precondition: fade path must run")
+        guard let delay = fakeScheduler.scheduledDelay else {
+            XCTFail("No delay scheduled for lingerFade hide timer")
+            return
+        }
+        XCTAssertEqual(delay, 4.0, accuracy: 0.001,
+            "lingerFade hide-timer delay must read from settingsStore.lingerFadeSeconds (M4.4)")
+        XCTAssertEqual(capturedAnimationDuration ?? -1, 4.0, accuracy: 0.001,
+            "lingerFade animation duration must read from settingsStore.lingerFadeSeconds (M4.4)")
+    }
+
+    func testRecoveryGraceDelayReadsFromSettings() async {
+        makeSUT()
+        settingsStore.recoveryGraceSeconds = 4.0
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+
+        coordinator.audioPipelineDidBeginRecovery()
+        await Task.yield()
+        coordinator.audioPipelineDidEndRecovery()
+        await Task.yield()
+
+        guard let delay = fakeScheduler.scheduledDelay else {
+            XCTFail("No delay scheduled for recovery grace timer")
+            return
+        }
+        XCTAssertEqual(delay, 4.0, accuracy: 0.001,
+            "recovery grace timer delay must read from settingsStore.recoveryGraceSeconds (M4.4)")
     }
 }
