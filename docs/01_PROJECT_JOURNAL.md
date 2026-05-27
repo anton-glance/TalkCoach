@@ -2,6 +2,67 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 040 — 2026-05-26 — M4.2 Monologue COMPLETE + M4.4 Settings consolidation & widget-timing exposure COMPLETE + M4.4b Languages removed. v1 metrics (WPM + Monologue) both shipped & live-validated; every adjustable behavior now in Settings; English-only locked. Tags m4.2-complete, m4.4-complete, m4.4b-complete.
+
+**Format:** Architect + product-owner + agent. Single arc: built MonologueDetector (M4.2), surfaced it on the widget + dev thresholds (M4.2b), lint cleanup (M4.2c), then a product-owner-driven Settings consolidation that also folded in M4.3 and reverted the dev-threshold leak (M4.4), then removed the Languages picker for the English-only v1 (M4.4b). Every metric and timing live-validated by Anton before each tag.
+
+### M4.2 — CLOSED ✅ (tag m4.2-complete)
+
+`MonologueDetector` on the gate's raw transition stream: a continuous-speaking-streak timer with THREE-tier escalation (soft/warning/urgent → levels 1/2/3). Publishes `monologueLevel: Int (0…3)` + `streakSeconds`.
+
+**Model (final):**
+- Three USER-CONFIGURABLE thresholds (`monologueLevel1/2/3Minutes`) + a configurable `monologuePauseThreshold`. The three-tier *shape* is from the product spec; the *values* became settings (overriding the spec's hardcoded 60/90/150s).
+- Order-agnostic level formula: `[level1Secs, level2Secs, level3Secs].filter { elapsed >= $0 }.count`.
+- Wall-clock `now()` basis; NO engine-ready cutoff (VAD is valid from mic-open; a cutoff would shorten real monologues).
+- Sub-threshold pauses BRIDGE the streak (breath pauses are part of a monologue); a pause > `monologuePauseThreshold` ZEROS it. Four reset paths: supra-threshold pause on speechStarted, timer-detected oversized pause, enterWaiting, sessionEnded.
+- Logs transition-only `monologue: <prev>→<next> streak=Xs …` at `.info`; per-tick at `.debug`.
+- Documented v1 limitation: two speakers trading sub-threshold gaps are indistinguishable from one monologuer (diarization = v2).
+
+**Live validation:** a 90s continuous-speech run drove the full escalation exactly to spec at dev thresholds (10/20/30s): `0→1` at streak 10.5s, `1→2` at 21.0s, `2→3` at 30.3s, with dozens of natural sub-2.5s micro-gaps correctly bridged, a real reset to 0 when Anton went quiet, then clean re-escalation. WPM ran correctly alongside (untouched by M4.2). The earlier "stuck in warming" was just ~7s engine cold-load, not a bug. Apparent non-English transcription was Anton's family talking in the background — real words, countable, NOT a decode bug (this retires the S038/S039 "cold-start wrong-language" follow-up as a non-issue for normal use).
+
+### M4.2b / M4.2c (folded into M4.2 close)
+- M4.2b: minimal `MONO L{n}` widget indicator (so the product owner could validate the level live; polished UI is M5) + dev thresholds lowered to 10/20/30s. The clamp minimum was lowered 0.25→0.05 to permit sub-0.25 dev values — a production-surface change flagged "revert before ship" (reverted in M4.4).
+- M4.2c: `swiftlint --strict` cleanup — `l1/l2/l3` → descriptive names (pure rename, level formula proven behaviorally identical), loop var `i`→`tick`, and SettingsStore body trimmed under the 250-line limit by extracting non-@Published helpers (`syncFromDefaults`, position encode/decode) into a `private extension`.
+
+### M4.4 — CLOSED ✅ (tag m4.4-complete) — Settings consolidation + widget-timing exposure
+Product-owner-driven: Settings becomes the single source of truth for every adjustable behavior; everything unused is removed; engineering knobs that don't drive current behavior are gone.
+
+- **Deleted 5 dead settings** (zero consumers confirmed by grep): `wpmTargetMin`, `wpmTargetMax` (WPM target band — rebuild clean in M5.2), `fillerDict` + its "Filler Words" Settings section (v2.0), `inactivityThresholdSeconds`, `widgetHideDelaySeconds` (its Settings row falsely claimed to drive the fade), and `wpmMedianWindowHops` removed as a *setting* (EMA won the M4.1 bake-off; median is a parked alternative — its computation + log line stay as a code constant `medianWindowHops=3` for future comparison).
+- **Added 4 widget-timing settings**, each replacing a hardcoded literal in FloatingPanelController: `waitingOpacity` (0.5, 0.1–1.0), `lingerFullSeconds` (3.0, 1.0–10.0), `lingerFadeSeconds` (2.0, 0.5–5.0), `recoveryGraceSeconds` (2.0, 0.5–5.0). **Warmup is intentionally NOT a setting** — warming→counting is engine-ready-event-driven (Parakeet cold-load), not a timer.
+- **M4.3 folded in:** the temporary `silenceHoldSeconds = 2.0` static let (counting→waiting hold) replaced by the live `wpmPauseThreshold` setting; its "reserved / not used until M4.3" footer removed.
+- **Production-default flip (closes the M4.2b dev-floor leak):** monologue defaults 0.1667/0.3333/0.5 → 1.0/1.5/2.5 (60/90/150s) in init AND syncFromDefaults; clamp minimum reverted 0.05→0.25 at all 9 sites. The three values STAY user-adjustable in Settings (Anton sets them low by hand to test); they are NOT hardcoded.
+- **10 FloatingPanelController literal sites** enumerated and replaced; post-edit grep confirmed zero relevant literals remain. Sub-agent verified both prior-bug guards intact (alpha-snap: only the opacity constant changed, the `animator().alphaValue` chain untouched; linger-race: only delay VALUES changed, the `cancelPendingHide()`-before-schedule ordering untouched).
+- **SettingsView rebuilt** into 5 clean sections (Languages [removed in M4.4b] / Speaking Pace / Monologue / Widget Behavior / Session), every footer describing what the setting actually does.
+
+### M4.4b — CLOSED ✅ (tag m4.4b-complete) — Languages removed (English-only v1)
+The Languages Settings section is gone. `declaredLocales` is NOT deleted (LanguageDetector + TalkCoachApp still read it) — instead SettingsStore.init detects a fresh install (nil `declaredLocales` in UserDefaults) and locks `["en_US"]` + `hasCompletedSetup = true` before any consumer reads the key. First-launch auto-open (`shouldAutoOpenSettings`) kept as dead code (its gate now naturally returns false; harmless, reusable if a setup flow returns). Orphaned for a later cleanup: `LanguagePickerView.swift`, `SettingsStore.toggleLocale`, and `commitSystemLocaleIfApplicable` (now always a no-op). Smoke confirmed: no Languages selector, English still detected.
+
+### TDD-lock deviations (justified, logged — same category as M2.6 / S039)
+1. **M4.2** `testLiveSettingsChangeReflectedOnNextEvaluation` (red commit `6163b79`) asserted level 1; green changed to 2 — `git diff` showed one assertion moved, justified because 125s elapsed correctly crosses both the raised L1 and the default L2 → formula returns 2; the test had encoded the wrong expectation.
+2. **M4.4** `testMonologueLevelFlowsToViewModel` (red commit `5a3cbc2`): the clamp-min revert 0.05→0.25 invalidated the test's incidental threshold value 0.1667 (now clamps to 0.25=15s, so its 11s clock no longer crosses level 1). Amended to `monologueLevel1Minutes = 0.5` (30s) + clock 31s. The test's PURPOSE (monologueLevel flows MonologueDetector→viewModel via the FPC Combine sink) is unchanged. **Calling this "not a violation" (as the agent plan initially did) is how the discipline erodes — it IS an accepted, documented deviation.**
+
+### Decisions
+- **Spike #11 CLOSED as SUPERSEDED** — its premise (validate the token-arrival signal vs Silero for MonologueDetector) died when M3.7.6 removed SpeakingActivityTracker and locked Silero. The two-stub close-criterion test already proved a Monologue-stub@2.5s derives correctly from the raw transition stream. No spike run.
+- **Monologue = v1 feature** (not deferred): an M4 metric alongside WPM. Fillers + repeated-phrases stay v2.0; shouting + trail-off stay v2.
+
+### Process gaps logged
+- **The architect's own diff audit is the real backstop, not the sub-agent.** In M4.2 the sub-agent passed a failing acceptance criterion (the log-line format defect) twice; the architect's direct audit caught it (fix `bef23a9`). Xcode's chat panel only lets Anton copy the agent's FINAL report, not sub-agent verbatim notes — so prompts now REQUIRE the agent to INLINE any sub-agent review in its final report (done in M4.4).
+- **Push/validation order corrected:** Anton validates LOCALLY first (agent builds+tests, Anton smoke-tests), THEN pushes once validated. The architect repeatedly erred this session by asking for premature pushes so it could clone-audit; corrected — audit the pushed diff at module close, or ask for specific files mid-flight.
+- **Smoke instructions must name what to watch:** an early M4.2 smoke failed to escalate purely because the run didn't sustain 35s+ of continuous speech (the streak coasted 3s then the session ended). No bug — the instruction just hadn't said "talk continuously, don't stop the mic." Fixed in the re-run.
+
+### Test count correction
+CLAUDE.md carried a stale baseline of 445 (pre-session). The live counts this session: M4.2c green = 393, M4.4 green = 394, M4.4b green = **395 (394 pass, 1 skip, 0 fail)**. CLAUDE.md's 445 should be corrected to 395.
+
+### Carryover / known follow-ups (NOT blockers)
+- **SwiftLint still not on the agent PATH** — Anton runs `swiftlint --strict` manually before each tag. Install in the agent shell to restore the automated gate.
+- **Orphaned code for later cleanup:** `LanguagePickerView.swift`, `toggleLocale`, the no-op `commitSystemLocaleIfApplicable`.
+- **`rw: append` per-buffer log spam** (hundreds of lines/session) should drop to `.debug` or be removed before real use.
+- **AppKit `layoutSubtreeIfNeeded` recursion warning** at teardown — non-fatal, investigate in Phase 5.
+- **M4.6 / M4.7** (EffectiveSpeakingDuration + end-of-session aggregation to SessionStore) are session-summary plumbing — NOT visible UI, do NOT gate M5. Land anytime before ship.
+
+### Next: Phase 5 — Widget UI
+The app is functionally ready for the visual build. Every live-widget metric (WPM, Monologue) and every timing it depends on is implemented and adjustable in Settings. Anton has completed a full design in Claude Design (shareable). M5 is the next frontier.
+
 ## Session 039 — 2026-05-26 — M4.1 COMPLETE: WPM metric shipped + the six-bug multi-session lifecycle saga resolved + linger-race crash fixed + smoothing bake-off → EMA(0.70) chosen. Widget shows a single live WPM number, working across unlimited sessions per launch. Tag m4.1-complete.
 
 **Format:** Architect + product-owner + agent. A long single-arc session: WPM math validated session 1, then a six-bug cascade blocking session-2-per-launch (each bug hid behind the previous), then a fast-restart widget crash the fixes exposed, then a smoothing bake-off and final-display narrowing. Every fix gated on live two-session smoke by Anton; nothing tagged until the final live pass.
