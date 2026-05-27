@@ -31,7 +31,7 @@ final class FloatingPanelController {
     private let now: () -> Date
     private let reducedMotionProvider: () -> Bool
     private let runAnimation: (TimeInterval, @escaping () -> Void) -> Void
-    let viewModel = WidgetViewModel()
+    let viewModel: WidgetViewModel
 
     private var panel: CoachingPanel?
     private var stateSubscription: AnyCancellable?
@@ -39,10 +39,8 @@ final class FloatingPanelController {
     private var engineReadySubscription: AnyCancellable?
     private var voiceInactiveSubscription: AnyCancellable?
     private var recoverySubscription: AnyCancellable?
-    private var wpmRawSubscription: AnyCancellable?
-    private var wpmVoicedSubscription: AnyCancellable?
-    private var monologueLevelSubscription: AnyCancellable?
     private var hideToken: HideSchedulerToken?
+    private var widgetRefreshToken: HideSchedulerToken?
     private var dragDebounceToken: HideSchedulerToken?
     private var recoveryEndToken: HideSchedulerToken?
     private var silenceHoldToken: HideSchedulerToken?
@@ -93,15 +91,7 @@ final class FloatingPanelController {
         self.now = now
         self.reducedMotionProvider = reducedMotionProvider
         self.runAnimation = runAnimation
-        wpmRawSubscription = wpmCalculator?.$wpmRaw.sink { [weak self] value in
-            self?.viewModel.currentWPMRaw = value
-        }
-        wpmVoicedSubscription = wpmCalculator?.$wpmVoiced.sink { [weak self] value in
-            self?.viewModel.currentWPMVoiced = value
-        }
-        monologueLevelSubscription = monologueDetector?.$monologueLevel.sink { [weak self] value in
-            self?.viewModel.monologueLevel = value
-        }
+        self.viewModel = WidgetViewModel(settings: settingsStore)
     }
 
     func start() {
@@ -170,6 +160,7 @@ final class FloatingPanelController {
             NotificationCenter.default.removeObserver(observer)
             moveObserver = nil
         }
+        stopWidgetRefreshTimer()
         cancelPendingDragDebounce()
         cancelPendingHide()
         cancelRecoveryEndTimer()
@@ -406,12 +397,13 @@ final class FloatingPanelController {
     }
 
     private func resetViewModel() {
+        stopWidgetRefreshTimer()
         viewModel.totalTokens = 0
         viewModel.sessionStartedAt = nil
         viewModel.isSessionActive = false
-        viewModel.currentWPMRaw = nil
         viewModel.currentWPMVoiced = nil
         viewModel.monologueLevel = 0
+        viewModel.streakSeconds = 0
     }
 
     // MARK: - Panel Management
@@ -640,7 +632,42 @@ final class FloatingPanelController {
         viewModel.activityState = state
         let timestamp = isoFormatter.string(from: now())
         Logger.floatingPanel.info("widget-state: \(timestamp, privacy: .public) \(String(describing: prev), privacy: .public)→\(String(describing: state), privacy: .public) reason=\(reason, privacy: .public)")
+        // Start 1s refresh timer on every transition INTO .counting; stop it on every exit FROM .counting.
+        if state == .counting && prev != .counting {
+            snapshotNow()
+            startWidgetRefreshTimer()
+        } else if state != .counting && prev == .counting {
+            stopWidgetRefreshTimer()
+        }
         applyPanelOpacity(animated: true)
+    }
+
+    // MARK: - Widget Refresh Timer
+
+    private func snapshotNow() {
+        viewModel.currentWPMVoiced = wpmCalculator?.wpmVoiced
+        viewModel.streakSeconds    = monologueDetector?.streakSeconds ?? 0
+        viewModel.monologueLevel   = monologueDetector?.monologueLevel ?? 0
+    }
+
+    private func startWidgetRefreshTimer() {
+        stopWidgetRefreshTimer()
+        widgetRefreshToken = hideScheduler.schedule(delay: 1.0) { [weak self] in
+            self?.onWidgetRefreshFired()
+        }
+    }
+
+    private func stopWidgetRefreshTimer() {
+        if let token = widgetRefreshToken {
+            hideScheduler.cancel(token)
+            widgetRefreshToken = nil
+        }
+    }
+
+    private func onWidgetRefreshFired() {
+        widgetRefreshToken = nil
+        snapshotNow()
+        startWidgetRefreshTimer()
     }
 
     // MARK: - Panel Opacity

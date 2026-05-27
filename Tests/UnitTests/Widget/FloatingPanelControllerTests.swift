@@ -813,7 +813,11 @@ final class FloatingPanelControllerTests: XCTestCase {
         await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
 
-        XCTAssertEqual(fakeScheduler.scheduledDelay, 1.0, accuracy: 0.001,
+        guard let delay = fakeScheduler.scheduledDelay else {
+            XCTFail("No delay scheduled after engine-ready — widget refresh timer not started (M5.1)")
+            return
+        }
+        XCTAssertEqual(delay, 1.0, accuracy: 0.001,
             "widget refresh timer must be scheduled at 1.0s on engine-ready (M5.1)")
     }
 
@@ -927,9 +931,12 @@ final class FloatingPanelControllerTests: XCTestCase {
 
         let wpmScheduler = WPMTestScheduler()
         let monoScheduler = WPMTestScheduler()
-        var clock = Date(timeIntervalSinceReferenceDate: 0)
-        let calc = WPMCalculator(settings: snapSettings, scheduler: wpmScheduler, now: { clock })
-        let detector = MonologueDetector(settings: snapSettings, scheduler: monoScheduler, now: { clock })
+        // Separate clocks: advancing calcClock for WPM machinery must not shift monoClock's
+        // speechStartTime reference, which would produce a lower-than-expected elapsed.
+        var calcClock = Date(timeIntervalSinceReferenceDate: 0)
+        var monoClock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: snapSettings, scheduler: wpmScheduler, now: { calcClock })
+        let detector = MonologueDetector(settings: snapSettings, scheduler: monoScheduler, now: { monoClock })
 
         let micProvider = FakeCoreAudioDeviceProvider()
         micProvider.stubbedDefaultDeviceID = 42
@@ -946,21 +953,22 @@ final class FloatingPanelControllerTests: XCTestCase {
             reducedMotionProvider: { true }
         )
 
-        // Drive WPM and streak to known values BEFORE engine-ready fires
+        // Drive WPM to non-nil BEFORE engine-ready fires
         calc.sessionActivated()
         calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
-        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calcClock = Date(timeIntervalSinceReferenceDate: 0.6)
         calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
-        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        calcClock = Date(timeIntervalSinceReferenceDate: 1.1)
         await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
-        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        calcClock = Date(timeIntervalSinceReferenceDate: 3.1)
         wpmScheduler.fireNext()   // → calc.wpmVoiced = non-nil
         await Task.yield()
 
+        // Drive MonologueDetector to 31s streak BEFORE engine-ready fires (monoClock independent)
         detector.sessionActivated()
-        detector.notifyVADEvent(.speechStarted(sessionTime: 0))
-        clock = Date(timeIntervalSinceReferenceDate: 31.0)
-        monoScheduler.fireNext()   // → detector.streakSeconds ≈ 31
+        detector.notifyVADEvent(.speechStarted(sessionTime: 0))  // speechStart = monoClock = 0
+        monoClock = Date(timeIntervalSinceReferenceDate: 31.0)
+        monoScheduler.fireNext()   // → detector.streakSeconds = 31.0
         await Task.yield()
 
         // Trigger engine-ready → setActivityState(.counting) → snapshotNow() synchronously
