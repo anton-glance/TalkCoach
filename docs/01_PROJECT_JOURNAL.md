@@ -2,6 +2,49 @@
 
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
+## Session 042 — 2026-05-27 — M5.1 COMPLETE: unified 1s widget-refresh timer + first-value subscription + streakSeconds field. Tag m5.1-complete.
+
+**Format:** Architect + product-owner + agent. Smoke gate for M5.1 found two snapshot-coverage bugs; both fixed in this session (TDD lock held). Four new tests green, two rewritten tests green, full suite green.
+
+### Bug 1 — first-value latency (M5.1 Bug 1)
+
+On `.counting` entry the 1s widget-refresh timer hadn't fired yet, so WPM showed `---` for up to 1s after the WPMCalculator first produced a value. Fix: `Combine` subscription on `wpmCalculator.$wpmVoiced` (`compactMap { $0 }.sink`) added in `startWidgetRefreshTimer()`. On first non-nil emission, the sink snapshots using the publisher-provided value and re-phases the timer to `delay: 1.0` from that instant.
+
+Critical implementation note: `@Published` fires on `willSet` — the stored property still holds its old value when the sink runs. The sink must use the publisher-provided argument (`newWPM`), NOT re-read `wpmCalculator?.wpmVoiced`, which is still nil at that point. Project-wide `@Published` pattern: always use the value delivered by the publisher, never re-read the source property inside the same sink.
+
+### Bug 2 — stale WPM on .waiting entry (M5.1 Bug 2)
+
+`stopWidgetRefreshTimer()` cancelled the timer before `snapshotNow()` ran, leaving the last non-nil WPM frozen in the view on `.waiting` entry. Fix: `snapshotNow()` called first in the `.counting → non-.counting` exit branch of `setActivityState`.
+
+Audit: `FPC.swift:649` — `viewModel.streakSeconds = monologueDetector?.streakSeconds ?? 0` executes unconditionally on every `snapshotNow()` call. No gate on `currentWPMVoiced`. All three assignments (WPM, streakSeconds, monologueLevel) run as a flat sequence.
+
+### Floor-latency audit finding
+
+Smoke log showed wpm-refresh at tElapsed ≈ 0.5s and 1.6s both returning A=-1 B=-1, then first real WPM at ~2.6s. Root cause: `voicedSecondsInWindow` clips to `effectiveCutoff = max(windowStart, engineReadyCutoff)` (`WPMCalculator.swift:249`). The 2.0s voiced-seconds floor requires 2.0s of post-cutoff continuous speaking — structural, correct behavior, not a display-layer bug. M5.1 subscription fires correctly at the first non-nil emission. Carry to M5.4 for visual masking.
+
+### Live-validated (Anton smoke run 19:44:42 → 19:46:15)
+
+WPM number updates on a visible 1s cadence after the floor period; .waiting transitions clear stale numbers immediately (confirmed observation); Phase-G restart clean (no Session-N bleed-through). monologue-tick logs confirm streakSeconds advances independently of WPM, which M5.4 will rely on.
+
+### Carryover to M5.4 (visual masking of floor latency)
+
+- On .counting entry (engine-ready OR .waiting→.counting resume), the widget MUST stay in its dimmed state until `viewModel.currentWPMVoiced` first transitions nil→non-nil. It must NOT render `---` during the floor window.
+- `viewModel.streakSeconds` is live throughout this period (confirmed: `FPC.swift:649` writes `streakSeconds` unconditionally every 1s tick). MONO bar and clock render normally during the floor window.
+- On .counting → .waiting, the last `currentWPMVoiced` remains visible (dimmed) during fade-down. Do NOT snap to `---`.
+- Cold-start asymmetry (engine warmup + floor = ~5s) is acceptable per product owner; the fade-from-hidden covers it visually.
+- These are M5.4 requirements, not M5.1 bugs. M5.1 ships as-is.
+- The monologue 3s-no-voice reset is already a live setting (`monologuePauseThreshold`, default 2.5s, M4.4). M5.4 reads `viewModel.monoPauseSeconds`. No new plumbing needed.
+
+### TDD-lock deviation (logged)
+
+Two tests rewritten for M5.1 — `testWPMVoicedFlowsToViewModel` and `testMonologueLevelFlowsToViewModel`. Old tests drove WPMCalculator/MonologueDetector in isolation and asserted via the direct Combine subscriptions that M5.1 removed. New tests drive the full FPC session lifecycle and assert via the 1s widget-refresh timer path. Test PURPOSE (data flows to viewModel) is unchanged; mechanism changed. Accepted deviation, logged.
+
+### Tests: 4 new + 2 rewritten, 416 pass + 1 skip = 417 total.
+
+New: `testWPMFirstValueArrivalForcesImmediateSnapshot`, `testWPMFirstValueArrivalRePhasesTimer` (Bug 1); `testCountingToWaitingForcesFinalSnapshot`, `testCountingToWaitingStopsTimerAfterSnapshot` (Bug 2).
+
+---
+
 ## Session 041 — 2026-05-27 — Bug investigation only (no code). AirPods/HFP 24kHz mid-warming device-switch wedges the audio engine into a `-10868` start-failure loop → widget stuck Warming + CPU pegged + overheat. Filed M6.8 (pre-ship re-test + fix). No tag.
 
 **Format:** Architect investigation from Anton's live failure logs (Google Meet in Chrome, AirPods). No implementation. Deliverable: root-cause + M6.8 backlog item to fix and re-test during end-to-end pre-ship testing.
