@@ -192,7 +192,7 @@ struct TalkCoachApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        MenuBarExtra("TalkCoach", systemImage: "waveform.badge.mic") {
+        MenuBarExtra("TalkCoach", image: "MenuBarIcon") {
             MenuBarContent()
                 .environmentObject(delegate.settingsStore)
         }

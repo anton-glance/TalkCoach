@@ -75,9 +75,12 @@ final class FloatingPanelController {
             NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         },
         runAnimation: @escaping (TimeInterval, @escaping () -> Void) -> Void = { duration, block in
+            // allowsImplicitAnimation is intentionally omitted: we only animate the panel's
+            // alphaValue explicitly via .animator(). Enabling implicit animations propagates
+            // layout requests to NSHostingView subviews, triggering "layoutSubtreeIfNeeded called
+            // during layout" when SwiftUI has a pending layout pass (M5.4 regression).
             NSAnimationContext.runAnimationGroup({
                 $0.duration = duration
-                $0.allowsImplicitAnimation = true
                 block()
             })
         }
@@ -266,7 +269,7 @@ final class FloatingPanelController {
             viewModel.isSessionActive = true
             viewModel.sessionStartedAt = ctx.startedAt
             panelState = .visible
-            applyPanelOpacity(animated: false)
+            applyPanelOpacity(duration: nil)
             setActivityState(.warming, reason: "session-active")
             Logger.floatingPanel.info("Phase G: session-active during linger [\(ctx.id)] — linger cancelled → warming")
         case .dismissed:
@@ -310,7 +313,7 @@ final class FloatingPanelController {
             viewModel.isSessionActive = true
             viewModel.sessionStartedAt = ctx.startedAt
             panelState = .visible
-            applyPanelOpacity(animated: false)
+            applyPanelOpacity(duration: nil)
             setActivityState(.counting, reason: "engine-ready-phase-g")
             Logger.floatingPanel.info("Phase G: engine-ready during lingerFull — in-place content swap → .counting")
         case .lingerFade:
@@ -322,7 +325,7 @@ final class FloatingPanelController {
             viewModel.isSessionActive = true
             viewModel.sessionStartedAt = ctx.startedAt
             panelState = .visible
-            applyPanelOpacity(animated: false)
+            applyPanelOpacity(duration: nil)
             setActivityState(.counting, reason: "engine-ready-phase-g")
             Logger.floatingPanel.info("Phase G: engine-ready during lingerFade — fade cancelled → .counting")
         case .dismissed:
@@ -402,6 +405,8 @@ final class FloatingPanelController {
         viewModel.totalTokens = 0
         viewModel.sessionStartedAt = nil
         viewModel.isSessionActive = false
+        viewModel.hasReceivedWPM = false
+        viewModel.isFrozen = false
         viewModel.currentWPMVoiced = nil
         viewModel.monologueLevel = 0
         viewModel.streakSeconds = 0
@@ -641,7 +646,10 @@ final class FloatingPanelController {
             snapshotNow()
             stopWidgetRefreshTimer()
         }
-        applyPanelOpacity(animated: true)
+        // Only freeze to live values when wrapping from .counting (numbers showing).
+        // Wrapping from .waiting keeps the dashed/dimmed waiting presentation — do not resurrect numbers.
+        if state == .wrapping && prev == .counting { viewModel.isFrozen = true }
+        applyPanelOpacity(duration: Self.panelOpacityDuration(from: prev, to: state))
     }
 
     // MARK: - Widget Refresh Timer
@@ -699,17 +707,41 @@ final class FloatingPanelController {
 
     // MARK: - Panel Opacity
 
-    private func applyPanelOpacity(animated: Bool) {
-        guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
-        let targetAlpha: CGFloat?
-        switch viewModel.activityState {
-        case .waiting: targetAlpha = settingsStore.waitingOpacity
-        case .warming, .counting, .recovering: targetAlpha = 1.0
-        case .idle, .wrapping, .dismissed: targetAlpha = nil
+    /// Returns the target window alpha for a given activity state. `nil` means no change.
+    /// Extracted as a pure function so tests can assert without a live panel.
+    static func targetAlpha(
+        for state: WidgetActivityState,
+        workingOpacity: Double,
+        waitingOpacity: Double
+    ) -> CGFloat? {
+        switch state {
+        case .waiting: return CGFloat(waitingOpacity)
+        case .counting: return CGFloat(workingOpacity)
+        case .warming, .recovering: return 1.0
+        case .idle, .wrapping, .dismissed: return nil
         }
-        guard let alpha = targetAlpha else { return }
-        if animated {
-            runAnimation(0.3) { [weak self] in
+    }
+
+    /// Returns the animation duration for an opacity transition between two states.
+    /// counting↔waiting cross-fades at 700 ms (design idle↔active spec); all others at 300 ms.
+    static func panelOpacityDuration(
+        from prev: WidgetActivityState,
+        to next: WidgetActivityState
+    ) -> TimeInterval {
+        let isIdleActiveSwitch = (prev == .counting && next == .waiting) ||
+                                 (prev == .waiting  && next == .counting)
+        return isIdleActiveSwitch ? 0.7 : 0.3
+    }
+
+    private func applyPanelOpacity(duration: TimeInterval?) {
+        guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
+        guard let alpha = Self.targetAlpha(
+            for: viewModel.activityState,
+            workingOpacity: settingsStore.workingOpacity,
+            waitingOpacity: settingsStore.waitingOpacity
+        ) else { return }
+        if let dur = duration {
+            runAnimation(dur) { [weak self] in
                 self?.panel?.animator().alphaValue = alpha
             }
         } else {

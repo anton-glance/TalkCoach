@@ -725,7 +725,7 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Panel opacity must be 0.5 when activityState is .waiting and panel is .visible")
     }
 
-    func testPanelOpacity_AtCounting_Is100() async {
+    func testPanelOpacity_AtCounting_IsWorkingOpacity() async {
         makeComponents(runAnimation: { _, block in
             NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
         })
@@ -734,8 +734,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         await showPanel()  // warming → engine-ready → counting
 
         XCTAssertEqual(sut.viewModel.activityState, .counting)
-        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.01,
-                       "Panel opacity must be 1.0 when activityState is .counting")
+        // M5.4: counting now uses workingOpacity (default 0.90), not 1.0.
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.9, accuracy: 0.01,
+                       "Panel opacity must equal workingOpacity (0.9 default) when activityState is .counting")
     }
 
     func testPanelOpacity_AtWarming_Is100() async {
@@ -992,6 +993,59 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "engine-ready must produce .counting after session-start-during-lingerFade")
         XCTAssertEqual(sut.panelState, .visible,
                        "panel must remain .visible after engine-ready")
+    }
+
+    // MARK: - Group 17: Wrapping freeze semantics + cold-start restart
+
+    func testWrappingFromCounting_setsFrozen() async {
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "Precondition: activityState must be .counting")
+
+        await endSession()  // counting → wrapping
+
+        XCTAssertTrue(sut.viewModel.isFrozen,
+                      "wrapping entered from .counting must set isFrozen = true (freeze live numbers during linger)")
+    }
+
+    func testWrappingFromWaiting_doesNotSetFrozen() async {
+        makeComponents()
+        sut.start()
+        await activateSession()
+        await showPanel()
+        // Transition to .waiting via voice-inactivity silence hold
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        scheduler.fire(delay: 2.0)  // 2s silence hold → .waiting
+        XCTAssertEqual(sut.viewModel.activityState, .waiting, "Precondition: activityState must be .waiting")
+
+        await endSession()  // waiting → wrapping
+
+        XCTAssertFalse(sut.viewModel.isFrozen,
+                       "wrapping entered from .waiting must NOT set isFrozen (keep dashed/dim waiting presentation)")
+    }
+
+    func testColdStart_hasReceivedWPM_ResetsAfterLingerComplete() async {
+        makeComponents(reducedMotion: true)
+        sut.start()
+        await activateSession()
+        await showPanel()
+        // Simulate first WPM arriving (engine warm-up completes, cold-start mark was showing)
+        sut.viewModel.hasReceivedWPM = true
+        let firstSessionStartedAt = sut.viewModel.sessionStartedAt
+        XCTAssertNotNil(firstSessionStartedAt)
+        XCTAssertTrue(sut.viewModel.hasReceivedWPM)
+
+        // End session → linger → complete (reducedMotion: completeLingerHide fires on 3s tick)
+        await endSession()
+        scheduler.fire(delay: 3.0)
+
+        XCTAssertFalse(sut.viewModel.hasReceivedWPM,
+                       "hasReceivedWPM must reset to false after linger completes so cold-start mark shows on next session")
+        XCTAssertNil(sut.viewModel.sessionStartedAt,
+                     "sessionStartedAt must be nil after reset so .id() forces ColdStartMarkView recreation on next session")
     }
 
     func testHandleSessionIdle_PreservesSessionStartedAt_DuringLinger() async {

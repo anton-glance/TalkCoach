@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Combine
 import Foundation
 import OSLog
@@ -17,6 +18,7 @@ private enum Keys {
     static let monologueLevel3Minutes = "monologueLevel3Minutes"
     static let monologuePauseThreshold = "monologuePauseThreshold"
     static let waitingOpacity = "waitingOpacity"
+    static let workingOpacity = "workingOpacity"
     static let lingerFullSeconds = "lingerFullSeconds"
     static let lingerFadeSeconds = "lingerFadeSeconds"
     static let recoveryGraceSeconds = "recoveryGraceSeconds"
@@ -148,6 +150,16 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Panel alpha while widget is actively counting (user is speaking). Clamped 0.1…1.0.
+    @Published var workingOpacity: Double {
+        didSet {
+            guard !isSyncing else { return }
+            let clamped = max(0.1, min(1.0, workingOpacity))
+            if clamped != workingOpacity { workingOpacity = clamped; return }
+            userDefaults.set(workingOpacity, forKey: Keys.workingOpacity)
+        }
+    }
+
     /// Full-opacity hold duration after session ends before fade begins. Clamped 1.0…10.0s.
     @Published var lingerFullSeconds: TimeInterval {
         didSet {
@@ -215,6 +227,7 @@ final class SettingsStore: ObservableObject {
         self.monologueLevel3Minutes = nums.monologueLevel3Minutes
         self.monologuePauseThreshold = nums.monologuePauseThreshold
         self.waitingOpacity = nums.waitingOpacity
+        self.workingOpacity = nums.workingOpacity
         self.lingerFullSeconds = nums.lingerFullSeconds
         self.lingerFadeSeconds = nums.lingerFadeSeconds
         self.recoveryGraceSeconds = nums.recoveryGraceSeconds
@@ -249,6 +262,7 @@ final class SettingsStore: ObservableObject {
         let monologueLevel3Minutes: Double
         let monologuePauseThreshold: Double
         let waitingOpacity: Double
+        let workingOpacity: Double
         let lingerFullSeconds: Double
         let lingerFadeSeconds: Double
         let recoveryGraceSeconds: Double
@@ -268,6 +282,7 @@ final class SettingsStore: ObservableObject {
             monologueLevel3Minutes: field(Keys.monologueLevel3Minutes, fallback: 2.5, lower: 0.25, upper: 30.0),
             monologuePauseThreshold: field(Keys.monologuePauseThreshold, fallback: 2.5, lower: 0.5, upper: 10.0),
             waitingOpacity: field(Keys.waitingOpacity, fallback: 0.5, lower: 0.1, upper: 1.0),
+            workingOpacity: field(Keys.workingOpacity, fallback: 0.90, lower: 0.1, upper: 1.0),
             lingerFullSeconds: field(Keys.lingerFullSeconds, fallback: 3.0, lower: 1.0, upper: 10.0),
             lingerFadeSeconds: field(Keys.lingerFadeSeconds, fallback: 2.0, lower: 0.5, upper: 5.0),
             recoveryGraceSeconds: field(Keys.recoveryGraceSeconds, fallback: 2.0, lower: 0.5, upper: 5.0)
@@ -357,6 +372,8 @@ private extension SettingsStore {
 
         let newWaitingOpacity = max(0.1, min(1.0, userDefaults.object(forKey: Keys.waitingOpacity) as? Double ?? 0.5))
         if newWaitingOpacity != waitingOpacity { waitingOpacity = newWaitingOpacity }
+        let newWorkingOpacity = max(0.1, min(1.0, userDefaults.object(forKey: Keys.workingOpacity) as? Double ?? 0.90))
+        if newWorkingOpacity != workingOpacity { workingOpacity = newWorkingOpacity }
         let newLingerFull = max(1.0, min(10.0, userDefaults.object(forKey: Keys.lingerFullSeconds) as? Double ?? 3.0))
         if newLingerFull != lingerFullSeconds { lingerFullSeconds = newLingerFull }
         let newLingerFade = max(0.5, min(5.0, userDefaults.object(forKey: Keys.lingerFadeSeconds) as? Double ?? 2.0))

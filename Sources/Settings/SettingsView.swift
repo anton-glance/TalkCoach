@@ -68,6 +68,12 @@ struct SettingsView: View {
 
             Section {
                 Stepper(
+                    "Working opacity: \(String(format: "%.2f", settingsStore.workingOpacity))",
+                    value: $settingsStore.workingOpacity,
+                    in: 0.1...1.0,
+                    step: 0.05
+                )
+                Stepper(
                     "Dim opacity: \(String(format: "%.2f", settingsStore.waitingOpacity))",
                     value: $settingsStore.waitingOpacity,
                     in: 0.1...1.0,
@@ -94,7 +100,7 @@ struct SettingsView: View {
             } header: {
                 Text("Widget Behavior")
             } footer: {
-                Text("Dim opacity: panel alpha during pauses. Stay visible: full-opacity hold after session ends. Fade-out: animation duration. Recovery grace: window after audio recovery for a token before dimming.")
+                Text("Working opacity: panel alpha while actively counting. Dim opacity: panel alpha during pauses. Stay visible: full-opacity hold after session ends. Fade-out: animation duration. Recovery grace: window after audio recovery for a token before dimming.")
             }
 
             Section {

@@ -20,6 +20,10 @@ final class WidgetViewModel: ObservableObject {
     @Published var currentWPMVoiced: Int?
     @Published var monologueLevel: Int = 0
     @Published var streakSeconds: Double = 0
+    /// True after the first non-nil currentWPMVoiced arrives this session. Drives cold-start mark visibility.
+    @Published var hasReceivedWPM: Bool = false
+    /// True while the widget is frozen at last-known values during the linger/wrapping phase.
+    @Published var isFrozen: Bool = false
 
     // Thresholds — live-synced from SettingsStore so the view always uses current values
     @Published var monoL1Seconds: Double
@@ -45,6 +49,15 @@ final class WidgetViewModel: ObservableObject {
         monoL2Seconds = settings.monologueLevel2Minutes * 60
         monoL3Seconds = settings.monologueLevel3Minutes * 60
         monoPauseSeconds = settings.wpmPauseThreshold
+
+        // Set hasReceivedWPM on the first non-nil WPM per session.
+        // Cannot use didSet on @Published directly; a Combine sink is the correct pattern.
+        $currentWPMVoiced
+            .sink { [weak self] wpm in
+                guard let self, !self.hasReceivedWPM, wpm != nil else { return }
+                self.hasReceivedWPM = true
+            }
+            .store(in: &cancellables)
 
         settings.$monologueLevel1Minutes
             .dropFirst()
