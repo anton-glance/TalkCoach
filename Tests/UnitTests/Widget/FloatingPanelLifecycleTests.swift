@@ -997,6 +997,36 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
     // MARK: - Group 17: Wrapping freeze semantics + cold-start restart
 
+    func testPanelOpacity_WaitingToCounting_WithoutData_HoldsAtWaitingOpacity() async {
+        // When voice resumes after a waiting period and no WPM data is available yet,
+        // the panel must hold at waitingOpacity (0.5) instead of flashing to workingOpacity (0.9).
+        // The opacity will rise to workingOpacity only when the first WPM of the new counting
+        // window arrives via the wpmFirstValueSubscription sink.
+        makeComponents(runAnimation: { _, block in
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
+        })
+        sut.start()
+        await activateSession()
+        await showPanel()
+        XCTAssertEqual(sut.viewModel.activityState, .counting)
+
+        // Transition to .waiting via voice-inactivity silence hold
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        scheduler.fire(delay: 2.0)
+        XCTAssertEqual(sut.viewModel.activityState, .waiting)
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
+                       "Precondition: panel must be at 0.5 opacity in .waiting state")
+
+        // Voice resumes — waiting→counting transition, no WPM data yet (no WPM calculator in tests)
+        coordinator.isVoiceInactive = false
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting)
+
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
+                       "Panel must hold at 0.5 (waitingOpacity) when .counting but no WPM data yet — no dashes flash")
+    }
+
     func testWrappingFromCounting_setsFrozen() async {
         makeComponents()
         sut.start()

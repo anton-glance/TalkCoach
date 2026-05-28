@@ -38,11 +38,13 @@ struct WidgetView: View {
     }
 
     /// True when the cold-start mark (pulsing Locto ring) should replace the live numbers.
+    /// Covers both .warming (engine loading, ~10s) and .counting-before-first-WPM so the mark
+    /// appears immediately at session start and stays until real data arrives.
     static func showColdStartMark(
         activityState: WidgetActivityState,
         hasReceivedWPM: Bool
     ) -> Bool {
-        activityState == .counting && !hasReceivedWPM
+        (activityState == .warming || activityState == .counting) && !hasReceivedWPM
     }
 
     // L2 boundary is inclusive on the urgent side: streakSeconds < l2Seconds → MONOLOGUE;

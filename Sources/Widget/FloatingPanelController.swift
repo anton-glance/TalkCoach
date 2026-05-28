@@ -649,7 +649,14 @@ final class FloatingPanelController {
         // Only freeze to live values when wrapping from .counting (numbers showing).
         // Wrapping from .waiting keeps the dashed/dimmed waiting presentation — do not resurrect numbers.
         if state == .wrapping && prev == .counting { viewModel.isFrozen = true }
-        applyPanelOpacity(duration: Self.panelOpacityDuration(from: prev, to: state))
+        // Suppress opacity increase when entering .counting from .waiting with no data yet.
+        // The panel holds at waitingOpacity until the first WPM of this counting window arrives,
+        // avoiding a bright-dashes flash during the pre-data window. Opacity is applied in the
+        // wpmFirstValueSubscription sink once currentWPMVoiced becomes non-nil.
+        let skipOpacityChange = state == .counting && prev == .waiting && viewModel.currentWPMVoiced == nil
+        if !skipOpacityChange {
+            applyPanelOpacity(duration: Self.panelOpacityDuration(from: prev, to: state))
+        }
     }
 
     // MARK: - Widget Refresh Timer
@@ -696,6 +703,10 @@ final class FloatingPanelController {
                 self.widgetRefreshToken = self.hideScheduler.schedule(delay: 1.0) { [weak self] in
                     self?.onWidgetRefreshFired()
                 }
+                // Raise to workingOpacity now that live data has arrived. Required when the panel
+                // was held at waitingOpacity through a waiting→counting transition with no initial
+                // data — the skipOpacityChange guard deferred this call until here.
+                self.applyPanelOpacity(duration: 0.7)
             }
     }
 

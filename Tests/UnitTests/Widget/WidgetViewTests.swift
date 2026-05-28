@@ -138,6 +138,16 @@ import XCTest
         XCTAssertFalse(WidgetView.showColdStartMark(activityState: .counting, hasReceivedWPM: true))
     }
 
+    func testColdStartPredicateTrueWhenWarmingWithoutWPM() {
+        // .warming covers the ~10s engine-load window before first token; mark must show immediately.
+        XCTAssertTrue(WidgetView.showColdStartMark(activityState: .warming, hasReceivedWPM: false))
+    }
+
+    func testColdStartPredicateFalseWhenWarmingWithWPM() {
+        // Shouldn't happen in practice but tests predicate completeness.
+        XCTAssertFalse(WidgetView.showColdStartMark(activityState: .warming, hasReceivedWPM: true))
+    }
+
     func testColdStartPredicateFalseWhenWaiting() {
         XCTAssertFalse(WidgetView.showColdStartMark(activityState: .waiting, hasReceivedWPM: false))
     }
@@ -158,6 +168,15 @@ import XCTest
         let viewModel = WidgetViewModel()
         viewModel.activityState = .counting
         viewModel.currentWPMVoiced = nil
+        viewModel.hasReceivedWPM = false
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
+        _ = view.body
+    }
+
+    func testConstructsInWarmingColdStartState() {
+        // .warming + no WPM → showColdStart = true; body must render ColdStartMarkView branch without crash.
+        let viewModel = WidgetViewModel()
+        viewModel.activityState = .warming
         viewModel.hasReceivedWPM = false
         let view = WidgetView(viewModel: viewModel, onDismiss: {})
         _ = view.body
