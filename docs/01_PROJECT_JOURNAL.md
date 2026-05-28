@@ -1,5 +1,41 @@
 # Project Journal — Locto
 
+## Session 046 — 2026-05-28 — M5.4a COMPLETE: verification module, zero production code change, 8 regression locks. Tag m5.4a-complete.
+
+**Format:** Architect + product-owner + agent. Verification-only module. Plan audit found all three target concerns already correctly implemented at M5.4 close; M5.4a became 8 regression-lock tests with no production change.
+
+### M5.4a — CLOSED ✅ (tag m5.4a-complete, commit 4740e6a)
+
+**Product decision locked (S046):** the widget leaves the cold-start mark and shows live numbers when WPMCalculator emits its FIRST REAL non-nil value. No word-count or duration heuristic. The cold-start mark appears ONLY at true session cold-start (first-ever WPM of the session); on resume from a waiting pause, the widget holds the dim 50% dashes presentation, NOT the mark. `hasReceivedWPM` staying `true` for the whole session is therefore correct by design.
+
+**This collapsed M5.4a's scope.** The "counting-trigger threshold" item (S045's planned minimum-utterance gate to stop premature `.counting` on a single short word) was **dropped entirely** — the first-WPM display gate handles it. The mark/dashes hold until a real number arrives, regardless of what triggered the state transition.
+
+**Plan-phase trace (no code needed).** The agent traced three call paths against committed bytes and concluded all three concerns were already correctly handled in the M5.4 close:
+
+- **Silence-latch.** Silence-hold timer at `FPC:621` calls `wpmCalculator?.enterWaiting()` synchronously on the main queue before `setActivityState(.waiting)`. `enterWaiting()` (@MainActor) sets `wpmRaw = nil; wpmVoiced = nil`, cancels the refresh scheduler token, clears `latestSnapshot`/`voiceIntervals`/`currentSpeechStart`/`previousSmoothedWPM`/`medianBuffer`. The subsequent `snapshotNow()` in the exit-from-counting branch reads the post-`enterWaiting()` nil and overwrites any stale `viewModel.currentWPMVoiced` in the same synchronous block. The `A_median=-1` log line is the `Int?` Optional log-format default for nil, NOT a published value. `wpmFirstValueSubscription` uses `compactMap { $0 }` so nil publications from `enterWaiting()` are silently dropped.
+- **Waiting-hold display.** `showColdStartMark` predicate is `(activityState == .idle || .warming || .counting) && !hasReceivedWPM` — `.waiting` is not in the left clause, so dashes show during waiting unconditionally. On resume, `hasReceivedWPM == true` makes the predicate false; the else-branch (dashes) stays visible until first WPM arrives. The only writer of `hasReceivedWPM = false` is `resetViewModel()`, called only at session end / linger-complete — never during a mid-session pause.
+- **No-flash fade-in.** `skipOpacityChange = state == .counting && prev == .waiting && currentWPMVoiced == nil` (M5.4) blocks the window-alpha raise during the waiting→counting transition. `snapshotNow()` reads nil → `isIdle=true` → content shows dashes at dim window alpha. When `wpmFirstValueSubscription` receives the first non-nil value, it sets `currentWPMVoiced` (content fades dashes→numbers via `.id(displayWPM)` transition) AND calls `applyPanelOpacity(duration: 0.7)` (window animates dim→workingOpacity). Single coordinated fade, no instant-snap path between the two events.
+
+**Plan-approval audit (architect, S046).** The agent's confident "no code needed" conclusion required a verification step against actual HEAD bytes, not the trace alone — S045 had taught us not to trust agent assertions without checking. Approval included two conditions: (1) confirm the trace against committed bytes at HEAD, and (2) make test 8 (`testFirstWPMAfterWaiting_raisesAlpha_0_7s`) a real integration test driving the actual `WPMCalculator`, not the pure-function fallback the agent flagged as a possible escape hatch. Both conditions met in the final delivery.
+
+**Tests (8 total, all green).** RED → no production change → GREEN immediately (the bytes were already correct):
+- `WPMCalculatorTests`: `testEnterWaiting_publishesNilImmediately`, `testEnterWaiting_cancelsRefreshSchedulerToken`, `testEnterWaiting_clearedSnapshotKeepsSilenceNil` — silence-latch invariants.
+- `WidgetViewTests`: `testColdStartPredicate_false_whenWaiting_hasReceivedWPMTrue` — predicate lock.
+- `WidgetViewModelTests`: `testWaitingResumeToCounting_isIdleAndNoMark` — combined ViewModel state on resume.
+- `FloatingPanelControllerTests`: `testHasReceivedWPM_survivesWaitingReEntry`, `testWaitingToCountingNilWPM_skipsOpacityRaise`, `testFirstWPMAfterWaiting_raisesAlpha_0_7s` — full FPC integration, real `WPMCalculator` driven to non-nil output, `runAnimation` spy asserts the single 0.7s raise.
+
+One async-correctness fix in tests only: `RunLoop.main.run(until:)` → `await Task.yield()` × 2 (Swift 6 async context). Zero production code touched.
+
+**Lint:** one violation — `function_body_length 53/50` on `testFirstWPMAfterWaiting_raisesAlpha_0_7s` (the long integration test the architect explicitly refused to shrink). Resolved with a scoped `// swiftlint:disable:next function_body_length` directly on that test. The cost of a real integration test instead of a pure-function fallback. Clean at `4740e6a`.
+
+### Pattern locked: verification modules
+
+When a module's plan-phase trace concludes "no code needed," that conclusion is provisional until the trace is checked against current HEAD bytes — not the agent's description of the code, the actual committed code. M5.4a is the canonical example: the conclusion was correct, but the verification step was non-optional. The cost of skipping it is S045-style stale-build-saga loops.
+
+### Carried forward
+- **M5.5 (next):** Liquid Glass material + Reduce Transparency fallback + hover (scale/lift, no color change) + hover-reveal of close X button. X position already done in M5.4 — M5.5 adds only the hover-gated visibility.
+- **M5.6, M5.7:** L3 pulse, accessibility.
+
 ## Session 045 — 2026-05-28 — M5.4 COMPLETE: opacity state machine + cold-start mark + caret slide + brand icons. Tag m5.4-complete.
 
 **Format:** Architect + product-owner + agent. Large visual module (M5.8 brand identity folded in). Plan-approved (2 corrections), red-green TDD, then five smoke rounds resolving a workflow break + four behavioral bugs. Lint cleanup. Tagged.
