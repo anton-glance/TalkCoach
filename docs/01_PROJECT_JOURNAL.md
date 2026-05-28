@@ -1,5 +1,41 @@
 # Project Journal — Locto
 
+## Session 045 — 2026-05-28 — M5.4 COMPLETE: opacity state machine + cold-start mark + caret slide + brand icons. Tag m5.4-complete.
+
+**Format:** Architect + product-owner + agent. Large visual module (M5.8 brand identity folded in). Plan-approved (2 corrections), red-green TDD, then five smoke rounds resolving a workflow break + four behavioral bugs. Lint cleanup. Tagged.
+
+### M5.4 — CLOSED ✅ (tag m5.4-complete, commit 0b63683)
+
+Two orthogonal opacity layers composed multiplicatively: WINDOW alpha (`FloatingPanelController.applyPanelOpacity`, per `activityState`) and CONTENT opacity (`WidgetView`, per-element tween + cold-start mark). Parts shipped:
+
+- **`workingOpacity` setting** — default 0.90, clamp 0.1–1.0, Settings-adjustable (sibling to `waitingOpacity`). `.counting` window alpha reads it; `.warming`/`.recovering` stay 1.0. Avoids rebuild-to-tune.
+- **Window cross-fades** — 700ms easeInOut on counting↔waiting via testable pure funcs `targetAlpha(for:workingOpacity:waitingOpacity:)` + `panelOpacityDuration(from:to:)`.
+- **Cold-start pulsing Locto mark** — `ColdStartMarkView` (two SwiftUI Circles from `mark.svg` geometry, softened white 0.94), pulses while no WPM. Predicate `showColdStartMark = (activityState == .idle || .warming || .counting) && !hasReceivedWPM`. Mark-only (no bar, no dashes). Restarts per session via `.id(sessionStartedAt)`. Sequential crossfade to numbers on first WPM (mark out 0.3s easeOut, then content in 0.4s easeIn + 0.3s delay — no overlap).
+- **Hero-number tween** — asymmetric 80ms out / 120ms in + 1pt vertical drift, via `.transition(.asymmetric(...))` with per-side `.animation`. (Agent first shipped a 100ms symmetric shortcut calling the spec "not worth the complexity" — rejected in plan audit; the asymmetric API does this without a custom Animatable modifier.)
+- **Caret slide** — 400ms easeOut. Carets moved OUT of Canvas to animatable `PaceCaretShape`/`MonoCaretShape` (Canvas can't interpolate values passed into its closure); Canvas retained only for the static 2px bar; `@State animatedPacePos/animatedMonoPos` driven by `withAnimation` on `.onChange`.
+- **Wrapping freeze** — `isFrozen` set only when `state == .wrapping && prev == .counting`. From `.counting`: live numbers freeze, hold lingerFull, fade lingerFade. From `.waiting`: dashed/dim presentation fades, no numbers resurrected. `idle = isIdle && !isFrozen`.
+- **Brand icons (M5.8 folded in)** — `Scripts/GenerateIcons.swift` Core-Graphics direct-draw (no SVG converter dep). App icon: 7 PNGs (16–1024) / 10 catalog entries, teal squircle + white ring + dot. Menu bar: `MenuBarIcon.imageset` template (black-on-transparent, system-tinted), replacing SF Symbol `waveform.badge.mic`.
+- **X close button** — pinned top-trailing in all states.
+
+Reduce Motion (via injectable `reducedMotionProvider` → `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`, NOT `UIAccessibility` — macOS) zeroes all tweens/pulse.
+
+### Smoke saga (the cost of this module)
+
+1. **Workflow break (the big one):** the agent built + amended GREEN locally but never pushed it; Anton's first two smokes ran against a stale tree (origin still at M5.3-era `c011b2d`). Symptoms — app icon placeholder, cold-start "dashes then logo" — were partly *stale-build artifacts*, not code bugs. **Lesson: from here, GREEN must be committed AND pushed before Anton smokes, so the smoked tree and the clone-audited tree are the same bytes.** Architect now verifies the pushed HEAD contains the fix (clone + grep) before greenlighting smoke.
+2. **Icon never generated:** `Contents.json` had 10 slots but zero `filename` fields and zero PNGs — catalog structurally empty. Agent's "all 10 committed" self-review claim was false against the pushed tree. Re-ran script, populated filenames, pushed.
+3. **Cold-start predicate excluded `.warming`:** widget sits in `.warming` ~10s during engine load before flipping to `.counting`; predicate only covered `.counting`, so dashes rendered through warming and the mark appeared late. Fixed by adding `.warming`.
+4. **First-frame dashes flash:** added `.idle` to the predicate so SwiftUI pre-renders the mark into the offscreen backing store between sessions — first visible frame is the mark, never dashes. Safe because linger-complete order is `hidePanel` → `resetViewModel` → `setActivityState(.idle)`: panel is already hidden before the predicate goes true.
+5. **X centered during cold-start:** `ZStack(.topTrailing)` sized to its largest child; during cold-start the only child was the small centered mark, so topTrailing pinned to the mark's corner. Fixed by filling the cold-start branch to the full 144×144 frame.
+6. **Lint:** two rounds — first the expected `type_body_length`/`identifier_name`/superfluous-disable trio, then blanket-disable violations (config wants scoped `disable`/`enable` pairs, not file-level). Clean at 0b63683.
+
+591/592 tests (1 permanent skip). All four target behaviors confirmed in final smoke.
+
+### Carried forward
+
+- **M5.4a (next):** expanded — now also covers the **counting-trigger threshold**. S045 smoke confirmed the widget enters `.counting` on a single short word before real WPM is ready, producing a gray-dashes window M5.4's opacity-hold cannot mask (the trigger is premature). M5.4a adds a minimum-utterance gate alongside the calculator silence-latch.
+- **M5.5:** X-button POSITION is done (M5.4); M5.5 adds only the hover-gated visibility.
+- **M5.8:** complete, folded into M5.4.
+
 ## Session 044 — 2026-05-27 — M5.3 COMPLETE: Real WidgetView replaces PlaceholderWidgetView. Tag m5.3-complete.
 
 **Format:** Architect + product-owner + agent. Visual module. Plan-approved (4 corrections + 1 scope addition before approval), red-green TDD, font bundling, lint cleanup, tagged.
