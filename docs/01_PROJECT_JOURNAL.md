@@ -1,5 +1,76 @@
 # Project Journal — Locto
 
+## Session 044 — 2026-05-27 — M5.3 COMPLETE: Real WidgetView replaces PlaceholderWidgetView. Tag m5.3-complete.
+
+**Format:** Architect + product-owner + agent. Visual module. Plan-approved (4 corrections + 1 scope addition before approval), red-green TDD, font bundling, lint cleanup, tagged.
+
+### M5.3 — CLOSED ✅ (tag m5.3-complete, commit 3d66fbd)
+
+`Sources/Widget/WidgetView.swift` — two-zone 144×144 SwiftUI tile consuming live `WidgetViewModel` data and `DesignTokens` constants. `PlaceholderWidgetView.swift` kept on disk; `FloatingPanelController.swift:443` swapped to `WidgetView`.
+
+**Layout.** Top → bottom inside 14H/10V padding via `VStack` + `Spacer(minLength: 0)` (CSS `flex + justifyContent: space-between` equivalent):
+
+1. Top cluster — WPM number (InterDisplay-Light 36pt / tracking -1.8 / `.monospacedDigit()`) + hidden-mirror "WPM" unit baseline-aligned left + visible "WPM" unit right (Widget.jsx pattern for optical centering) + state label (InterDisplay-SemiBold 9pt / tracking 1.26 / `.opacity(idle ? 0 : 1)` to preserve layout space).
+2. Bar zone — `Canvas { ctx, size in }` drawing: white 2px bar (y=6, always visible); down-pointing triangle above bar tracking pace spectrum 0→1 (not rendered when idle); up-pointing triangle below bar tracking mono caret 0→1 (not rendered when idle). `Canvas` preferred over `GeometryReader+ZStack` to avoid greedy-sizing complexity; `size.width` is the available width after padding.
+3. Bottom cluster — `M:SS` time (`HStack(spacing: 0)` with `Text(":").offset(y: -3.24)` optical nudge = -0.09em × 36pt, matching Widget.jsx `translateY(-0.09em)`) + monologue label (MONOLOGUE / TAKE A PAUSE).
+
+**Background.** `LinearGradient` with stops at 0/32/68/100% mirrors Widget.jsx's `linear-gradient(180deg, wpmTint 0%, wpmTint 32%, monoTint 68%, monoTint 100%)`. Tint colors from `DesignTokens.paceColors` (top) and `DesignTokens.monoColors` (bottom), both at `tintAlpha=0.78`. Container: `.frame(144×144)` + `.clipShape(RoundedRect 32pt .continuous)` + `.overlay` white border at `borderAlpha=0.45`.
+
+**Live threshold consumption.** `bottomCluster` reads `viewModel.monoL2Seconds` on every `body` evaluation. `monoColors` passes `viewModel.monoL1/L2/L3Seconds` directly, so a mid-session Settings change shifts the mono color stage on the next 1s refresh. L2 drives the MONOLOGUE→TAKE A PAUSE flip (inclusive on urgent side: `streakSeconds >= l2Seconds`). Smoke verified: L1/L2/L3=60/90/150 tiering fired at 60.8s/90.1s/150.3s; 2.7s pause reset streak to zero.
+
+**Key decisions.**
+- `tintAlpha=0.78` / `borderAlpha=0.45`: follows Widget.jsx (final polish iteration), NOT `tokens.js` `Tint.restingAlpha=0.55` / `Border.restingWhiteOpacity=0.55` (pre-iteration, stale). Documented in source comments.
+- Padding 14H/10V: follows Widget.jsx `'10px 14px'`; `DesignTokens.Layout` 13H/11V is stale relative to JSX. Documented.
+- Idle grey `rgba(191, 196, 199)` held as `private static let idleTint` (not in DesignTokens; sourced from Widget.jsx line 46).
+- Bold synthesis at L2 dropped: `InterDisplay-Bold.otf` not bundled in M5.3; `.fontWeight(.bold)` on a SemiBold base produces digital synthesis that looks worse than SemiBold. Monologue label stays SemiBold always. Emphasis at L2 flip is carried by the coral tint + "TAKE A PAUSE" text + full cluster opacity. Real 700-weight revisit in M5.6 if `InterDisplay-Bold.otf` is bundled.
+- Defensive zero/negative guards: `monoCaretFraction(l3≤0 → 0.0)`, `monoLabelText(l2≤0 → "TAKE A PAUSE")`, `monoClusterOpacity(l2≤0 → 1.0)`. All three per plan correction (1).
+- L2/L3 boundary semantics documented in source: `streakSeconds < l2Seconds → MONOLOGUE; ≥ l2Seconds → TAKE A PAUSE`. Comment explicitly says "Do NOT change to `>`; inclusive-L2-urgent is intentional per M5.3 spec."
+
+### Font bundling
+
+Inter Display Light, Medium, SemiBold OTFs committed to `Resources/Fonts/` (clean-install-safe; any clone builds with the fonts). Registered via `ATSApplicationFontsPath = Fonts` in `Info.plist`. PostScript names confirmed from OTF name table: `InterDisplay-Light`, `InterDisplay-Medium`, `InterDisplay-SemiBold`. `NSFontManager.shared.availableMembers(ofFontFamily: "Inter Display")` debug log added in `TalkCoachApp.swift` under `#if DEBUG` to verify registration at launch.
+
+**Lesson: "works on screen" is not "bundled correctly."** Inter Display is system-installed on Anton's machine. During the font-bundling debugging pass the widget was visually rendering Inter Display while `NSFontManager` returned NONE — the app bundle had no fonts and was silently falling back to the system install. This is invisible on the developer's machine and would break on any clean install. Compounded by stale builds that masked a temporarily broken Copy Bundle Resources phase, making results inconsistent between runs.
+
+**PERMANENT CONVENTION:** After any Copy Bundle Resources / folder-reference / `Info.plist` font-path change: (1) Product → Clean Build Folder, (2) rebuild, (3) verify via the `NSFontManager` debug log showing `InterDisplay-Light, InterDisplay-Medium, InterDisplay-SemiBold`, (4) optionally confirm with `find TalkCoach.app -name "*.otf"`. Never trust visual appearance on a machine where the font is system-installed.
+
+### Tests
+
+21 tests in `WidgetViewTests.swift`:
+- 5 construction smoke: `WidgetView(viewModel:onDismiss:)` + `_ = view.body` for nil-WPM, slow, ideal, fast, and high-streak states. Guards against body-evaluation crashes for all main ViewModel states.
+- 5 `formatMonoTime`: 0→("0","00"), 5→("0","05"), 60→("1","00"), 90→("1","30"), -1→("0","00") (negative clamp).
+- 5 `monoLabelText`: below L2, just below L2, at L2 flip (inclusive → TAKE A PAUSE), custom L2, zero L2→"TAKE A PAUSE" (defensive guard).
+- 6 `monoCaretFraction`: at zero, at L3, past L3 clamped, negative clamped, zero L3→0.0 (defensive), negative L3→0.0 (defensive).
+
+487 tests total: 486 pass, 1 skip, 0 fail.
+
+### Lint
+
+`swiftlint --strict` fired twice before the tag was clean:
+
+- **Round 1 (28 violations):** short locals throughout the `Canvas` block (`w`, `px`, `mx`, `p`), `l2` in `bottomCluster`, `r`/`s`/`m` in helpers; trailing comma in gradient stops array; colon/comma spacing in alignment-column `Path` closure calls; `vm` in 5 `WidgetViewTests` construction tests; `r` in 5 `WidgetViewTests` `formatMonoTime` tests.
+- **Round 2 (25 violations after post-GREEN bold-fix + font-log amend):** same set. All fixed: `barWidth`/`paceX`/`monoX`/`path`, `level2Seconds`, `timeParts`, `totalSeconds`/`minutes`/`remainingSeconds`, `viewModel`, `result`. Final: 0 violations.
+
+Second consecutive milestone (M5.2 and M5.3) where lint violations reached the tag gate. Agent process correction logged to memory: always attempt `swiftlint --strict` before declaring GREEN; if PATH-blocked, state it explicitly in self-review and assume violations exist. Common patterns to preemptively check when lint can't run: single-letter locals, trailing commas in collection literals, alignment-column spacing in `Path` closures.
+
+### Expected naked behaviors (smoke-confirmed, NOT bugs)
+
+Deferred to later milestones — not regressions:
+- Snap on update, no crossfade (display tweening → M5.4)
+- `---` / `-:--` displayed when WPM nil mid-session during VAD floor window (→ M5.4 opacity state machine)
+- WPM declining or nil during silence between sentences (→ M5.4a calculator silence-latch; visible in smoke as `wpm-refresh A_median=-1` on VAD stop)
+- Flat gradient, no Liquid Glass material, no specular highlight (→ M5.5)
+- No hover lift or scale (→ M5.5)
+- No L3 pulse animation (→ M5.6)
+
+### Carryover to M5.4
+
+- Opacity state machine: widget stays dimmed until `currentWPMVoiced` first becomes non-nil on `.counting` entry. Must NOT render `---` during the VAD floor window.
+- Display tweening: WPM number and mono time crossfade on update (no snap). Caret positions slide on update.
+- Idle fade: whole widget fades to `opacity 0.5` over 700ms on `.waiting`; fades back to 1.0 on `.counting`.
+- These are M5.4 requirements, not M5.3 bugs.
+
+
 ## Session 043 — 2026-05-27 — M5.2 COMPLETE: DesignTokens.swift port of tokens.js. Tag m5.2-complete.
 
 **Format:** Architect + product-owner + agent. Pure-value module. Plan-approved, red-green TDD, lint cleanup, tagged.
