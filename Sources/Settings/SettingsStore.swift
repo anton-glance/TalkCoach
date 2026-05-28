@@ -1,4 +1,4 @@
-// swiftlint:disable file_length type_body_length
+// swiftlint:disable file_length
 import Combine
 import Foundation
 import OSLog
@@ -25,6 +25,7 @@ private enum Keys {
 }
 
 @MainActor
+// swiftlint:disable:next type_body_length
 final class SettingsStore: ObservableObject {
 
     private let userDefaults: UserDefaults

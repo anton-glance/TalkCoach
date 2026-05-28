@@ -2,7 +2,6 @@
 // Generates app icon and menu bar icon PNGs from pure Core Graphics geometry.
 // Run: swift Scripts/GenerateIcons.swift (from repo root)
 // Outputs PNG files into Sources/App/Assets.xcassets subdirectories.
-// swiftlint:disable identifier_name
 
 import AppKit
 import CoreGraphics
@@ -11,6 +10,7 @@ import UniformTypeIdentifiers
 
 // MARK: - Drawing
 
+// swiftlint:disable identifier_name
 func drawAppIcon(size: Int) -> CGImage? {
     let S = CGFloat(size)
     guard let ctx = CGContext(
@@ -86,6 +86,7 @@ func drawMenuBarIcon(size: Int) -> CGImage? {
 
     return ctx.makeImage()
 }
+// swiftlint:enable identifier_name
 
 // MARK: - Save
 
