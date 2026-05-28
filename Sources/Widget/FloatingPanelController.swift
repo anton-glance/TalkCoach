@@ -440,7 +440,7 @@ final class FloatingPanelController {
         trackingView.onHoverEntered = { [weak self] in self?.handleHoverEntered() }
         trackingView.onHoverExited = { [weak self] in self?.handleHoverExited() }
         let hostingView = NSHostingView(
-            rootView: PlaceholderWidgetView(viewModel: viewModel) { [weak self] in
+            rootView: WidgetView(viewModel: viewModel) { [weak self] in
                 self?.requestDismiss()
             }
         )

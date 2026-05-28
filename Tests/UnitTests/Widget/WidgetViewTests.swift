@@ -7,74 +7,74 @@ import XCTest
     // MARK: - Construction smoke (body must not crash for each viewModel state)
 
     func testConstructsWithNilWPM() {
-        let vm = WidgetViewModel()
-        let view = WidgetView(viewModel: vm, onDismiss: {})
+        let viewModel = WidgetViewModel()
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
         _ = view.body
     }
 
     func testConstructsInSlowZone() {
-        let vm = WidgetViewModel()
-        vm.currentWPMVoiced = 80
-        vm.activityState = .counting
-        let view = WidgetView(viewModel: vm, onDismiss: {})
+        let viewModel = WidgetViewModel()
+        viewModel.currentWPMVoiced = 80
+        viewModel.activityState = .counting
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
         _ = view.body
     }
 
     func testConstructsInIdealZone() {
-        let vm = WidgetViewModel()
-        vm.currentWPMVoiced = 140
-        vm.activityState = .counting
-        let view = WidgetView(viewModel: vm, onDismiss: {})
+        let viewModel = WidgetViewModel()
+        viewModel.currentWPMVoiced = 140
+        viewModel.activityState = .counting
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
         _ = view.body
     }
 
     func testConstructsInFastZone() {
-        let vm = WidgetViewModel()
-        vm.currentWPMVoiced = 200
-        vm.activityState = .counting
-        let view = WidgetView(viewModel: vm, onDismiss: {})
+        let viewModel = WidgetViewModel()
+        viewModel.currentWPMVoiced = 200
+        viewModel.activityState = .counting
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
         _ = view.body
     }
 
     func testConstructsWithHighStreak() {
-        let vm = WidgetViewModel()
-        vm.currentWPMVoiced = 150
-        vm.activityState = .counting
-        vm.streakSeconds = 200
-        let view = WidgetView(viewModel: vm, onDismiss: {})
+        let viewModel = WidgetViewModel()
+        viewModel.currentWPMVoiced = 150
+        viewModel.activityState = .counting
+        viewModel.streakSeconds = 200
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
         _ = view.body
     }
 
     // MARK: - formatMonoTime
 
     func testFormatZeroSeconds() {
-        let r = WidgetView.formatMonoTime(0)
-        XCTAssertEqual(r.minutes, "0")
-        XCTAssertEqual(r.seconds, "00")
+        let result = WidgetView.formatMonoTime(0)
+        XCTAssertEqual(result.minutes, "0")
+        XCTAssertEqual(result.seconds, "00")
     }
 
     func testFormatFiveSeconds() {
-        let r = WidgetView.formatMonoTime(5)
-        XCTAssertEqual(r.minutes, "0")
-        XCTAssertEqual(r.seconds, "05")
+        let result = WidgetView.formatMonoTime(5)
+        XCTAssertEqual(result.minutes, "0")
+        XCTAssertEqual(result.seconds, "05")
     }
 
     func testFormatSixtySeconds() {
-        let r = WidgetView.formatMonoTime(60)
-        XCTAssertEqual(r.minutes, "1")
-        XCTAssertEqual(r.seconds, "00")
+        let result = WidgetView.formatMonoTime(60)
+        XCTAssertEqual(result.minutes, "1")
+        XCTAssertEqual(result.seconds, "00")
     }
 
     func testFormatNinetySeconds() {
-        let r = WidgetView.formatMonoTime(90)
-        XCTAssertEqual(r.minutes, "1")
-        XCTAssertEqual(r.seconds, "30")
+        let result = WidgetView.formatMonoTime(90)
+        XCTAssertEqual(result.minutes, "1")
+        XCTAssertEqual(result.seconds, "30")
     }
 
     func testFormatNegativeClampsToZero() {
-        let r = WidgetView.formatMonoTime(-1)
-        XCTAssertEqual(r.minutes, "0")
-        XCTAssertEqual(r.seconds, "00")
+        let result = WidgetView.formatMonoTime(-1)
+        XCTAssertEqual(result.minutes, "0")
+        XCTAssertEqual(result.seconds, "00")
     }
 
     // MARK: - monoLabelText

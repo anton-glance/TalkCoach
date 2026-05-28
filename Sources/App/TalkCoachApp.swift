@@ -62,6 +62,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        #if DEBUG
+        let interMembers = NSFontManager.shared.availableMembers(ofFontFamily: "Inter Display") ?? []
+        let interNames = interMembers.compactMap { $0.first as? String }
+        Logger.widget.debug(
+            "Inter Display registered: \(interNames.isEmpty ? "NONE — bundling failed" : interNames.joined(separator: ", "))"
+        )
+        #endif
+
         let defaults = UserDefaults.standard
         let wasSetupCompletedBefore = defaults.bool(forKey: "hasCompletedSetup")
 

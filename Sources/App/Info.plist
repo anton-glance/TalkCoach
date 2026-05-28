@@ -24,6 +24,8 @@
 	<string>public.app-category.productivity</string>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
+	<key>ATSApplicationFontsPath</key>
+	<string>Fonts</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Speech Coach analyzes your speaking pace and filler words during meetings, fully on-device.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

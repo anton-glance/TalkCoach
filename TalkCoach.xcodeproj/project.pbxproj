@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A9083CE52FC7E72400DD0842 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = A9083CE42FC7E72400DD0842 /* Fonts */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		A9D242612FA534C20039FC37 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -17,6 +21,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A9083CE42FC7E72400DD0842 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Resources/Fonts; sourceTree = "<group>"; };
 		A9D242512FA534C10039FC37 /* TalkCoach.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TalkCoach.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9D242602FA534C20039FC37 /* TalkCoachTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TalkCoachTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -68,6 +73,7 @@
 		A9D242482FA534C10039FC37 = {
 			isa = PBXGroup;
 			children = (
+				A9083CE42FC7E72400DD0842 /* Fonts */,
 				A9D242532FA534C10039FC37 /* Sources */,
 				A9D242632FA534C20039FC37 /* Tests */,
 				A9D242522FA534C10039FC37 /* Products */,
@@ -174,6 +180,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A9083CE52FC7E72400DD0842 /* Fonts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
