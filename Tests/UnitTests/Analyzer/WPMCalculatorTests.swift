@@ -923,4 +923,73 @@ final class WPMCalculatorTests: XCTestCase {
         sut.notifyVADEvent(.speechStopped(sessionTime: 5))
         XCTAssertEqual(fake.pendingCount, 0, "no re-scheduling after teardown via isActive")
     }
+
+    // MARK: AC9 — enterWaiting silence-latch (M5.4a regression)
+
+    func testEnterWaiting_publishesNilImmediately() async {
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 3.0)
+        sut.engineReadyFired(at: clock.current)  // cutoff = 3.5
+        clock.advance(by: 5.0)                   // t = 8
+        sut.notifyVADEvent(.speechStopped(sessionTime: 8))
+        await sut.consume(makeToken("one two three four five"))
+        fake.fireNext()  // computeAndPublish: voiced=4.5s, words=5 → wpmVoiced non-nil
+        XCTAssertNotNil(sut.wpmVoiced, "precondition: wpmVoiced must be non-nil before enterWaiting")
+
+        sut.enterWaiting()
+
+        XCTAssertNil(sut.wpmRaw,
+            "enterWaiting must clear wpmRaw synchronously — no stale value survives to the view (M5.4a)")
+        XCTAssertNil(sut.wpmVoiced,
+            "enterWaiting must clear wpmVoiced synchronously — widget must drop to nil immediately, not hold stale data (M5.4a)")
+    }
+
+    func testEnterWaiting_cancelsRefreshSchedulerToken() {
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: { Date() })
+
+        sut.sessionActivated()
+        sut.engineReadyFired(at: Date())
+        XCTAssertEqual(fake.pendingCount, 1, "precondition: engineReadyFired must schedule one refresh entry")
+
+        sut.enterWaiting()
+
+        XCTAssertEqual(fake.pendingCount, 0,
+            "enterWaiting must cancel the refresh token — no pending refresh can fire and publish stale data after waiting (M5.4a)")
+    }
+
+    func testEnterWaiting_clearedSnapshotKeepsSilenceNil() async {
+        let clock = MockClock(reference: 0)
+        let settings = makeSettings()
+        let fake = WPMFakeHideScheduler()
+        let sut = WPMCalculator(settings: settings, scheduler: fake, now: clock.now)
+
+        sut.sessionActivated()
+        sut.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock.advance(by: 3.0)
+        sut.engineReadyFired(at: clock.current)
+        clock.advance(by: 5.0)
+        sut.notifyVADEvent(.speechStopped(sessionTime: 8))
+        await sut.consume(makeToken("one two three four five"))
+        fake.fireNext()
+        XCTAssertNotNil(sut.wpmVoiced, "precondition")
+
+        sut.enterWaiting()
+
+        // Production resume path: speechStarted re-arms the refresh loop. Firing immediately
+        // (before new speech time or tokens accumulate) must return nil — enterWaiting cleared
+        // the snapshot and voice intervals, so the floor guard blocks any non-nil output.
+        sut.notifyVADEvent(.speechStarted(sessionTime: 8))  // restarts refresh loop
+        fake.fireNext()  // computeAndPublish at t=8: words=0, voicedSec≈0 → floor guard → nil
+
+        XCTAssertNil(sut.wpmVoiced,
+            "cleared snapshot after enterWaiting must not resurface; first post-resume refresh returns nil until new data accumulates (M5.4a)")
+    }
 }

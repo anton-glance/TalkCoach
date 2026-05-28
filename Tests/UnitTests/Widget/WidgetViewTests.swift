@@ -162,6 +162,18 @@ import XCTest
         XCTAssertFalse(WidgetView.showColdStartMark(activityState: .waiting, hasReceivedWPM: false))
     }
 
+    // MARK: - M5.4a waiting-hold: mark must not reappear on mid-session resume
+
+    func testColdStartPredicate_false_whenWaiting_hasReceivedWPMTrue() {
+        // .waiting is outside the predicate's left clause (only .idle/.warming/.counting are included),
+        // so hasReceivedWPM is irrelevant for correctness — this test documents the M5.4a requirement:
+        // during a mid-session silence pause the cold-start mark must never reappear.
+        XCTAssertFalse(
+            WidgetView.showColdStartMark(activityState: .waiting, hasReceivedWPM: true),
+            "cold-start mark must not appear in .waiting state (hasReceivedWPM=true): dashes hold until new WPM arrives (M5.4a)"
+        )
+    }
+
     // MARK: - M5.4 effectiveDuration helper
 
     func testEffectiveDurationReducedMotionReturnsZero() {

@@ -1240,4 +1240,172 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertGreaterThan(fix.fpc.viewModel.streakSeconds, 40.0,
             "immediate snapshot on .waiting→.counting must capture streakSeconds synchronously (M5.1)")
     }
+
+    // MARK: - M5.4a: hasReceivedWPM persists through a waiting cycle (no mark on resume)
+
+    func testHasReceivedWPM_survivesWaitingReEntry() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+
+        // Simulate first WPM arriving — triggers hasReceivedWPM=true via WidgetViewModel's Combine sink.
+        sut.viewModel.currentWPMVoiced = 130
+        await Task.yield()
+        await Task.yield()
+        XCTAssertTrue(sut.viewModel.hasReceivedWPM, "precondition: hasReceivedWPM set by first WPM")
+
+        // Silence hold fires → .waiting; snapshotNow reads nil from nil calculator → currentWPMVoiced=nil.
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        fakeScheduler.fire()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition: .waiting after silence hold")
+
+        // Voice resumes → .counting with nil WPM (skipOpacityChange active, no calculator).
+        coordinator.isVoiceInactive = false
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: .counting after vad-active")
+
+        XCTAssertTrue(sut.viewModel.hasReceivedWPM,
+            "hasReceivedWPM must remain true through a mid-session waiting cycle — resetViewModel is never called here (M5.4a)")
+        XCTAssertFalse(
+            WidgetView.showColdStartMark(activityState: sut.viewModel.activityState, hasReceivedWPM: sut.viewModel.hasReceivedWPM),
+            "cold-start mark must not reappear on resume from waiting: dashes hold, not the pulsing mark (M5.4a)"
+        )
+    }
+
+    // MARK: - M5.4a: waiting→counting with nil WPM defers opacity raise (no bright-dashes flash)
+
+    func testWaitingToCountingNilWPM_skipsOpacityRaise() async {
+        let suiteName = "WaitingSkipOpacity.\(name)"
+        let defs = UserDefaults(suiteName: suiteName)!
+        defs.removePersistentDomain(forName: suiteName)
+        defs.set(true, forKey: "coachingEnabled")
+        let skipSettings = SettingsStore(userDefaults: defs)
+        let skipDev = FakeCoreAudioDeviceProvider()
+        skipDev.stubbedDefaultDeviceID = 42
+        skipDev.stubbedIsRunning = false
+        let skipAlert = FakeAlertPresenter()
+        let skipSched = FakeHideScheduler()
+        let skipMic = MicMonitor(provider: skipDev)
+        let skipCoord = SessionCoordinator(micMonitor: skipMic, settingsStore: skipSettings)
+        var animationCalls: [TimeInterval] = []
+        let skipFPC = FloatingPanelController(
+            sessionCoordinator: skipCoord,
+            alertPresenter: skipAlert,
+            hideScheduler: skipSched,
+            settingsStore: skipSettings,
+            reducedMotionProvider: { true },
+            runAnimation: { dur, block in animationCalls.append(dur); block() }
+        )
+
+        skipFPC.start()
+        skipCoord.start()
+        skipDev.stubbedIsRunning = true
+        skipDev.simulateIsRunningChange()
+        await Task.yield()
+        skipCoord.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(skipFPC.viewModel.activityState, .counting, "precondition")
+
+        // Silence hold → .waiting
+        skipCoord.isVoiceInactive = true
+        await Task.yield()
+        skipSched.fire()
+        await Task.yield()
+        XCTAssertEqual(skipFPC.viewModel.activityState, .waiting, "precondition")
+
+        // Clear any opacity calls accumulated during warming/counting/waiting transitions.
+        animationCalls.removeAll()
+
+        // Resume → .counting with nil WPM (no calculator injected). skipOpacityChange must suppress
+        // the opacity raise that would otherwise flash the dashes to full brightness before a number lands.
+        skipCoord.isVoiceInactive = false
+        await Task.yield()
+        XCTAssertEqual(skipFPC.viewModel.activityState, .counting, "precondition: resumed to .counting")
+        XCTAssertNil(skipFPC.viewModel.currentWPMVoiced, "precondition: WPM nil (no calculator)")
+
+        XCTAssertTrue(animationCalls.isEmpty,
+            "runAnimation must NOT be called on waiting→counting with nil WPM — skipOpacityChange guard defers opacity raise until first WPM arrives (S045 smoke #5, M5.4a)")
+    }
+
+    // MARK: - M5.4a: first WPM after waiting triggers 0.7s animated opacity raise (S045 smoke #5)
+
+    // swiftlint:disable:next function_body_length
+    func testFirstWPMAfterWaiting_raisesAlpha_0_7s() async {
+        let suiteName = "FirstWPMAfterWaiting.\(name)"
+        let defs = UserDefaults(suiteName: suiteName)!
+        defs.removePersistentDomain(forName: suiteName)
+        let raisedSettings = SettingsStore(userDefaults: defs)
+
+        let wpmSched = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0.0)
+        let calc = WPMCalculator(settings: raisedSettings, scheduler: wpmSched, now: { clock })
+
+        let raisedDev = FakeCoreAudioDeviceProvider()
+        raisedDev.stubbedDefaultDeviceID = 42
+        raisedDev.stubbedIsRunning = false
+        let raisedAlert = FakeAlertPresenter()
+        let raisedSched = FakeHideScheduler()
+        let raisedMic = MicMonitor(provider: raisedDev)
+        let raisedCoord = SessionCoordinator(micMonitor: raisedMic, settingsStore: raisedSettings)
+        var animationCalls: [TimeInterval] = []
+        let raisedFPC = FloatingPanelController(
+            sessionCoordinator: raisedCoord,
+            alertPresenter: raisedAlert,
+            hideScheduler: raisedSched,
+            settingsStore: raisedSettings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true },
+            runAnimation: { dur, block in animationCalls.append(dur); block() }
+        )
+
+        // Drive to .counting
+        raisedFPC.start()
+        raisedCoord.start()
+        raisedDev.stubbedIsRunning = true
+        raisedDev.simulateIsRunningChange()
+        await Task.yield()
+        raisedCoord.lastEngineReadyAt = Date()
+        await Task.yield()
+        XCTAssertEqual(raisedFPC.viewModel.activityState, .counting, "precondition")
+
+        // Arm WPMCalculator (matches production wiring sequence)
+        calc.sessionActivated()
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.0))  // engineReadyCutoff = 0.5
+
+        // Silence hold → .waiting (enterWaiting clears calculator state, wpmFirstValueSubscription torn down)
+        raisedCoord.isVoiceInactive = true
+        await Task.yield()
+        raisedSched.fire()
+        await Task.yield()
+        XCTAssertEqual(raisedFPC.viewModel.activityState, .waiting, "precondition")
+        XCTAssertNil(raisedFPC.viewModel.currentWPMVoiced, "precondition: WPM cleared by enterWaiting")
+
+        // Resume → .counting (nil WPM, skipOpacityChange; wpmFirstValueSubscription re-established)
+        raisedCoord.isVoiceInactive = false
+        await Task.yield()
+        XCTAssertEqual(raisedFPC.viewModel.activityState, .counting, "precondition: resumed to .counting")
+
+        // Clear opacity calls from setup (warming/counting/waiting/resume transitions)
+        animationCalls.removeAll()
+
+        // Drive WPMCalculator via the production re-arm path (speechStarted restarts the refresh loop
+        // when refreshToken==nil and engineReadyCutoff!=nil). New speech + tokens meet the floor guards.
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0))   // re-arms loop; currentSpeechStart = t=0
+        clock = Date(timeIntervalSinceReferenceDate: 1.0)     // arrival time for token (> cutoff 0.5)
+        await calc.consume(TranscribedToken(token: "one two three four", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.5)
+        // voicedSec: clippedStart=max(0.0, 0.5)=0.5; voiced=3.5−0.5=3.0 ≥ 2.0 ✓; words=4 ≥ 3 ✓
+        wpmSched.fireNext()  // computeAndPublish → wpmVoiced = non-nil → wpmFirstValueSubscription fires
+
+        XCTAssertNotNil(raisedFPC.viewModel.currentWPMVoiced,
+            "first WPM after waiting must land in viewModel immediately via wpmFirstValueSubscription (M5.4a)")
+        XCTAssertTrue(animationCalls.contains(where: { abs($0 - 0.7) < 0.01 }),
+            "applyPanelOpacity(duration: 0.7) must fire on first WPM after waiting — animated fade from dim to workingOpacity, not an instant snap (S045 smoke #5, M5.4a)")
+    }
 }

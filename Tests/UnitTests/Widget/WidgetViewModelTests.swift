@@ -140,4 +140,27 @@ final class WidgetViewModelTests: XCTestCase {
         let viewModel = WidgetViewModel(settings: settings)
         XCTAssertFalse(viewModel.isFrozen)
     }
+
+    // MARK: - 6. M5.4a combined resume state
+
+    func testWaitingResumeToCounting_isIdleAndNoMark() {
+        // Combined state after a silence pause + voice resume: hasReceivedWPM=true from earlier in the
+        // session (never reset mid-session), currentWPMVoiced=nil (cleared by enterWaiting),
+        // activityState=.counting (just resumed). Widget must show dashes (isIdle=true), not the
+        // cold-start mark (showColdStartMark=false).
+        let viewModel = WidgetViewModel(settings: settings)
+        viewModel.currentWPMVoiced = 130      // triggers hasReceivedWPM=true via Combine sink
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        XCTAssertTrue(viewModel.hasReceivedWPM, "precondition: hasReceivedWPM must be true after first WPM")
+
+        viewModel.currentWPMVoiced = nil      // simulates enterWaiting clearing the snapshot
+        viewModel.activityState = .counting   // simulates vad-active resume from .waiting
+
+        XCTAssertTrue(viewModel.isIdle,
+            "isIdle must be true on resume: activityState=.counting but WPM is nil (pre-data window)")
+        XCTAssertFalse(
+            WidgetView.showColdStartMark(activityState: viewModel.activityState, hasReceivedWPM: viewModel.hasReceivedWPM),
+            "cold-start mark must not reappear on resume from waiting — hasReceivedWPM stays true, dashes show instead (M5.4a)"
+        )
+    }
 }
