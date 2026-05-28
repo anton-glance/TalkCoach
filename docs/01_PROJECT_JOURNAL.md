@@ -70,6 +70,21 @@ Deferred to later milestones — not regressions:
 - Idle fade: whole widget fades to `opacity 0.5` over 700ms on `.waiting`; fades back to 1.0 on `.counting`.
 - These are M5.4 requirements, not M5.3 bugs.
 
+### Housekeeping — Phase 5 backlog resequenced + brand identity locked into M5
+
+The Phase 5 backlog block in `04_BACKLOG.md` was stale (pre-Session-018 row list: old M5.1=viewmodel, M5.2=WPM, M5.3=color-interp, M5.7=glass, M5.8=drag, M5.9=fade, M5.10=a11y). Rewritten to match the design-driven sequence locked across Sessions 042–044:
+- M5.1 ✅ viewmodel + unified refresh timer · M5.2 ✅ DesignTokens · M5.3 ✅ real WidgetView + fonts
+- M5.4 opacity state machine + display tweening · M5.4a WPMCalculator silence-latch · M5.5 Liquid Glass + hover + drag · M5.6 L3 pulse · M5.7 accessibility
+
+**Anton's lock (Session 044): ALL UI implementation, changes, adjustments, and the ENTIRE brand identity — including app icon and menu bar icon — happen in M5. Nothing UI-facing defers to Phase 6.** New module added:
+- **M5.8 — brand identity.** App icon (`AppIcon.appiconset` is an empty stub today → blank generic Dock/Finder icon) + menu bar icon (SF Symbol `waveform.badge.mic` placeholder in `MenuBarExtra`) + brand polish. **Open product gate:** `docs/design/` is widget-only; M5.8 needs a brand/icon design source. Anton decides icon direction before implementation. Est. 4–6h.
+
+Phase 6 (polish/ship) no longer owns any UI/brand work — only notarization, DMG, performance re-pass, edge cases. Drop-list and protected-list references updated (old M5.8 drag → M5.5; old M5.3 color-interp → M5.4 tweening; accessibility audit ref → M5.7).
+
+### Next session opens at M5.4
+
+Live branch is `main` (M5.3 pushed: GREEN 3d66fbd, journal 11675c6, tag m5.3-complete). Bootstrap → M5.4 plan prompt (opacity state machine + display tweening + caret slide). M5.4a (calculator silence-latch) follows. Brand-identity (M5.8) is the open product decision to settle when ready — needs an icon design source.
+
 
 ## Session 043 — 2026-05-27 — M5.2 COMPLETE: DesignTokens.swift port of tokens.js. Tag m5.2-complete.
 

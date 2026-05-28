@@ -121,23 +121,27 @@ Goal: the M3.7.6 gate's raw transition stream turns into the two v1 metrics: WPM
 
 ---
 
-## Phase 5 — Widget UI (the part you see)
+## Phase 5 — Widget UI + brand identity (the part you see)
 
-Goal: replace the placeholder widget with the real glanceable display per the `docs/design/` package visual spec (Session 018 — superseded the earlier `design/` package).
+Goal: replace the placeholder widget with the real glanceable display per the `docs/design/components/widget/` package (Widget.jsx authoritative on visuals; tokens.js → `DesignTokens.swift`), AND land the whole brand identity — app icon, menu bar icon, any brand polish. **Anton's lock (Session 044): ALL UI implementation, changes, adjustments, and the entire brand identity (including icons) happen in M5. Nothing UI-facing is deferred to Phase 6.**
+
+The module sequence below was resequenced around the Claude Design handoff (Sessions 042–044), superseding the pre-Session-018 row list (old M5.1=viewmodel, M5.2=WPM, M5.3=color-interp, M5.7=glass, M5.8=drag, M5.9=fade, M5.10=a11y — all rolled into the modules below).
 
 | ID | Module | Status | Estimate | Depends on |
 |---|---|---|---|---|
-| M5.1 | `WidgetViewModel`: ObservableObject wiring `Analyzer` → SwiftUI | 📋 | 2h | M4.7 |
-| M5.2 | WPM display: hero number (Inter, weight 300, tabular figures) + state row (Too slow / Ideal / Too fast + avg) + pace bar with caret | 📋 | 4h | M5.1 |
-| M5.3 | Smooth color interpolation (FM1 — anti-jitter), pace-zone tinting per design tokens (slate-blue / sage-green / warm-coral inks per `docs/design/02-brand-guidelines.html`) | 📋 | 3h | M5.2 |
-| M5.7 | Liquid Glass material styling + Reduce Transparency fallback + hover saturation shift | 📋 | 4h | M5.2 |
-| M5.8 | Drag-to-move with snap-to-screen-edge | 📋 | 3h | M2.5 |
-| M5.9 | Fade in/out animations on session start/end + hover state | 📋 | 2h | M2.5 |
-| M5.10 | Accessibility: Reduce Motion clamp, Increase Contrast adjustments, VoiceOver combined label | 📋 | 2h | M5.2 |
+| M5.1 | `WidgetViewModel` + unified 1s widget-refresh timer in FPC (snapshots `currentWPMVoiced` + `streakSeconds` + `monologueLevel` together each tick; `wpmRefreshInterval` configurable). Three live-synced threshold fields (`monoL1/L2/L3Seconds`) + `monoPauseSeconds`. `isIdle` computed. | ✅ COMPLETE (Session 042, tag `m5.1-complete`, commit 28cb6e1). Bug1 (first-value latency) + Bug2 (stale WPM on `.waiting`) found+fixed in smoke. Post-resume WPM gap confirmed as WPMCalculator structural floor, not a widget bug. | done | M4.2 |
+| M5.2 | `DesignTokens.swift` — Swift port of `tokens.js`. enum-namespace, nested Layout/Pace/ColorStops/MonoStops/Tint/Border. `paceColors(wpm:)` / `monoColors(seconds:level1/2/3Seconds:)` (thresholds are PARAMETERS, Settings-driven). SIMD3 float-safe internals. Regression-anchor comment binds to tokens.js. | ✅ COMPLETE (Session 043, tag `m5.2-complete`). 41 tests. | done | M5.1 |
+| M5.3 | Real `WidgetView` replacing `PlaceholderWidgetView`. Two-zone tile per Widget.jsx: pace half (WPM + state label + down-caret), shared 2px bar, monologue half (M:SS + label + up-caret), two-zone vertical gradient (0/32/68/100 stops). Live threshold consumption → mono color stage. Inter Display Light/Medium/SemiBold bundled (`Resources/Fonts/`, committed, `ATSApplicationFontsPath=Fonts`). | ✅ COMPLETE (Session 044, tag `m5.3-complete`, commit 3d66fbd). Tint/padding follow Widget.jsx over stale tokens. Bold-flip dropped (semibold always — no bundled Bold). Defensive zero/neg guards. Font bundling saga resolved (see journal S044). | done | M5.2 |
+| M5.4 | Opacity state machine ("full opacity ⇔ real WPM number"; dim 50% on warming/counting-floor/waiting/resume; fade to 100% on first nil→non-nil WPM; hold last WPM dimmed during fade-down; NEVER show `---` mid-session) + display tweening (~250–300ms ease) on WPM number, pace caret, mono clock+caret + caret slide (port Widget.jsx 600ms). Masks the naked snap/`---` behaviors from M5.3. | 📋 | 4h | M5.3 |
+| M5.4a | `WPMCalculator` STOPS publishing when 2s silence-hold fires (fixes declining-WPM-during-silence bug — visible in S044 smoke as `wpm-refresh A_median=-1` on VAD-stop). Algorithm change; M4.1-saga safety work required. Live multi-session smoke before tag. | 📋 | 2–3h | M5.4 |
+| M5.5 | Liquid Glass material + Reduce Transparency fallback + hover (scale/lift only, NO color change). Drag-to-move folded in (exists from M2.5). | 📋 | 4h | M5.3 |
+| M5.6 | L3 pulse (bottom cluster only; one gentle pulse, Dock-bounce register; Reduce Motion snaps it off). May revisit bundling InterDisplay-Bold if the L2 emphasis needs real bold. | 📋 | 2h | M5.4 |
+| M5.7 | Accessibility: Reduce Motion clamp, Increase Contrast adjustments, VoiceOver combined label. | 📋 | 2h | M5.4 |
+| M5.8 | **Brand identity (Session 044 lock).** App icon (`AppIcon.appiconset` is currently an EMPTY stub — blank generic Dock/Finder icon today) + menu bar icon (currently SF Symbol `waveform.badge.mic` placeholder in `MenuBarExtra`) + any brand polish (accent color, About-panel branding). Needs a brand/icon design source — `docs/design/` is widget-only today; this module either consumes a new brand handoff or commissions the icon set. **Product gate: Anton decides icon direction before implementation.** | 📋 | 4–6h | M5.3 |
 
-**Phase 5 total: ~20h** (was ~23h before Session 018; M5.5 `Filler bars` ~3h deferred to v2.0).
+**Phase 5 total: ~24–28h remaining after M5.1–M5.3** (brand identity added per Session 044; M5.5 `Filler bars` ~3h already deferred to v2.0).
 
-**End-of-phase checkpoint:** Real-world test in a 30-min Zoom call. Widget is glanceable, doesn't pull attention when nothing changes, smoothly indicates pace shifts. Self-test against FM1 ("destructive UI") criteria and the `docs/design/01-design-spec.md` testing checklist.
+**End-of-phase checkpoint:** Real-world test in a 30-min Zoom call. Widget is glanceable, doesn't pull attention when nothing changes, smoothly indicates pace shifts, renders Inter Display, app + menu bar icons are the real brand. Self-test against FM1 ("destructive UI") criteria.
 
 ---
 
@@ -203,14 +207,14 @@ Multiplier for "macOS new to user" learning curve: ~1.3–1.5×. Realistic calen
 In order of "drop first":
 
 1. M3.8 (mid-session language swap) — accept the "first session per app per language is wrong, then sticky" UX
-2. M5.8 (drag-to-move) — pin to top-right corner
+2. M5.5 drag-to-move portion — pin to top-right corner (the Liquid Glass + hover core stays)
 3. M2.6 (per-display position memory)
 4. M6.1 (manual language override in menu bar)
-5. M6.3 (accessibility audit) — defer to v1.1
+5. M5.7 (accessibility) — defer to v1.1
 
 What does NOT get dropped:
 - M3.6 (model download with confirmation) — directly serves FM3 (minimal setup)
-- M5.3 (smooth color interpolation) — directly serves FM1 (destructive UI)
+- M5.4 (display tweening / anti-snap) — directly serves FM1 (destructive UI)
 - M4.1's VAD-aware WPM math — directly serves FM2 (unreliable data)
 - Anything in M6.5, M6.6 (final perf + setup verification)
 
