@@ -1,5 +1,43 @@
 # Project Journal — Locto
 
+## Session 043 — 2026-05-27 — M5.2 COMPLETE: DesignTokens.swift port of tokens.js. Tag m5.2-complete.
+
+**Format:** Architect + product-owner + agent. Pure-value module. Plan-approved, red-green TDD, lint cleanup, tagged.
+
+### M5.2 — CLOSED ✅ (tag m5.2-complete)
+
+`Sources/Widget/DesignTokens.swift` — Swift port of `docs/design/components/widget/tokens.js`. Enum-as-namespace pattern (`enum DesignTokens` with no cases, nested `Layout`, `Pace`, `PaceZone`, `ColorStops`, `MonoStops`, `Tint`, `Border`). Math helpers `ease` / `clamp01` / `mix` / `rgba`. Color functions `paceColors(wpm:)` and `monoColors(seconds:level1Seconds:level2Seconds:level3Seconds:)` delegate through internal `paceRGB` / `monoRGB` returning `SIMD3<Double>` for float-equality-safe testing.
+
+Locked product decisions baked in:
+- `monoColors` thresholds are PARAMETERS (Settings-driven L1/L2/L3), NOT hardcoded 60/90/120 from tokens.js. The JS file's stage boundaries are SUPERSEDED.
+- Strict `<` at every monologue boundary, matching JS exactly: `seconds == level3Seconds` returns pure coralBase (final else branch); `seconds == level1Seconds` enters second branch with `t=0` (mathematically pure green via mix). Documented in code comment.
+- Pace constants (`wpmIdeal=140`, `wpmMin=80`, `wpmMax=240`, `slowThreshold=115`, `fastThreshold=175`) ported as-is — pace zones not user-configurable in v1.
+- `tokens.js` Shadow constants SKIPPED (CSS strings, not representable in SwiftUI; `Widget.jsx` doesn't consume `TV2.Shadow` anyway).
+
+`Widget.jsx` divergence noted but NOT reconciled here (M5.3's call): the JSX hardcodes `tintAlpha=0.78` and `borderAlpha=0.45`, overriding `tokens.js`'s `Tint.restingAlpha=0.55` / `hoverAlpha=0.72` and `Border.restingWhiteOpacity=0.55` / `hoverWhiteOpacity=0.78`. The Swift port follows `tokens.js` (authoritative spec).
+
+### Tests
+41 new tests in `DesignTokensTests.swift` (Swift Testing). Layout / Pace / Tint / Border / ColorStops / MonoStops constants; math helpers (`clamp01`, `ease`, `mix`); `zoneForWPM` at all 7 boundaries; `zoneLabel` sentence case; `spectrumPosition` at 0/0.5/1; `paceRGB` at 5 WPM boundaries; `monoRGB` at 9 cases (boundary, custom thresholds, negative-second clamp); `paceColors`/`monoColors` smoke tests. All SIMD3 comparisons use `approxEqual` with `1e-9` tolerance to avoid IEEE float fragility. Direct `==` only on Int/CGFloat literal constants where no arithmetic is involved.
+
+Regression-anchor comment at the top of `DesignTokensTests.swift` documents the binding to `tokens.js`: if either file changes, the other must follow.
+
+### Lint cleanup
+`swiftlint --strict` found 28 violations across the project. 14 were M5.2's (parameter names `l1/l2/l3` too short, SIMD3 literal comma spacing); 14 were pre-existing (vm names in `WidgetViewModelTests`, double blank line in `SettingsStoreTests`, function body length in `FloatingPanelControllerTests` line 1150, init body length in `SettingsStore` line 181). Fixed in two separate commits:
+
+- **Commit `c8a857c`**: M5.2 lint — `l1/l2/l3` → `level1Seconds/level2Seconds/level3Seconds` (matches `SettingsStore.monologueLevel1Minutes` style), SIMD3 comma spacing fixed.
+- **Commit `b8d9c52`**: pre-existing lint — `vm` → `viewModel` (11 sites in `WidgetViewModelTests`), double blank line removed, FPC test extracted via `ResumeFPCComponents` struct + `makeResumeFPCComponents(clock:)` factory, `SettingsStore.init` extracted via `NumericSettings` struct + `loadNumericSettings(from:)` static helper.
+
+Post-cleanup: `swiftlint --strict` clean (0 violations across 92 files). 465 tests pass, 0 fail, 1 skip.
+
+### Process gap logged
+`swiftlint --strict` was NOT run before the `m5.1-complete` tag despite the M4.1 carryover noting Anton runs it manually before each tag. 12 violations from M5.1 (vm identifier names + FPC test body length) slipped through and were caught at M5.2 close. Going forward, `swiftlint --strict` is a MANDATORY pre-tag verification step. The architect's tag prompt must explicitly require Anton to run it and paste the output before the tag commit.
+
+### Carryover to M5.3
+- M5.3 (real widget view) consumes `DesignTokens` directly: `paceColors`, `monoColors`, `spectrumPosition`, `zoneForWPM`, `zoneLabel`, plus the layout constants for tile size / padding / bar / caret geometry.
+- M5.3 reconciles the `Widget.jsx` divergence on `tintAlpha` (0.78 vs `tokens.js` 0.55) — pick one with justification, document in the view.
+- M5.3 reads the live monologue thresholds (`viewModel.monoL1Seconds`, `monoL2Seconds`, `monoL3Seconds`) and passes them as parameters to `monoColors`. The threshold flow from Settings → ViewModel → View is fully wired by M5.1; M5.3 is the first consumer that actually uses them.
+
+
 > Append-only log of every working session. Never edit past entries destructively. New entries go at the **top**.
 
 ## Session 042 — 2026-05-27 — M5.1 COMPLETE: unified 1s widget-refresh timer + first-value subscription + streakSeconds field. Tag m5.1-complete.
