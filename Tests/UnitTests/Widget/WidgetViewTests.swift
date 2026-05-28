@@ -130,6 +130,16 @@ import XCTest
 
     // MARK: - M5.4 cold-start predicate
 
+    func testColdStartPredicateTrueWhenIdle() {
+        // .idle covers the backing store while the panel is hidden between sessions, so the
+        // very first visible frame is the cold-start mark and never a dashes frame.
+        XCTAssertTrue(WidgetView.showColdStartMark(activityState: .idle, hasReceivedWPM: false))
+    }
+
+    func testColdStartPredicateFalseWhenIdleWithWPM() {
+        XCTAssertFalse(WidgetView.showColdStartMark(activityState: .idle, hasReceivedWPM: true))
+    }
+
     func testColdStartPredicateTrueWhenCountingWithoutWPM() {
         XCTAssertTrue(WidgetView.showColdStartMark(activityState: .counting, hasReceivedWPM: false))
     }

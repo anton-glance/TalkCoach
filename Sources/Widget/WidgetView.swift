@@ -38,13 +38,16 @@ struct WidgetView: View {
     }
 
     /// True when the cold-start mark (pulsing Locto ring) should replace the live numbers.
-    /// Covers both .warming (engine loading, ~10s) and .counting-before-first-WPM so the mark
-    /// appears immediately at session start and stays until real data arrives.
+    /// Covers .idle (panel pre-show / between sessions), .warming (engine loading, ~10s), and
+    /// .counting-before-first-WPM so the mark appears immediately at session start and stays
+    /// until real data arrives. Including .idle ensures the backing store never holds a dashes
+    /// frame: SwiftUI renders the mark into the offscreen backing store while the panel is hidden,
+    /// so the very first visible frame is already the mark — never dashes.
     static func showColdStartMark(
         activityState: WidgetActivityState,
         hasReceivedWPM: Bool
     ) -> Bool {
-        (activityState == .warming || activityState == .counting) && !hasReceivedWPM
+        (activityState == .idle || activityState == .warming || activityState == .counting) && !hasReceivedWPM
     }
 
     // L2 boundary is inclusive on the urgent side: streakSeconds < l2Seconds → MONOLOGUE;
@@ -72,7 +75,6 @@ struct WidgetView: View {
         return ("\(minutes)", String(format: "%02d", remainingSeconds))
     }
 
-    // swiftlint:disable:next function_body_length
     var body: some View {
         let wpm = viewModel.currentWPMVoiced ?? DesignTokens.Pace.wpmIdeal
         let streak = viewModel.streakSeconds
@@ -115,6 +117,10 @@ struct WidgetView: View {
             if showColdStart {
                 ColdStartMarkView(reducedMotion: reducedMotion)
                     .id(viewModel.sessionStartedAt)
+                    // Fill the full tile so ZStack bounding box is always 144×144 in both
+                    // branches — ensures topTrailing pins the X button to the tile corner, not
+                    // the mark's 56×56 corner, during cold-start.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.asymmetric(
                         insertion: .opacity.animation(.easeIn(duration: WidgetView.effectiveDuration(0.4, reducedMotion: reducedMotion))),
                         removal: .opacity.animation(.easeOut(duration: WidgetView.effectiveDuration(0.3, reducedMotion: reducedMotion)))
@@ -139,7 +145,7 @@ struct WidgetView: View {
                 ))
             }
 
-            // Close button — M5.7 replaces with hover-only affordance.
+            // Close button — M5.5 replaces with hover-only affordance.
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
