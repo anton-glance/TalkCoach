@@ -127,4 +127,56 @@ import XCTest
     func testCaretFractionWithNegativeL3ReturnsZero() {
         XCTAssertEqual(WidgetView.monoCaretFraction(streakSeconds: 100, l3Seconds: -10), 0.0, accuracy: 1e-9)
     }
+
+    // MARK: - M5.4 cold-start predicate
+
+    func testColdStartPredicateTrueWhenCountingWithoutWPM() {
+        XCTAssertTrue(WidgetView.showColdStartMark(activityState: .counting, hasReceivedWPM: false))
+    }
+
+    func testColdStartPredicateFalseWhenCountingWithWPM() {
+        XCTAssertFalse(WidgetView.showColdStartMark(activityState: .counting, hasReceivedWPM: true))
+    }
+
+    func testColdStartPredicateFalseWhenWaiting() {
+        XCTAssertFalse(WidgetView.showColdStartMark(activityState: .waiting, hasReceivedWPM: false))
+    }
+
+    // MARK: - M5.4 effectiveDuration helper
+
+    func testEffectiveDurationReducedMotionReturnsZero() {
+        XCTAssertEqual(WidgetView.effectiveDuration(0.4, reducedMotion: true), 0.0, accuracy: 1e-9)
+    }
+
+    func testEffectiveDurationNormalReturnsSpec() {
+        XCTAssertEqual(WidgetView.effectiveDuration(0.4, reducedMotion: false), 0.4, accuracy: 1e-9)
+    }
+
+    // MARK: - M5.4 construction smoke
+
+    func testConstructsInColdStartState() {
+        let viewModel = WidgetViewModel()
+        viewModel.activityState = .counting
+        viewModel.currentWPMVoiced = nil
+        viewModel.hasReceivedWPM = false
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
+        _ = view.body
+    }
+
+    func testConstructsInWrappingFrozenState() {
+        let viewModel = WidgetViewModel()
+        viewModel.activityState = .wrapping
+        viewModel.currentWPMVoiced = 145
+        viewModel.isFrozen = true
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
+        _ = view.body
+    }
+
+    func testConstructsInWaitingState() {
+        let viewModel = WidgetViewModel()
+        viewModel.activityState = .waiting
+        viewModel.currentWPMVoiced = nil
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
+        _ = view.body
+    }
 }

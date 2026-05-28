@@ -102,4 +102,42 @@ final class WidgetViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.monoL3Seconds, 240.0, accuracy: 0.001,
             "monoL3Seconds must update when settings.monologueLevel3Minutes changes")
     }
+
+    // MARK: - 4. hasReceivedWPM flag
+
+    func testHasReceivedWPMDefaultsFalse() {
+        let viewModel = WidgetViewModel(settings: settings)
+        XCTAssertFalse(viewModel.hasReceivedWPM)
+    }
+
+    func testHasReceivedWPMSetOnFirstNonNilWPM() {
+        let viewModel = WidgetViewModel(settings: settings)
+        viewModel.currentWPMVoiced = 130
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        XCTAssertTrue(viewModel.hasReceivedWPM)
+    }
+
+    func testHasReceivedWPMStaysTrueAfterNilWPM() {
+        let viewModel = WidgetViewModel(settings: settings)
+        viewModel.currentWPMVoiced = 130
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        viewModel.currentWPMVoiced = nil
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        XCTAssertTrue(viewModel.hasReceivedWPM)
+    }
+
+    func testHasReceivedWPMResetToFalse() {
+        let viewModel = WidgetViewModel(settings: settings)
+        viewModel.currentWPMVoiced = 130
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        viewModel.hasReceivedWPM = false
+        XCTAssertFalse(viewModel.hasReceivedWPM)
+    }
+
+    // MARK: - 5. isFrozen flag
+
+    func testIsFrozenDefaultsFalse() {
+        let viewModel = WidgetViewModel(settings: settings)
+        XCTAssertFalse(viewModel.isFrozen)
+    }
 }
