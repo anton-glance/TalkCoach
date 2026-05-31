@@ -283,7 +283,7 @@ final class SettingsStore: ObservableObject {
             monologueLevel3Minutes: field(Keys.monologueLevel3Minutes, fallback: 2.5, lower: 0.25, upper: 30.0),
             monologuePauseThreshold: field(Keys.monologuePauseThreshold, fallback: 2.5, lower: 0.5, upper: 10.0),
             waitingOpacity: field(Keys.waitingOpacity, fallback: 0.5, lower: 0.1, upper: 1.0),
-            workingOpacity: field(Keys.workingOpacity, fallback: 0.90, lower: 0.1, upper: 1.0),
+            workingOpacity: field(Keys.workingOpacity, fallback: 1.00, lower: 0.1, upper: 1.0),
             lingerFullSeconds: field(Keys.lingerFullSeconds, fallback: 3.0, lower: 1.0, upper: 10.0),
             lingerFadeSeconds: field(Keys.lingerFadeSeconds, fallback: 2.0, lower: 0.5, upper: 5.0),
             recoveryGraceSeconds: field(Keys.recoveryGraceSeconds, fallback: 2.0, lower: 0.5, upper: 5.0)
@@ -373,7 +373,7 @@ private extension SettingsStore {
 
         let newWaitingOpacity = max(0.1, min(1.0, userDefaults.object(forKey: Keys.waitingOpacity) as? Double ?? 0.5))
         if newWaitingOpacity != waitingOpacity { waitingOpacity = newWaitingOpacity }
-        let newWorkingOpacity = max(0.1, min(1.0, userDefaults.object(forKey: Keys.workingOpacity) as? Double ?? 0.90))
+        let newWorkingOpacity = max(0.1, min(1.0, userDefaults.object(forKey: Keys.workingOpacity) as? Double ?? 1.00))
         if newWorkingOpacity != workingOpacity { workingOpacity = newWorkingOpacity }
         let newLingerFull = max(1.0, min(10.0, userDefaults.object(forKey: Keys.lingerFullSeconds) as? Double ?? 3.0))
         if newLingerFull != lingerFullSeconds { lingerFullSeconds = newLingerFull }

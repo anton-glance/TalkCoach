@@ -10,9 +10,9 @@ import XCTest
         return (SettingsStore(userDefaults: defaults), defaults)
     }
 
-    func testWorkingOpacityDefaultIs0_90() {
+    func testWorkingOpacityDefaultIsOne() {
         let (store, _) = makeStore()
-        XCTAssertEqual(store.workingOpacity, 0.90, accuracy: 0.001)
+        XCTAssertEqual(store.workingOpacity, 1.00, accuracy: 0.001)
     }
 
     func testWorkingOpacityClampsBelowMin() {

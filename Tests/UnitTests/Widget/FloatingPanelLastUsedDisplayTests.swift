@@ -127,9 +127,10 @@ final class FloatingPanelLastUsedDisplayTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
+        // Panel is 160×160; panel origin = visual origin - 8pt hoverMargin.
         let expectedOrigin = CGPoint(
-            x: Self.external.frame.origin.x + 50,
-            y: Self.external.frame.origin.y + 50
+            x: Self.external.frame.origin.x + 50 - 8,
+            y: Self.external.frame.origin.y + 50 - 8
         )
         XCTAssertEqual(sut.currentPanelFrame?.origin, expectedOrigin)
     }
@@ -143,8 +144,9 @@ final class FloatingPanelLastUsedDisplayTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
-        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
+        // Panel origin = (visual origin) - 8pt hoverMargin on each axis.
+        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16 - 8
+        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16 - 8
         XCTAssertEqual(sut.currentPanelFrame?.origin, CGPoint(x: expectedX, y: expectedY))
     }
 
@@ -156,8 +158,9 @@ final class FloatingPanelLastUsedDisplayTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
-        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
+        // Panel origin = (visual origin) - 8pt hoverMargin on each axis.
+        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16 - 8
+        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16 - 8
         XCTAssertEqual(sut.currentPanelFrame?.origin, CGPoint(x: expectedX, y: expectedY))
     }
 
@@ -192,8 +195,9 @@ final class FloatingPanelLastUsedDisplayTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        let expectedX = Self.external.visibleFrame.maxX - 144 - 16
-        let expectedY = Self.external.visibleFrame.maxY - 144 - 16
+        // Panel origin = (visual origin) - 8pt hoverMargin on each axis.
+        let expectedX = Self.external.visibleFrame.maxX - 144 - 16 - 8
+        let expectedY = Self.external.visibleFrame.maxY - 144 - 16 - 8
         XCTAssertEqual(sut.currentPanelFrame?.origin, CGPoint(x: expectedX, y: expectedY))
     }
 
@@ -208,8 +212,9 @@ final class FloatingPanelLastUsedDisplayTests: XCTestCase {
         await Task.yield()
 
         let frame = sut.currentPanelFrame!
-        let clampedX = Self.external.visibleFrame.maxX - 144
-        let clampedY = Self.external.visibleFrame.maxY - 144
+        // Clamped visual origin = (maxX - 144, maxY - 144); panel origin = visual - 8.
+        let clampedX = Self.external.visibleFrame.maxX - 144 - 8
+        let clampedY = Self.external.visibleFrame.maxY - 144 - 8
         XCTAssertEqual(frame.origin.x, clampedX, accuracy: 0.01)
         XCTAssertEqual(frame.origin.y, clampedY, accuracy: 0.01)
     }

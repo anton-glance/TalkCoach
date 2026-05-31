@@ -135,9 +135,10 @@ final class FloatingPanelPositionTests: XCTestCase {
 
         XCTAssertEqual(sut.panelState, .visible)
         XCTAssertTrue(sut.isShowingPanel)
+        // Panel is 160×160 (144 + 8pt margin each side); panel origin = visual origin - 8.
         let expectedOrigin = CGPoint(
-            x: Self.builtIn.frame.origin.x + 50,
-            y: Self.builtIn.frame.origin.y + 50
+            x: Self.builtIn.frame.origin.x + 50 - 8,
+            y: Self.builtIn.frame.origin.y + 50 - 8
         )
         XCTAssertEqual(sut.currentPanelFrame?.origin, expectedOrigin)
     }
@@ -151,8 +152,9 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
-        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
+        // Panel origin = (visual origin) - 8pt hoverMargin on each axis.
+        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16 - 8
+        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16 - 8
         XCTAssertEqual(sut.currentPanelFrame?.origin, CGPoint(x: expectedX, y: expectedY))
     }
 
@@ -164,8 +166,9 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
-        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
+        // Panel origin = (visual origin) - 8pt hoverMargin on each axis.
+        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16 - 8
+        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16 - 8
         XCTAssertEqual(sut.currentPanelFrame?.origin, CGPoint(x: expectedX, y: expectedY))
     }
 
@@ -177,15 +180,13 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.start()
         await activateMic()
 
-        let draggedFrame = NSRect(x: 200, y: 300, width: 144, height: 144)
-        sut.handlePanelDragEnd(panelFrame: draggedFrame)
+        // Panel is 160×160; for visual widget at (200, 300) the panel origin is (192, 292).
+        // handlePanelDragEnd strips hoverMargin to recover (200, 300) and saves that as the relative position.
+        let draggedPanelFrame = NSRect(x: 192, y: 292, width: 160, height: 160)
+        sut.handlePanelDragEnd(panelFrame: draggedPanelFrame)
 
         let saved = settingsStore.position(for: "Built-in Display")
-        let expectedRelative = CGPoint(
-            x: draggedFrame.origin.x - Self.builtIn.frame.origin.x,
-            y: draggedFrame.origin.y - Self.builtIn.frame.origin.y
-        )
-        XCTAssertEqual(saved, expectedRelative)
+        XCTAssertEqual(saved, CGPoint(x: 200, y: 300))
     }
 
     func testSaveFiresOncePerDrag() async {
@@ -194,15 +195,12 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.start()
         await activateMic()
 
-        sut.handlePanelDragEnd(panelFrame: NSRect(x: 100, y: 100, width: 144, height: 144))
-        sut.handlePanelDragEnd(panelFrame: NSRect(x: 200, y: 300, width: 144, height: 144))
+        // Panel is 160×160; visual widget at (100,100) → panel (92,92); visual at (200,300) → panel (192,292).
+        sut.handlePanelDragEnd(panelFrame: NSRect(x: 92, y: 92, width: 160, height: 160))
+        sut.handlePanelDragEnd(panelFrame: NSRect(x: 192, y: 292, width: 160, height: 160))
 
         let saved = settingsStore.position(for: "Built-in Display")
-        let expectedRelative = CGPoint(
-            x: 200 - Self.builtIn.frame.origin.x,
-            y: 300 - Self.builtIn.frame.origin.y
-        )
-        XCTAssertEqual(saved, expectedRelative, "Final drag position must overwrite earlier ones")
+        XCTAssertEqual(saved, CGPoint(x: 200, y: 300), "Final drag position must overwrite earlier ones")
     }
 
     // MARK: - Cross-screen drag
@@ -213,15 +211,14 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.start()
         await activateMic()
 
-        let draggedFrame = NSRect(x: 1500, y: 500, width: 144, height: 144)
-        sut.handlePanelDragEnd(panelFrame: draggedFrame)
+        // Visual widget at (1500, 500) on External Monitor → panel origin (1492, 492).
+        let draggedPanelFrame = NSRect(x: 1492, y: 492, width: 160, height: 160)
+        sut.handlePanelDragEnd(panelFrame: draggedPanelFrame)
 
         let saved = settingsStore.position(for: "External Monitor")
-        let expectedRelative = CGPoint(
-            x: 1500 - Self.external.frame.origin.x,
-            y: 500 - Self.external.frame.origin.y
-        )
-        XCTAssertEqual(saved, expectedRelative)
+        // Saved position is visual widget origin relative to destination screen origin (1440, 0).
+        XCTAssertEqual(saved, CGPoint(x: 1500 - Self.external.frame.origin.x,
+                                     y: 500 - Self.external.frame.origin.y))
         XCTAssertNil(
             settingsStore.position(for: "Built-in Display"),
             "Must NOT save for the source screen"
@@ -240,8 +237,9 @@ final class FloatingPanelPositionTests: XCTestCase {
         await Task.yield()
 
         let frame = sut.currentPanelFrame!
-        let clampedX = Self.builtIn.visibleFrame.maxX - 144
-        let clampedY = Self.builtIn.visibleFrame.maxY - 144
+        // Clamped visual origin = (maxX - 144, maxY - 144); panel origin = visual - 8.
+        let clampedX = Self.builtIn.visibleFrame.maxX - 144 - 8
+        let clampedY = Self.builtIn.visibleFrame.maxY - 144 - 8
         XCTAssertEqual(frame.origin.x, clampedX, accuracy: 0.01)
         XCTAssertEqual(frame.origin.y, clampedY, accuracy: 0.01)
     }
@@ -268,8 +266,9 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
-        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
+        // Panel origin = (visual origin) - 8pt hoverMargin on each axis.
+        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16 - 8
+        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16 - 8
         XCTAssertEqual(sut.currentPanelFrame?.origin, CGPoint(x: expectedX, y: expectedY))
     }
 
@@ -298,8 +297,9 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16
-        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16
+        // Panel origin = (visual origin) - 8pt hoverMargin on each axis.
+        let expectedX = Self.builtIn.visibleFrame.maxX - 144 - 16 - 8
+        let expectedY = Self.builtIn.visibleFrame.maxY - 144 - 16 - 8
         XCTAssertEqual(sut.currentPanelFrame?.origin, CGPoint(x: expectedX, y: expectedY))
     }
 
@@ -311,7 +311,7 @@ final class FloatingPanelPositionTests: XCTestCase {
         coordinator.start()
         await activateMic()
 
-        sut.handlePanelDragEnd(panelFrame: NSRect(x: 100, y: 100, width: 144, height: 144))
+        sut.handlePanelDragEnd(panelFrame: NSRect(x: 92, y: 92, width: 160, height: 160))
 
         weak var weakController = sut
         sut.stop()

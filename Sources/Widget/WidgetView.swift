@@ -121,8 +121,9 @@ struct WidgetView: View {
             // hover. Reduce Motion does NOT gate the reveal — only scale/lift are suppressed.
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 1, x: 0, y: 1)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }

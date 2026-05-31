@@ -415,6 +415,11 @@ final class FloatingPanelController {
     // MARK: - Panel Management
 
     private static let panelSize: CGFloat = 144
+    // Extra transparent margin so the 1.02-scale hover animation has room to grow without
+    // clipping at the hosting-view edge. The visual widget stays 144×144 at rest; the panel
+    // window is 160×160 with 8pt transparent padding on every side.
+    private static let hoverMargin: CGFloat = 8
+    private static let panelSizeWithMargin: CGFloat = panelSize + 2 * hoverMargin
     private static let defaultInset: CGFloat = 16
 
     private func showPanel() {
@@ -441,7 +446,7 @@ final class FloatingPanelController {
         let frame = frameForShow()
         let coachingPanel = CoachingPanel(contentRect: frame)
         let trackingView = TrackingContentView()
-        trackingView.frame = NSRect(x: 0, y: 0, width: Self.panelSize, height: Self.panelSize)
+        trackingView.frame = NSRect(x: 0, y: 0, width: Self.panelSizeWithMargin, height: Self.panelSizeWithMargin)
         trackingView.onHoverEntered = { [weak self] in self?.handleHoverEntered() }
         trackingView.onHoverExited = { [weak self] in self?.handleHoverExited() }
         let hostingView = NSHostingView(
@@ -449,7 +454,7 @@ final class FloatingPanelController {
                 self?.requestDismiss()
             }
         )
-        hostingView.frame = NSRect(x: 0, y: 0, width: Self.panelSize, height: Self.panelSize)
+        hostingView.frame = NSRect(x: 0, y: 0, width: Self.panelSizeWithMargin, height: Self.panelSizeWithMargin)
         trackingView.addSubview(hostingView)
         coachingPanel.contentView = trackingView
         moveObserver = NotificationCenter.default.addObserver(
@@ -496,7 +501,10 @@ final class FloatingPanelController {
             } else {
                 Logger.floatingPanel.info("Restored saved position for \(screenName)")
             }
-            return NSRect(origin: clamped, size: CGSize(width: Self.panelSize, height: Self.panelSize))
+            // Panel origin is inset by hoverMargin so the visual 144×144 widget is centred within
+            // the 160×160 panel frame — the saved position records the visual widget origin.
+            let panelOrigin = CGPoint(x: clamped.x - Self.hoverMargin, y: clamped.y - Self.hoverMargin)
+            return NSRect(origin: panelOrigin, size: CGSize(width: Self.panelSizeWithMargin, height: Self.panelSizeWithMargin))
         }
 
         Logger.floatingPanel.info("Using default position for \(screenName)")
@@ -504,13 +512,20 @@ final class FloatingPanelController {
     }
 
     func handlePanelDragEnd(panelFrame: NSRect) {
+        // panelFrame is the 160×160 window frame; strip hoverMargin to recover the visual 144×144 rect.
+        let visualFrame = NSRect(
+            x: panelFrame.origin.x + Self.hoverMargin,
+            y: panelFrame.origin.y + Self.hoverMargin,
+            width: Self.panelSize,
+            height: Self.panelSize
+        )
         let allScreens = screenProvider.allScreens()
-        guard let destScreen = Self.screenWithMostOverlap(for: panelFrame, in: allScreens)
+        guard let destScreen = Self.screenWithMostOverlap(for: visualFrame, in: allScreens)
                 ?? screenProvider.mainScreen() else { return }
 
         let relative = CGPoint(
-            x: panelFrame.origin.x - destScreen.frame.origin.x,
-            y: panelFrame.origin.y - destScreen.frame.origin.y
+            x: visualFrame.origin.x - destScreen.frame.origin.x,
+            y: visualFrame.origin.y - destScreen.frame.origin.y
         )
         settingsStore.setPosition(relative, for: destScreen.localizedName)
         settingsStore.setLastUsedDisplay(destScreen.localizedName)
@@ -520,16 +535,18 @@ final class FloatingPanelController {
     }
 
     private static func defaultFrame(for screen: ScreenDescription) -> NSRect {
-        let x = screen.visibleFrame.maxX - panelSize - defaultInset
-        let y = screen.visibleFrame.maxY - panelSize - defaultInset
-        return NSRect(x: x, y: y, width: panelSize, height: panelSize)
+        // Subtract hoverMargin so the visible 144×144 widget sits defaultInset from the screen edge
+        // while the 160×160 panel window extends 8pt further in each direction.
+        let x = screen.visibleFrame.maxX - panelSize - defaultInset - hoverMargin
+        let y = screen.visibleFrame.maxY - panelSize - defaultInset - hoverMargin
+        return NSRect(x: x, y: y, width: panelSizeWithMargin, height: panelSizeWithMargin)
     }
 
     private static func fallbackFrame() -> NSRect {
         let fallback = NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let x = fallback.maxX - panelSize - defaultInset
-        let y = fallback.maxY - panelSize - defaultInset
-        return NSRect(x: x, y: y, width: panelSize, height: panelSize)
+        let x = fallback.maxX - panelSize - defaultInset - hoverMargin
+        let y = fallback.maxY - panelSize - defaultInset - hoverMargin
+        return NSRect(x: x, y: y, width: panelSizeWithMargin, height: panelSizeWithMargin)
     }
 
     private static func clamp(_ origin: CGPoint, within visibleFrame: NSRect) -> CGPoint {

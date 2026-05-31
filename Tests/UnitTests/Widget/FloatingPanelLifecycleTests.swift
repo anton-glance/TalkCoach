@@ -734,9 +734,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         await showPanel()  // warming → engine-ready → counting
 
         XCTAssertEqual(sut.viewModel.activityState, .counting)
-        // M5.4: counting now uses workingOpacity (default 0.90), not 1.0.
-        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.9, accuracy: 0.01,
-                       "Panel opacity must equal workingOpacity (0.9 default) when activityState is .counting")
+        // M5.5 smoke: workingOpacity default changed from 0.90 → 1.00.
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.01,
+                       "Panel opacity must equal workingOpacity (1.0 default) when activityState is .counting")
     }
 
     func testPanelOpacity_AtWarming_Is100() async {
