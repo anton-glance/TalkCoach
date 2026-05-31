@@ -1,5 +1,49 @@
 # Project Journal — Locto
 
+## Session 047 — 2026-05-31 — M5.5 COMPLETE: Liquid Glass + hover + accessibility fallbacks. Tag m5.5-complete.
+
+**Format:** Architect + product-owner + agent. Largest visual module remaining in Phase 5. Plan-approved with three corrections; smoke surfaced three real bugs; one file split for line-count debt; tagged.
+
+### M5.5 — CLOSED ✅ (tag m5.5-complete, commit f092296)
+
+**Three product decisions locked (S047):**
+- Hover lift: subtle 1.02 scale + 1pt y-lift, 200ms easeOut. No color change.
+- X close button reveal: ALWAYS on hover, in every activity state (idle/cold-start/warming/counting/waiting/wrapping).
+- Reduce Transparency fallback: hairline border + subtle INNER shadow (NOT drop shadow). Keeps structural feel of the glass tile without translucency.
+
+**Implementation parts:**
+
+- **Liquid Glass material** — `.glassEffect(.regular, in: RoundedRectangle)`. macOS 26 deployment target makes the API unconditionally available; no `#available` gating. Two-zone tinted gradient lives INSIDE the ZStack (above glass, below content) so the color signal persists through the lensing. `glassTintAlpha = 0.60` (glass mode, lower so lensing shows through), `solidTintAlpha = 0.78` (fallback, preserved from pre-glass). Selected via `effectiveTintAlpha(reduceTransparency:)` pure function.
+- **Hover state plumbing** — `@State isHovered: Bool`, `.onHover { isHovered = $0 }` at the outermost view. Three nonisolated static helpers (`hoverScale`, `hoverYOffset`, `xButtonOpacity`); the first two are gated on `reducedMotion`, the third is NOT (X reveal is the affordance; only kinetics are gated by Reduce Motion).
+- **Reduce Transparency fallback** — `reduceTransparencyProvider: () -> Bool` (sibling to `reducedMotionProvider`, default `NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency`). `widgetTileBackground(reduceTransparency:)` View extension branches: glass mode (`.clipShape(shape).glassEffect(.regular, in: shape)`) vs fallback (`Color(NSColor.windowBackgroundColor).shadow(.inner(...))` with `ShadowStyle.inner` — confirmed via Apple docs as macOS 26 API for real inner shadows). `.glassEffect` does NOT auto-handle Reduce Transparency; manual branch is required (documented in code).
+- **Hover does not affect activityState** — `isHovered` is `@State private`, no path to ViewModel or FPC. Drag-to-move unaffected (AppKit `isMovableByWindowBackground` + `NSWindow.didMoveNotification`, independent of SwiftUI `.onHover`).
+
+**Plan audit (three corrections required, all applied):**
+
+1. Agent's initial plan shipped a **drop shadow** instead of an inner shadow for the Reduce Transparency fallback ("technically a drop shadow," flagged honestly in the plan but contrary to spec). Architect required a real `.shadow(.inner(...))` — preserves the depth-of-material reading the inner shadow gives, vs the generic "object on desktop" of a drop shadow.
+2. `glassTintAlpha = 0.60` accepted as starting point with explicit instruction to bump to 0.65 on borderline smoke legibility — no shipping with known visual debt.
+3. Reduce Motion gating: `xButtonOpacity` must NOT be gated on `reducedMotion`; only the kinetic scale/lift are. Architect required an explicit test (`testXButtonOpacity_hovered_isOne_regardlessOfReducedMotion`) locking the invariant.
+
+All three landed in the GREEN.
+
+**Smoke saga (three real bugs, all fixed in same module):**
+
+1. **Hover lift clipped the corners.** SwiftUI `.scaleEffect` scales the view inside its parent bounds; the scaled 144×144 widget hit the NSPanel/NSHostingView frame edge and the rounded corners got cut (visible as a square-corner notch around the hovered widget). Fix at the panel level: panel resized to 160×160 with `hoverMargin: CGFloat = 8` transparent padding on every side. Position-translation work added in `setPanelPosition` and `panelDidMove` so saved screen-relative coordinates still record the VISUAL widget origin (not the 160×160 panel origin) — preserves user's positioning across sessions. This easily-missed translation detail was correctly handled.
+2. **`workingOpacity = 0.90` was too translucent at full color signal.** Smoke confirmed 1.00 is the right working value. Changed `NumericSettings` default and `loadNumericSettings` fallback from 0.90 → 1.00; renamed test to `testWorkingOpacityDefaultIsOne`. Existing user defaults remain user-controlled; only fresh-install default changed.
+3. **X button was thin and dark.** Default SF Symbol `xmark` weight and system foreground color rendered illegible on glass. Restyled: size 10, `weight: .bold`, `foregroundStyle(.white)`, `.shadow(color: .black.opacity(0.25), radius: 1, y: 1)` for legibility across varied glass backdrops.
+
+**File-length debt cleared (split, not suppression):** `WidgetView.swift` hit 497/400 lines and struct body 258/250 after M5.5. Rather than scoped suppressions (debt that would grow with M5.6/M5.7), the file was split into 5: `WidgetView.swift` (struct only, 314 lines), `WidgetViewHelpers.swift` (statics + tint alpha constants, 88), `WidgetTileBackground.swift` (View extension, 41), `ColdStartMarkView.swift` (36), `CaretShapes.swift` (27). Zero behavior change, 611/612 tests still green, swiftlint clean across all 13 widget files.
+
+### Process notes
+
+- **Push-before-smoke broke twice this session.** First on the M5.5 GREEN itself: agent reported "Two commits on main: 43bdcf5 (RED) and e363ade (GREEN)" but neither was on origin — committed locally only. Second on the split: agent `git add`-ed the new files but didn't commit them, so `git status` showed staged-but-uncommitted, lint ran clean against the local staged tree, "done" was claimed. Architect now verifies `origin/main` HEAD before greenlighting smoke, no exceptions. The "done = pushed" rule was added to prompts after S045; the agent doesn't reliably honor it. The corrected closure: agent commits locally only, reports SHA, architect audits via `git show <sha>`, Anton smokes, only then push. This session followed that pattern for the post-smoke fixes commit.
+- **Drop-shadow-vs-inner-shadow** was the kind of slip that an honest plan flag still required architect override to correct. The agent surfaced the deviation in the plan ("technically a drop shadow") rather than silently shipping it — that's correct behavior. The corrective is to require the real inner shadow when spec says inner shadow; the macOS 26 `ShadowStyle.inner` API exists and is the right call.
+
+### Carried forward
+
+- **M5.6 (next):** L3 monologue escalation pulse (≥90s 1↔0.72, ≥120s 1↔0.5 — bottom cluster only, separate from cold-start pulse). Reduce Motion snaps it off.
+- **M5.7:** accessibility audit — VoiceOver labels, Increase Contrast adjustments.
+
 ## Session 046 — 2026-05-28 — M5.4a COMPLETE: verification module, zero production code change, 8 regression locks. Tag m5.4a-complete.
 
 **Format:** Architect + product-owner + agent. Verification-only module. Plan audit found all three target concerns already correctly implemented at M5.4 close; M5.4a became 8 regression-lock tests with no production change.
