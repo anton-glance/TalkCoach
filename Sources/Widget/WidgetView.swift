@@ -10,16 +10,31 @@ struct WidgetView: View {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
+    // Injected for testability; defaults to the real system value.
+    // .glassEffect does NOT automatically adapt to this setting — fallback is manual (M5.5).
+    var reduceTransparencyProvider: () -> Bool = {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    }
+
     // Animated caret positions — driven by .onChange in body, interpolated by withAnimation.
     @State private var animatedPacePos: Double = 0.5
     @State private var animatedMonoPos: Double = 0.0
 
-    // Widget.jsx hardcodes tintAlpha=0.78 and borderAlpha=0.45, overriding tokens.js's
-    // Tint.restingAlpha=0.55 / Border.restingWhiteOpacity=0.55. Following Widget.jsx: those
-    // values were the final polish step ("state colours hold on any substrate"). tokens.js
-    // values are pre-iteration and stale.
-    private static let tintAlpha: Double = 0.78
+    // Hover state — purely visual. Never reaches viewModel, FPC, or any state machine.
+    @State private var isHovered: Bool = false
+
+    // Widget.jsx hardcodes borderAlpha=0.45, overriding tokens.js Border.restingWhiteOpacity=0.55.
+    // tokens.js value is pre-iteration and stale.
     private static let borderAlpha: Double = 0.45
+
+    // Tint alpha split for M5.5:
+    //   glassTintAlpha (0.60): glass mode — lower so Liquid Glass lensing shows through the tint.
+    //     Midpoint of spec's 0.55–0.65 suggested range. Landed at 0.60 for smoke review.
+    //   solidTintAlpha (0.78): solid/reduce-transparency mode — Widget.jsx value, sized for opaque substrate.
+    // Widget.jsx hardcoded 0.78 (overriding tokens.js Tint.restingAlpha=0.55 which is stale).
+    // M5.5 retains 0.78 for solid and introduces 0.60 for glass.
+    private static let glassTintAlpha: Double = 0.60
+    private static let solidTintAlpha: Double = 0.78
 
     // Widget.jsx padding '10px 14px' (10 vertical, 14 horizontal).
     // DesignTokens.Layout.paddingHorizontal=13 / paddingVertical=11 are stale relative to JSX.
@@ -75,6 +90,37 @@ struct WidgetView: View {
         return ("\(minutes)", String(format: "%02d", remainingSeconds))
     }
 
+    // MARK: - M5.5 hover helpers
+
+    /// Scale factor for the tile on hover. Reduce Motion snaps to resting (1.0) — no animation.
+    /// Spec value: 1.02. DesignTokens.Layout.hoverScale=1.025 is pre-iteration stale.
+    nonisolated static func hoverScale(isHovered: Bool, reducedMotion: Bool) -> CGFloat {
+        reducedMotion ? 1.0 : (isHovered ? 1.02 : 1.0)
+    }
+
+    /// Y-offset for hover lift. Spec: +1pt lift = y: -1 (negative-up in SwiftUI coordinate).
+    /// Reduce Motion snaps to 0 — no lift, no animation.
+    /// DesignTokens.Layout.hoverYOffset=-3 is pre-iteration stale; spec value is -1.
+    nonisolated static func hoverYOffset(isHovered: Bool, reducedMotion: Bool) -> CGFloat {
+        reducedMotion ? 0 : (isHovered ? -1 : 0)
+    }
+
+    /// Opacity of the X close button. Visible only on hover.
+    /// Reduce Motion does NOT suppress the reveal — the affordance must always appear on hover.
+    /// Only the kinetic lift (hoverScale/hoverYOffset) is suppressed by Reduce Motion.
+    nonisolated static func xButtonOpacity(isHovered: Bool) -> Double {
+        isHovered ? 1.0 : 0.0
+    }
+
+    /// Tint alpha appropriate for the current background mode.
+    /// Glass mode uses a lower alpha so Liquid Glass lensing is visible through the colour signal.
+    /// Solid mode retains the Widget.jsx value sized for an opaque substrate.
+    static func effectiveTintAlpha(reduceTransparency: Bool) -> Double {
+        reduceTransparency ? solidTintAlpha : glassTintAlpha
+    }
+
+    // MARK: - Body
+
     var body: some View {
         let wpm = viewModel.currentWPMVoiced ?? DesignTokens.Pace.wpmIdeal
         let streak = viewModel.streakSeconds
@@ -85,6 +131,8 @@ struct WidgetView: View {
             hasReceivedWPM: viewModel.hasReceivedWPM
         )
         let reducedMotion = reducedMotionProvider()
+        let reduceTransparency = reduceTransparencyProvider()
+        let tintAlpha = WidgetView.effectiveTintAlpha(reduceTransparency: reduceTransparency)
 
         let wpmTint = idle ? Self.idleTint
             : DesignTokens.paceColors(wpm: wpm).tint
@@ -98,18 +146,25 @@ struct WidgetView: View {
 
         // Linear gradient with 0/32/68/100% stops mirrors Widget.jsx's
         // 'linear-gradient(180deg, wpmTint 0%, wpmTint 32%, monoTint 68%, monoTint 100%)'.
+        // In glass mode (reduceTransparency=false) this sits ABOVE the Liquid Glass material
+        // as the first ZStack child; alpha is mode-dependent (0.60 glass / 0.78 solid).
         let gradient = LinearGradient(
             stops: [
-                .init(color: wpmTint.opacity(Self.tintAlpha), location: 0.0),
-                .init(color: wpmTint.opacity(Self.tintAlpha), location: 0.32),
-                .init(color: monoTint.opacity(Self.tintAlpha), location: 0.68),
-                .init(color: monoTint.opacity(Self.tintAlpha), location: 1.0)
+                .init(color: wpmTint.opacity(tintAlpha), location: 0.0),
+                .init(color: wpmTint.opacity(tintAlpha), location: 0.32),
+                .init(color: monoTint.opacity(tintAlpha), location: 0.68),
+                .init(color: monoTint.opacity(tintAlpha), location: 1.0)
             ],
             startPoint: .top,
             endPoint: .bottom
         )
 
         ZStack(alignment: .topTrailing) {
+            // Gradient tint layer — first in ZStack so it is drawn ABOVE the glass material
+            // (applied behind the ZStack via widgetTileBackground) but BELOW the content.
+            // Fills the full 144×144 frame proposed by the parent.
+            gradient
+
             // During cold-start, show ONLY the pulsing Locto mark — no numbers, no bar, no dashes.
             // Sequential crossfade: mark exits (0.3s easeOut), then content enters (0.4s easeIn + 0.3s delay).
             // .id(sessionStartedAt) forces ColdStartMarkView recreation on each new session so the
@@ -145,7 +200,8 @@ struct WidgetView: View {
                 ))
             }
 
-            // Close button — M5.5 replaces with hover-only affordance.
+            // Close button — hover-gated reveal. Always in layout to avoid any layout shift on
+            // hover. Reduce Motion does NOT gate the reveal — only scale/lift are suppressed.
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .medium))
@@ -155,14 +211,28 @@ struct WidgetView: View {
             }
             .buttonStyle(.plain)
             .padding(8)
+            .opacity(WidgetView.xButtonOpacity(isHovered: isHovered))
+            .animation(
+                .easeOut(duration: WidgetView.effectiveDuration(0.2, reducedMotion: reducedMotion)),
+                value: isHovered
+            )
         }
         .frame(width: DesignTokens.Layout.size, height: DesignTokens.Layout.size)
-        .background(gradient)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Layout.cornerRadius, style: .continuous))
+        // widgetTileBackground clips content and applies either Liquid Glass or a solid
+        // neutral fill with inner shadow depending on the Reduce Transparency setting.
+        .widgetTileBackground(reduceTransparency: reduceTransparency)
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Layout.cornerRadius, style: .continuous)
                 .stroke(Color.white.opacity(Self.borderAlpha), lineWidth: DesignTokens.Layout.borderWidth)
         )
+        // Hover lift: spec 1.02 scale / -1pt y-offset, 200ms easeOut. Reduce Motion → instant snap.
+        .scaleEffect(WidgetView.hoverScale(isHovered: isHovered, reducedMotion: reducedMotion))
+        .offset(y: WidgetView.hoverYOffset(isHovered: isHovered, reducedMotion: reducedMotion))
+        .animation(
+            .easeOut(duration: WidgetView.effectiveDuration(0.2, reducedMotion: reducedMotion)),
+            value: isHovered
+        )
+        .onHover { isHovered = $0 }
         // Sync animated caret positions on first appear (no animation — snap to initial state).
         .onAppear {
             animatedPacePos = DesignTokens.spectrumPosition(wpm: wpm)
@@ -323,6 +393,45 @@ struct WidgetView: View {
                 .opacity(idle ? 0 : 1)
         }
         .opacity(monoOpacity)
+    }
+}
+
+// MARK: - Tile background helper
+
+// Applies Liquid Glass material (glass mode) or a solid neutral fill with inner shadow
+// (reduce-transparency mode) as the tile background. Both branches clip the content to the
+// same RoundedRectangle so the glass shape and the visible boundary are aligned.
+//
+// Glass branch: .clipShape clips the ZStack content, then .glassEffect(.regular, in: shape)
+// renders the Liquid Glass material behind the clipped content. Both use the same shape, so
+// glass and content clip are visually aligned.
+//
+// Solid branch: .background fills behind the ZStack content with a system window background
+// colour (adapts light/dark automatically) plus a ShapeStyle inner shadow for depth without
+// translucency. .clipShape clips everything to the tile boundary.
+//
+// Note: .glassEffect does NOT automatically adapt to accessibilityDisplayShouldReduceTransparency.
+// This branching is the required manual fallback.
+private extension View {
+    @ViewBuilder
+    func widgetTileBackground(reduceTransparency: Bool) -> some View {
+        let shape = RoundedRectangle(
+            cornerRadius: DesignTokens.Layout.cornerRadius, style: .continuous
+        )
+        if reduceTransparency {
+            self
+                .background(
+                    shape.fill(
+                        Color(NSColor.windowBackgroundColor)
+                            .shadow(.inner(color: .black.opacity(0.10), radius: 3, x: 0, y: 2))
+                    )
+                )
+                .clipShape(shape)
+        } else {
+            self
+                .clipShape(shape)
+                .glassEffect(.regular, in: shape)
+        }
     }
 }
 
