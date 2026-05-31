@@ -220,4 +220,90 @@ import XCTest
         let view = WidgetView(viewModel: viewModel, onDismiss: {})
         _ = view.body
     }
+
+    // MARK: - M5.5 hover scale helper
+
+    func testHoverScale_notHovered_returnsResting() {
+        XCTAssertEqual(WidgetView.hoverScale(isHovered: false, reducedMotion: false), 1.0, accuracy: 1e-9)
+    }
+
+    func testHoverScale_hovered_returnsSpec() {
+        // Spec: scale 1.02 on hover. DesignTokens.Layout.hoverScale=1.025 is pre-iteration stale.
+        XCTAssertEqual(WidgetView.hoverScale(isHovered: true, reducedMotion: false), 1.02, accuracy: 1e-9)
+    }
+
+    func testHoverScale_reducedMotion_snapsToResting() {
+        // Reduce Motion suppresses scale entirely — instant snap to 1.0, no animation.
+        XCTAssertEqual(WidgetView.hoverScale(isHovered: true, reducedMotion: true), 1.0, accuracy: 1e-9)
+    }
+
+    // MARK: - M5.5 hover y-offset helper
+
+    func testHoverYOffset_notHovered_returnsZero() {
+        XCTAssertEqual(WidgetView.hoverYOffset(isHovered: false, reducedMotion: false), 0.0, accuracy: 1e-9)
+    }
+
+    func testHoverYOffset_hovered_returnsLift() {
+        // Spec: +1pt lift = y offset -1 (negative-up in SwiftUI coordinate system).
+        XCTAssertEqual(WidgetView.hoverYOffset(isHovered: true, reducedMotion: false), -1.0, accuracy: 1e-9)
+    }
+
+    func testHoverYOffset_reducedMotion_snapsToZero() {
+        // Reduce Motion suppresses lift — instant snap to 0, no animation.
+        XCTAssertEqual(WidgetView.hoverYOffset(isHovered: true, reducedMotion: true), 0.0, accuracy: 1e-9)
+    }
+
+    // MARK: - M5.5 X button opacity helper
+
+    func testXButtonOpacity_notHovered_isZero() {
+        XCTAssertEqual(WidgetView.xButtonOpacity(isHovered: false), 0.0, accuracy: 1e-9)
+    }
+
+    func testXButtonOpacity_hovered_isOne_regardlessOfReducedMotion() {
+        // Reduce Motion gates only the kinetic part (scale/lift). The X reveal is always
+        // on hover — reducedMotion has no effect on xButtonOpacity. Both branches must be 1.0.
+        XCTAssertEqual(WidgetView.xButtonOpacity(isHovered: true), 1.0, accuracy: 1e-9,
+                       "X reveal must appear on hover even when Reduce Motion is enabled")
+    }
+
+    // MARK: - M5.5 tint alpha branch
+
+    func testEffectiveTintAlpha_glassMode_returnsGlassAlpha() {
+        // reduceTransparency=false → glass mode → lower alpha so lensing is visible.
+        XCTAssertEqual(WidgetView.effectiveTintAlpha(reduceTransparency: false), 0.60, accuracy: 1e-9)
+    }
+
+    func testEffectiveTintAlpha_solidMode_returnsSolidAlpha() {
+        // reduceTransparency=true → solid mode → full alpha (sized for opaque background).
+        XCTAssertEqual(WidgetView.effectiveTintAlpha(reduceTransparency: true), 0.78, accuracy: 1e-9)
+    }
+
+    // MARK: - M5.5 construction smoke (reduceTransparency branches)
+
+    func testConstructs_reduceTransparency_true() {
+        // Solid background branch: body must not crash with reduceTransparencyProvider returning true.
+        let viewModel = WidgetViewModel()
+        viewModel.activityState = .warming
+        viewModel.hasReceivedWPM = false
+        let view = WidgetView(
+            viewModel: viewModel,
+            onDismiss: {},
+            reduceTransparencyProvider: { true }
+        )
+        _ = view.body
+    }
+
+    func testConstructs_reduceTransparency_false() {
+        // Glass branch: body must not crash with reduceTransparencyProvider returning false.
+        let viewModel = WidgetViewModel()
+        viewModel.activityState = .counting
+        viewModel.currentWPMVoiced = 140
+        viewModel.hasReceivedWPM = true
+        let view = WidgetView(
+            viewModel: viewModel,
+            onDismiss: {},
+            reduceTransparencyProvider: { false }
+        )
+        _ = view.body
+    }
 }
