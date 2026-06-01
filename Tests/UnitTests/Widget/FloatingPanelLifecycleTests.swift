@@ -623,7 +623,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
     // Bug F: showPanel() defensive alpha reset — reused panel must always start opaque
     func testShowPanel_AlwaysStartsAtFullOpacity_EvenIfPanelLeftAtSubOpacity() async {
-        makeComponents(reducedMotion: true)
+        makeComponents(reducedMotion: true, runAnimation: { _, block in
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
+        })
         sut.start()
         // Session 1: show, linger, complete — panel ivar survives at .hidden
         await activateSession()
@@ -635,13 +637,11 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         // Corrupt alpha to simulate a missed reset from any prior code path
         sut.panelWindow?.alphaValue = 0.3
 
-        // Session 2: engine-ready must reset alpha in showPanel() before ordering front
+        // Session 2: mic-on calls showPanel() which resets alpha before applying .warming opacity
         await activateSession()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
 
-        XCTAssertEqual(sut.panelWindow?.alphaValue, 1.0,
-                       "showPanel must reset alpha to 1.0 regardless of prior state leakage")
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
+                       "showPanel must clear corrupted alpha; panel shows at natural .warming opacity (0.5)")
     }
 
     // MARK: - Group 10: Dismissed state invariants
@@ -730,9 +730,13 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         XCTAssertEqual(sut.viewModel.activityState, .warming,
                        "M5.7: activityState stays .warming after engine-ready (no WPM calc)")
 
-        coordinator.isVoiceInactive = true
+        // S049: silence-hold only arms from .counting. Use recovery timeout to reach .waiting.
+        coordinator.audioPipelineDidBeginRecovery()
         await Task.yield()
-        scheduler.fire(delay: 2.0)  // advance 2s silence hold timer
+        coordinator.audioPipelineDidEndRecovery()
+        await Task.yield()
+        scheduler.fire(delay: 2.0)  // recovery grace timer → .waiting
+        await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
 
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
@@ -805,9 +809,14 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         sut.start()
         await activateSession()
         await showPanel()
-        coordinator.isVoiceInactive = true
+
+        // S049: silence-hold only arms from .counting. Use recovery timeout to reach .waiting.
+        coordinator.audioPipelineDidBeginRecovery()
         await Task.yield()
-        scheduler.fire(delay: 2.0)  // advance 2s silence hold timer
+        coordinator.audioPipelineDidEndRecovery()
+        await Task.yield()
+        scheduler.fire(delay: 2.0)  // recovery grace timer → .waiting
+        await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
                        "Panel must be at 0.5 opacity in .waiting state before linger starts")
@@ -1055,15 +1064,18 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         XCTAssertEqual(sut.viewModel.activityState, .warming,
                        "M5.7: activityState stays .warming after engine-ready (no WPM calc)")
 
-        // Transition to .waiting via voice-inactivity silence hold
-        coordinator.isVoiceInactive = true
+        // S049: silence-hold only arms from .counting. Use recovery timeout to reach .waiting.
+        coordinator.audioPipelineDidBeginRecovery()
         await Task.yield()
-        scheduler.fire(delay: 2.0)
+        coordinator.audioPipelineDidEndRecovery()
+        await Task.yield()
+        scheduler.fire(delay: 2.0)  // recovery grace timer → .waiting
+        await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting)
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
                        "Precondition: panel must be at 0.5 opacity in .waiting state")
 
-        // Voice resumes — gate armed, state stays .waiting until first WPM (M5.7)
+        // Voice resumes — gate armed (no WPM calc returns immediately), state stays .waiting
         coordinator.isVoiceInactive = false
         await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting,
@@ -1092,10 +1104,13 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         sut.start()
         await activateSession()
         await showPanel()
-        // Transition to .waiting via voice-inactivity silence hold
-        coordinator.isVoiceInactive = true
+        // S049: silence-hold only arms from .counting. Use recovery timeout to reach .waiting.
+        coordinator.audioPipelineDidBeginRecovery()
         await Task.yield()
-        scheduler.fire(delay: 2.0)  // 2s silence hold → .waiting
+        coordinator.audioPipelineDidEndRecovery()
+        await Task.yield()
+        scheduler.fire(delay: 2.0)  // recovery grace timer → .waiting
+        await Task.yield()
         XCTAssertEqual(sut.viewModel.activityState, .waiting, "Precondition: activityState must be .waiting")
 
         await endSession()  // waiting → wrapping

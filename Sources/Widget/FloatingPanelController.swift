@@ -131,7 +131,12 @@ final class FloatingPanelController {
             .sink { [weak self] isInactive in
                 guard let self else { return }
                 if isInactive {
-                    self.startSilenceHoldTimer()
+                    // S049: silence-hold only arms from .counting. In .warming the cold-start
+                    // pulsing mark holds regardless of silence; .waiting is only reachable
+                    // after .counting has been entered at least once.
+                    if self.viewModel.activityState == .counting {
+                        self.startSilenceHoldTimer()
+                    }
                 } else {
                     self.cancelSilenceHoldTimer()
                     // M5.7: voice-resume arms the WPM gate; .counting fires when WPM arrives.
@@ -736,9 +741,8 @@ final class FloatingPanelController {
 
     // One-shot subscription that fires .counting the first time WPMCalculator produces a non-nil value
     // while the widget is in .warming or .waiting. Started on .warming entry and on voice-resume from
-    // .waiting. After setActivityState(.counting) the gate seeds currentWPMVoiced and re-phases the
-    // refresh timer because Combine @Published fires in willSet — wpmVoiced is not stored yet when
-    // snapshotNow() and startWPMFirstValueSubscription() run inside setActivityState.
+    // .waiting. wpmFirstValueSubscription re-phases the refresh timer automatically once willSet
+    // completes — no explicit timer reschedule needed here.
     private func startWPMGateSubscription() {
         guard let calc = wpmCalculator else { return }
         wpmGateSubscription = calc.$wpmVoiced
@@ -748,15 +752,9 @@ final class FloatingPanelController {
                 guard let self else { return }
                 self.wpmGateSubscription = nil
                 self.setActivityState(.counting, reason: "first-wpm")
-                // @Published fires in willSet: wpmVoiced is not yet stored when snapshotNow() runs.
-                // Seed the value directly and re-phase the refresh timer from this moment.
+                // @Published fires in willSet: seed currentWPMVoiced after setActivityState so the
+                // gate's write lands after snapshotNow() (which sees nil during willSet).
                 self.viewModel.currentWPMVoiced = latestWPM
-                if let token = self.widgetRefreshToken {
-                    self.hideScheduler.cancel(token)
-                }
-                self.widgetRefreshToken = self.hideScheduler.schedule(delay: 1.0) { [weak self] in
-                    self?.onWidgetRefreshFired()
-                }
             }
     }
 

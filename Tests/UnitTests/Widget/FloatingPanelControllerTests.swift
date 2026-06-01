@@ -60,7 +60,7 @@ private final class WPMTestScheduler: HideScheduler, @unchecked Sendable {
         return HideSchedulerToken()
     }
     @MainActor func cancel(_ token: HideSchedulerToken) { lastAction = nil }
-    @MainActor func fireNext() { lastAction?(); lastAction = nil }
+    @MainActor func fireNext() { let action = lastAction; lastAction = nil; action?() }
 }
 
 // MARK: - Tests
@@ -1033,10 +1033,7 @@ final class FloatingPanelControllerTests: XCTestCase {
         micProvider.simulateIsRunningChange()
         await Task.yield()  // mic-on → .warming → gate armed
 
-        // Capture cancel count before WPM fires
-        let cancelCountBeforeWPM = fpcScheduler.cancelCallCount
-
-        // Drive WPM: gate fires → .counting → T1 started → wpmFirstValueSubscription fires → T1 cancelled + T2
+        // First WPM fires gate → .counting → T1 started; wpmFirstValueSubscription subscribed
         calc.sessionActivated()
         calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
         clock = Date(timeIntervalSinceReferenceDate: 0.6)
@@ -1044,17 +1041,26 @@ final class FloatingPanelControllerTests: XCTestCase {
         clock = Date(timeIntervalSinceReferenceDate: 1.1)
         await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
         clock = Date(timeIntervalSinceReferenceDate: 3.1)
-        wpmScheduler.fireNext()  // → calc.wpmVoiced non-nil → gate → .counting → wpmFirstValueSubscription → re-phase
+        wpmScheduler.fireNext()  // gate fires → .counting; wpmFirstValueSubscription armed for next WPM
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition: gate fired → .counting")
+
+        // Capture cancel count after .counting entry (T1 is scheduled, no cancel yet from re-phase)
+        let cancelCountAfterCounting = fpcScheduler.cancelCallCount
+
+        // Second WPM fires wpmFirstValueSubscription → cancels T1, schedules T2 (re-phase from this moment)
+        clock = Date(timeIntervalSinceReferenceDate: 4.1)
+        wpmScheduler.fireNext()  // wpmFirstValueSubscription fires → T1 cancelled, T2 scheduled
         await Task.yield()
 
-        XCTAssertGreaterThan(fpcScheduler.cancelCallCount, cancelCountBeforeWPM,
-            "first WPM value must cancel existing timer token to re-phase from current moment (M5.1 Bug 1)")
+        XCTAssertGreaterThan(fpcScheduler.cancelCallCount, cancelCountAfterCounting,
+            "second WPM fires wpmFirstValueSubscription — must cancel T1 and reschedule T2 from this moment (M5.1 Bug 1)")
         guard let rePhasedDelay = fpcScheduler.scheduledDelay else {
-            XCTFail("no timer rescheduled after first WPM value — re-phasing did not fire (M5.1 Bug 1)")
+            XCTFail("no timer rescheduled after second WPM — wpmFirstValueSubscription re-phase did not fire (M5.1 Bug 1)")
             return
         }
         XCTAssertEqual(rePhasedDelay, 1.0, accuracy: 0.001,
-            "fresh 1s timer must be re-armed after first WPM value arrives (M5.1 Bug 1)")
+            "fresh 1s timer must be re-armed when wpmFirstValueSubscription fires on next WPM value (M5.1 Bug 1)")
     }
 
     // MARK: - M5.1 Bug 2: exit snapshot on .counting → non-.counting
@@ -1490,6 +1496,28 @@ final class FloatingPanelControllerTests: XCTestCase {
             "first WPM after voice-resume from .waiting must enter .counting via wpmGateSubscription (M5.7)")
         XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
             "WPM must flow to viewModel when gate fires from .waiting (M5.7)")
+    }
+
+    // MARK: - S049: Silence-hold disabled while in .warming
+
+    // While in .warming, silence must not arm the hold timer. .waiting is only reachable
+    // after .counting has been entered at least once in the session (S049 decision).
+    func testWarmingSilence_doesNotTriggerWaitingTransition() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        XCTAssertEqual(sut.viewModel.activityState, .warming, "precondition: .warming after mic-on")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+
+        // Even if a timer was accidentally scheduled, fire it to confirm it is a no-op
+        fakeScheduler.fire()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+            "silence while in .warming must NOT trigger .waiting — silence-hold is gated on .counting (S049)")
     }
 
     // MARK: - M5.7 Part 2: hover alpha override (FPC window-level)
