@@ -15,9 +15,9 @@ import XCTest
         XCTAssertEqual(Double(alpha ?? 0), 0.50, accuracy: 0.001)
     }
 
-    func testTargetAlphaWarmingIsOne() {
+    func testTargetAlphaWarmingUsesWaitingOpacity() {
         let alpha = FloatingPanelController.targetAlpha(for: .warming, workingOpacity: 0.85, waitingOpacity: 0.50)
-        XCTAssertEqual(Double(alpha ?? 0), 1.0, accuracy: 0.001)
+        XCTAssertEqual(Double(alpha ?? 0), 0.50, accuracy: 0.001)
     }
 
     func testTargetAlphaRecoveringIsOne() {

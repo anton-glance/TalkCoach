@@ -1408,4 +1408,314 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertTrue(animationCalls.contains(where: { abs($0 - 0.7) < 0.01 }),
             "applyPanelOpacity(duration: 0.7) must fire on first WPM after waiting — animated fade from dim to workingOpacity, not an instant snap (S045 smoke #5, M5.4a)")
     }
+
+    // MARK: - M5.7 Part 3: counting fires only on first WPM (wpmGateSubscription)
+
+    // engine-ready was the primary warming→counting trigger. M5.7 removes it — no-op on activityState.
+    func testEngineReady_doesNotChangeActivityState() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        XCTAssertEqual(sut.viewModel.activityState, .warming, "precondition: .warming after mic-on")
+
+        coordinator.lastEngineReadyAt = Date()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+            "engine-ready must NOT change activityState — .counting fires only on first WPM (M5.7)")
+    }
+
+    // Token arrival while in .warming must not change activityState (M5.7).
+    func testTokenArrival_inWarming_doesNotChangeActivityState() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        XCTAssertEqual(sut.viewModel.activityState, .warming, "precondition: .warming after mic-on")
+
+        coordinator.lastTokenArrival = Date()
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+            "token arrival in .warming must NOT trigger .counting — .counting requires first WPM (M5.7)")
+    }
+
+    // First non-nil WPM in .warming fires wpmGateSubscription → .counting (M5.7).
+    // swiftlint:disable:next function_body_length
+    func testFirstWPM_inWarming_transitionsToCounting() async {
+        let suite = "FirstWPMWarming.\(name)"
+        let defs = UserDefaults(suiteName: suite)!
+        defs.removePersistentDomain(forName: suite)
+        let settings = SettingsStore(userDefaults: defs)
+        let wpmSched = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: settings, scheduler: wpmSched, now: { clock })
+        let micProv = FakeCoreAudioDeviceProvider()
+        micProv.stubbedDefaultDeviceID = 42
+        micProv.stubbedIsRunning = false
+        let mic = MicMonitor(provider: micProv)
+        let coord = SessionCoordinator(micMonitor: mic, settingsStore: settings)
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: FakeHideScheduler(),
+            settingsStore: settings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true }
+        )
+        fpc.start()
+        coord.start()
+        micProv.stubbedIsRunning = true
+        micProv.simulateIsRunningChange()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .warming, "precondition: .warming after mic-on")
+
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmSched.fireNext()   // calc.wpmVoiced becomes non-nil → wpmGateSubscription sink fires
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.activityState, .counting,
+            "first non-nil WPM in .warming must transition to .counting via wpmGateSubscription (M5.7)")
+    }
+
+    // Voice-resume from .waiting arms the gate only; state stays .waiting until first WPM (M5.7).
+    func testWaiting_resumes_staysWaitingUntilFirstWPM() async {
+        makeSUT()
+        sut.start()
+        coordinator.start()
+        await activateMic()
+        coordinator.lastEngineReadyAt = Date()   // precondition shortcut; migrated to WPM path in green
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: reach .counting")
+
+        coordinator.isVoiceInactive = true
+        await Task.yield()
+        fakeScheduler.fire()
+        await Task.yield()
+        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition: reach .waiting via silence hold")
+
+        coordinator.isVoiceInactive = false
+        await Task.yield()
+
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+            "voice-resume from .waiting must NOT immediately enter .counting — gate waits for first WPM (M5.7)")
+    }
+
+    // First non-nil WPM after voice-resume from .waiting fires gate → .counting (M5.7).
+    // swiftlint:disable:next function_body_length
+    func testFirstWPM_inWaiting_transitionsToCounting() async {
+        let suite = "FirstWPMWaiting.\(name)"
+        let defs = UserDefaults(suiteName: suite)!
+        defs.removePersistentDomain(forName: suite)
+        let settings = SettingsStore(userDefaults: defs)
+        let wpmSched = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: settings, scheduler: wpmSched, now: { clock })
+        let micProv = FakeCoreAudioDeviceProvider()
+        micProv.stubbedDefaultDeviceID = 42
+        micProv.stubbedIsRunning = false
+        let mic = MicMonitor(provider: micProv)
+        let coord = SessionCoordinator(micMonitor: mic, settingsStore: settings)
+        let fpcSched = FakeHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: fpcSched,
+            settingsStore: settings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true }
+        )
+        fpc.start()
+        coord.start()
+        micProv.stubbedIsRunning = true
+        micProv.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()   // precondition shortcut; migrated to WPM path in green
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition: reach .counting via engine-ready")
+
+        calc.sessionActivated()
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.0))
+
+        coord.isVoiceInactive = true
+        await Task.yield()
+        fpcSched.fire()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .waiting, "precondition: reach .waiting via silence hold")
+
+        // Voice-resume arms the gate; must stay .waiting until WPM arrives
+        coord.isVoiceInactive = false
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .waiting,
+            "after voice-resume, must stay .waiting until first WPM (M5.7)")
+
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock = Date(timeIntervalSinceReferenceDate: 1.0)
+        await calc.consume(TranscribedToken(
+            token: "one two three four", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.5)
+        wpmSched.fireNext()   // calc.wpmVoiced non-nil → gate fires → .counting
+        await Task.yield()
+
+        XCTAssertEqual(fpc.viewModel.activityState, .counting,
+            "first WPM after voice-resume from .waiting must enter .counting via wpmGateSubscription (M5.7)")
+        XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
+            "WPM must flow to viewModel when gate fires from .waiting (M5.7)")
+    }
+
+    // MARK: - M5.7 Part 2: hover alpha override (FPC window-level)
+
+    // Hover-enter must trigger runAnimation and set panel alphaValue to 1.0 (M5.7 Part 2).
+    func testHoverActive_overridesAlphaTo1() async {
+        let suiteName = "HoverEnter.\(name)"
+        let defs = UserDefaults(suiteName: suiteName)!
+        defs.removePersistentDomain(forName: suiteName)
+        defs.set(true, forKey: "coachingEnabled")
+        let settings = SettingsStore(userDefaults: defs)
+        let dev = FakeCoreAudioDeviceProvider()
+        dev.stubbedDefaultDeviceID = 42
+        dev.stubbedIsRunning = false
+        let coord = SessionCoordinator(micMonitor: MicMonitor(provider: dev), settingsStore: settings)
+        var animationCount = 0
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: FakeHideScheduler(),
+            settingsStore: settings,
+            reducedMotionProvider: { false },
+            runAnimation: { _, block in animationCount += 1; block() }
+        )
+        fpc.start()
+        coord.start()
+        dev.stubbedIsRunning = true
+        dev.simulateIsRunningChange()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .warming, "precondition: panel visible in .warming")
+        animationCount = 0
+
+        fpc.handleHoverEntered()
+
+        XCTAssertGreaterThan(animationCount, 0,
+            "hover-enter must call runAnimation to raise alpha to 1.0 (M5.7 Part 2)")
+        XCTAssertEqual(fpc.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.001,
+            "hover-enter must set panel alphaValue to 1.0 (M5.7 Part 2)")
+    }
+
+    // Hover-exit must trigger runAnimation to restore the state's natural alpha (M5.7 Part 2).
+    func testHoverInactive_restoresNaturalAlpha() async {
+        let suiteName = "HoverExit.\(name)"
+        let defs = UserDefaults(suiteName: suiteName)!
+        defs.removePersistentDomain(forName: suiteName)
+        defs.set(true, forKey: "coachingEnabled")
+        let settings = SettingsStore(userDefaults: defs)
+        let dev = FakeCoreAudioDeviceProvider()
+        dev.stubbedDefaultDeviceID = 42
+        dev.stubbedIsRunning = false
+        let coord = SessionCoordinator(micMonitor: MicMonitor(provider: dev), settingsStore: settings)
+        var animationCount = 0
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: FakeHideScheduler(),
+            settingsStore: settings,
+            reducedMotionProvider: { false },
+            runAnimation: { _, block in animationCount += 1; block() }
+        )
+        fpc.start()
+        coord.start()
+        dev.stubbedIsRunning = true
+        dev.simulateIsRunningChange()
+        await Task.yield()
+        fpc.handleHoverEntered()
+        animationCount = 0
+
+        fpc.handleHoverExited()
+
+        XCTAssertGreaterThan(animationCount, 0,
+            "hover-exit must call runAnimation to restore natural alpha (M5.7 Part 2)")
+    }
+
+    // Hover animation duration must be 0 when Reduce Motion is on (M5.7 Part 2).
+    func testHoverAlphaDurationIsZeroWhenReduceMotionOn() async {
+        let suiteName = "HoverReduceMotion.\(name)"
+        let defs = UserDefaults(suiteName: suiteName)!
+        defs.removePersistentDomain(forName: suiteName)
+        defs.set(true, forKey: "coachingEnabled")
+        let settings = SettingsStore(userDefaults: defs)
+        let dev = FakeCoreAudioDeviceProvider()
+        dev.stubbedDefaultDeviceID = 42
+        dev.stubbedIsRunning = false
+        let coord = SessionCoordinator(micMonitor: MicMonitor(provider: dev), settingsStore: settings)
+        var capturedDurations: [TimeInterval] = []
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: FakeHideScheduler(),
+            settingsStore: settings,
+            reducedMotionProvider: { true },
+            runAnimation: { dur, block in capturedDurations.append(dur); block() }
+        )
+        fpc.start()
+        coord.start()
+        dev.stubbedIsRunning = true
+        dev.simulateIsRunningChange()
+        await Task.yield()
+        capturedDurations.removeAll()
+
+        fpc.handleHoverEntered()
+
+        XCTAssertFalse(capturedDurations.isEmpty,
+            "hover-enter with reduce-motion ON must still call runAnimation (duration 0) (M5.7 Part 2)")
+        XCTAssertTrue(capturedDurations.allSatisfy { $0 == 0.0 },
+            "hover animation duration must be 0 when reducedMotionProvider returns true (M5.7 Part 2)")
+    }
+
+    // State changes during hover must not call applyPanelOpacity — isHoverActive guard suppresses it (M5.7 Part 2).
+    func testApplyPanelOpacity_notCalledWhileHoverActive() async {
+        let suiteName = "HoverSkipOpacity.\(name)"
+        let defs = UserDefaults(suiteName: suiteName)!
+        defs.removePersistentDomain(forName: suiteName)
+        defs.set(true, forKey: "coachingEnabled")
+        let settings = SettingsStore(userDefaults: defs)
+        let dev = FakeCoreAudioDeviceProvider()
+        dev.stubbedDefaultDeviceID = 42
+        dev.stubbedIsRunning = false
+        let sched = FakeHideScheduler()
+        let coord = SessionCoordinator(micMonitor: MicMonitor(provider: dev), settingsStore: settings)
+        var animationCount = 0
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: sched,
+            settingsStore: settings,
+            reducedMotionProvider: { true },
+            runAnimation: { _, block in animationCount += 1; block() }
+        )
+        fpc.start()
+        coord.start()
+        dev.stubbedIsRunning = true
+        dev.simulateIsRunningChange()
+        await Task.yield()
+        coord.lastEngineReadyAt = Date()   // precondition shortcut; migrated to WPM path in green
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition: .counting")
+
+        fpc.handleHoverEntered()
+        animationCount = 0
+
+        coord.isVoiceInactive = true
+        await Task.yield()
+        sched.fire()
+        await Task.yield()
+
+        XCTAssertEqual(animationCount, 0,
+            "applyPanelOpacity must be suppressed while isHoverActive — hover holds alpha at 1.0 (M5.7 Part 2)")
+    }
 }
