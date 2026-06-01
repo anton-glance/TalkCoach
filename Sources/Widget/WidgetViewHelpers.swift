@@ -25,11 +25,13 @@ extension WidgetView {
     /// until real data arrives. Including .idle ensures the backing store never holds a dashes
     /// frame: SwiftUI renders the mark into the offscreen backing store while the panel is hidden,
     /// so the very first visible frame is already the mark — never dashes.
+    /// .wrapping is included so a session that ends in .warming (no WPM ever arrived) holds the
+    /// pulsing mark through the 3+2s linger fade instead of snapping to dashes.
     static func showColdStartMark(
         activityState: WidgetActivityState,
         hasReceivedWPM: Bool
     ) -> Bool {
-        (activityState == .idle || activityState == .warming || activityState == .counting) && !hasReceivedWPM
+        (activityState == .idle || activityState == .warming || activityState == .counting || activityState == .wrapping) && !hasReceivedWPM
     }
 
     // L2 boundary is inclusive on the urgent side: streakSeconds < l2Seconds → MONOLOGUE;

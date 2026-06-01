@@ -2,6 +2,7 @@ import SwiftUI
 import XCTest
 @testable import TalkCoach
 
+// swiftlint:disable:next type_body_length
 @MainActor final class WidgetViewTests: XCTestCase {
 
     // MARK: - Construction smoke (body must not crash for each viewModel state)
@@ -160,6 +161,24 @@ import XCTest
 
     func testColdStartPredicateFalseWhenWaiting() {
         XCTAssertFalse(WidgetView.showColdStartMark(activityState: .waiting, hasReceivedWPM: false))
+    }
+
+    func testColdStartPredicate_true_whenWrappingAndNoWPM() {
+        // Session ends in .warming (no WPM ever arrived) → activityState transitions to .wrapping.
+        // The mark must hold through the 3+2s linger fade, not snap to dashes.
+        XCTAssertTrue(
+            WidgetView.showColdStartMark(activityState: .wrapping, hasReceivedWPM: false),
+            "cold-start mark must show during .wrapping when no WPM ever arrived — mark holds through linger fade"
+        )
+    }
+
+    func testColdStartPredicate_false_whenWrappingWithWPM() {
+        // Session ends normally from .counting (WPM did arrive) → .wrapping + isFrozen=true.
+        // The frozen branch renders last-known numbers, not the cold-start mark.
+        XCTAssertFalse(
+            WidgetView.showColdStartMark(activityState: .wrapping, hasReceivedWPM: true),
+            "cold-start mark must NOT show during .wrapping when WPM arrived — isFrozen branch holds numbers"
+        )
     }
 
     // MARK: - M5.4a waiting-hold: mark must not reappear on mid-session resume

@@ -208,6 +208,36 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Session end while visible (warming) must start lingerFull")
     }
 
+    func testSessionEndFromWarming_ShowsColdStartMarkThroughLingerFade() async {
+        // Session ends in .warming (no WPM ever arrived): the pulsing mark must hold through
+        // the full 3+2s linger sequence, never snapping to dashes (M5.7 regression fix).
+        makeComponents(reducedMotion: false)
+        sut.start()
+        await activateSession()
+        XCTAssertEqual(sut.viewModel.activityState, .warming, "precondition: .warming before session end")
+        XCTAssertFalse(sut.viewModel.hasReceivedWPM, "precondition: no WPM arrived")
+
+        await endSession()
+        XCTAssertEqual(sut.panelState, .lingerFull)
+        XCTAssertTrue(
+            WidgetView.showColdStartMark(
+                activityState: sut.viewModel.activityState,
+                hasReceivedWPM: sut.viewModel.hasReceivedWPM),
+            "cold-start mark must show during lingerFull when session ended in .warming (no WPM)")
+
+        scheduler.fire(delay: 3.0)  // lingerFull → lingerFade
+        XCTAssertEqual(sut.panelState, .lingerFade)
+        XCTAssertTrue(
+            WidgetView.showColdStartMark(
+                activityState: sut.viewModel.activityState,
+                hasReceivedWPM: sut.viewModel.hasReceivedWPM),
+            "cold-start mark must show during lingerFade when session ended in .warming (no WPM)")
+
+        scheduler.fire(delay: 2.0)  // lingerFade → hidden, resetViewModel
+        XCTAssertEqual(sut.panelState, .hidden)
+        XCTAssertEqual(sut.viewModel.activityState, .idle, "activityState must be .idle after linger completes")
+    }
+
     func testLingerFull_TimerFires_WithReducedMotion_HidesPanel() async {
         makeComponents(reducedMotion: true)
         sut.start()
