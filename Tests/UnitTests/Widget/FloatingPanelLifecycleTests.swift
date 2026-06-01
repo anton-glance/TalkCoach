@@ -58,6 +58,18 @@ private final class LifecycleHideScheduler: HideScheduler, @unchecked Sendable {
     var entryCount: Int { entries.count }
 }
 
+private final class LifecycleWPMScheduler: HideScheduler, @unchecked Sendable {
+    nonisolated(unsafe) private(set) var lastAction: (@MainActor @Sendable () -> Void)?
+    @MainActor func schedule(
+        delay: TimeInterval, action: @escaping @MainActor @Sendable () -> Void
+    ) -> HideSchedulerToken {
+        lastAction = action
+        return HideSchedulerToken()
+    }
+    @MainActor func cancel(_ token: HideSchedulerToken) { lastAction = nil }
+    @MainActor func fireNext() { lastAction?(); lastAction = nil }
+}
+
 // MARK: - FloatingPanelLifecycleTests
 
 @MainActor
@@ -135,8 +147,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "activityState must transition to .counting when engine-ready fires (AC-FIX7)")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: engine-ready is a no-op for activityState — .counting fires only on first WPM")
     }
 
     func testEngineReady_NoShow_WhenSessionIdle() async {
@@ -370,8 +382,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Phase G: viewModel.totalTokens must reset to 0")
         XCTAssertTrue(sut.viewModel.isSessionActive,
                       "Phase G: viewModel.isSessionActive must be true")
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "Phase G: engine-ready must transition activityState to .counting")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "Phase G: engine-ready during lingerFull transitions to .warming (M5.7: .counting via WPM gate)")
         XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
                              "Phase G: lingerFull hideToken must be cancelled")
     }
@@ -396,8 +408,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
                        "Phase G: engine-ready during lingerFade must transition to .visible")
         XCTAssertEqual(sut.viewModel.totalTokens, 0,
                        "Phase G: viewModel.totalTokens must reset to 0")
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "Phase G: engine-ready must transition activityState to .counting")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "Phase G: engine-ready during lingerFade transitions to .warming (M5.7: .counting via WPM gate)")
         XCTAssertGreaterThan(scheduler.cancelCallCount, cancelsBefore,
                              "Phase G: lingerFade hideToken must be cancelled")
     }
@@ -445,26 +457,27 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "Engine-ready must transition activityState from .warming to .counting")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: engine-ready is a no-op for activityState — .counting fires only on first WPM")
     }
 
     func testLastTokenArrival_SetsActivityState_Counting() async {
+        // M5.7: tokens no longer drive activityState changes (only WPM gate → .counting).
+        // Verify token arrival does not change activityState from .warming.
         makeComponents()
         sut.start()
         await activateSession()
-        await showPanel()
-        // Silence hold starts; widget must stay .counting during the 2s window.
+        await showPanel()  // engine-ready is a no-op in M5.7, stays .warming
         coordinator.isVoiceInactive = true
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "must stay .counting during 2s silence hold")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: activityState stays .warming during silence hold (no WPM calc)")
 
         coordinator.lastTokenArrival = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "Token arrival must keep activityState at .counting during hold")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: token arrival must NOT change activityState — .counting requires first WPM via gate")
     }
 
     // MARK: - Group 8: TrackingContentView hover callback wiring
@@ -652,8 +665,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
 
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "activityState must transition to .counting on engine-ready after dismiss-cleared session")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: engine-ready keeps .warming after dismiss-cleared session — .counting via WPM gate")
     }
     // MARK: - Group 11: SessionStartedAt set at mic-on (AC-FIX7)
 
@@ -713,8 +726,9 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         })
         sut.start()
         await activateSession()
-        await showPanel()  // warming → engine-ready → counting
-        XCTAssertEqual(sut.viewModel.activityState, .counting)
+        await showPanel()  // engine-ready is a no-op for activityState in M5.7, stays .warming
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: activityState stays .warming after engine-ready (no WPM calc)")
 
         coordinator.isVoiceInactive = true
         await Task.yield()
@@ -726,16 +740,46 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     }
 
     func testPanelOpacity_AtCounting_IsWorkingOpacity() async {
-        makeComponents(runAnimation: { _, block in
-            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
-        })
-        sut.start()
-        await activateSession()
-        await showPanel()  // warming → engine-ready → counting
-
-        XCTAssertEqual(sut.viewModel.activityState, .counting)
+        // M5.7: engine-ready no longer drives .counting — must use WPM gate.
+        let suite = "OpacityCounting.\(UUID())"
+        let defs = UserDefaults(suiteName: suite)!
+        defs.removePersistentDomain(forName: suite)
+        defs.set(true, forKey: "coachingEnabled")
+        let settings = SettingsStore(userDefaults: defs)
+        let wpmSched = LifecycleWPMScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: settings, scheduler: wpmSched, now: { clock })
+        let micMonitor = MicMonitor(provider: MinimalCoreAudioProvider())
+        let coord = SessionCoordinator(micMonitor: micMonitor, settingsStore: settings)
+        let lcSched = LifecycleHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: LifecycleAlertPresenter(),
+            hideScheduler: lcSched,
+            settingsStore: settings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true },
+            runAnimation: { _, block in
+                NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
+            }
+        )
+        fpc.start()
+        coord.start()
+        coord.micActivated()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .warming, "precondition: .warming after mic-on")
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmSched.fireNext()   // wpmGateSubscription fires → .counting
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition: .counting via wpmGateSubscription (M5.7)")
         // M5.5 smoke: workingOpacity default changed from 0.90 → 1.00.
-        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.01,
+        XCTAssertEqual(fpc.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.01,
                        "Panel opacity must equal workingOpacity (1.0 default) when activityState is .counting")
     }
 
@@ -750,8 +794,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(sut.viewModel.activityState, .warming)
-        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 1.0, accuracy: 0.01,
-                       "Panel opacity must be 1.0 when activityState is .warming")
+        XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
+                       "M5.7: Panel opacity must be 0.5 (waitingOpacity) when activityState is .warming")
     }
 
     func testPanelOpacity_LingerFadeFromWaiting_AnimatesFrom050To0() async {
@@ -878,7 +922,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         sut.start()
         await activateSession()
         await showPanel()
-        XCTAssertEqual(sut.viewModel.activityState, .counting)
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: activityState stays .warming after engine-ready (no WPM calc)")
 
         coordinator.audioPipelineDidBeginRecovery()
         await Task.yield()
@@ -888,6 +933,8 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     }
 
     func testRecovery_TransitionsToCounting_OnTokenWithin2s() async {
+        // M5.7: token arrival in recovery arms the WPM gate (startWPMGateSubscription), not direct .counting.
+        // Without a WPM calc, the gate has nothing to subscribe to, so state stays .recovering.
         makeComponents()
         sut.start()
         await activateSession()
@@ -900,12 +947,11 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         coordinator.audioPipelineDidEndRecovery()
         await Task.yield()
 
-        // Token arrives within the 2s recovery window → .counting
         coordinator.lastTokenArrival = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "Token arrival during recovery window must transition to .counting")
+        XCTAssertEqual(sut.viewModel.activityState, .recovering,
+                       "M5.7: token arrival in recovery arms WPM gate — without WPM calc state stays .recovering")
     }
 
     func testRecovery_TransitionsToWaiting_OnTimeoutNoToken() async {
@@ -986,11 +1032,11 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         XCTAssertEqual(sut.panelState, .visible,
                        "firing cancelled 2s hide must be a no-op — panel must stay .visible")
 
-        // AC-4: engine-ready must produce .counting without hitting assertionFailure
+        // AC-4: engine-ready must be a no-op for activityState (M5.7) and not hit assertionFailure
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "engine-ready must produce .counting after session-start-during-lingerFade")
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: engine-ready keeps .warming — .counting fires only via WPM gate")
         XCTAssertEqual(sut.panelState, .visible,
                        "panel must remain .visible after engine-ready")
     }
@@ -998,17 +1044,16 @@ final class FloatingPanelLifecycleTests: XCTestCase {
     // MARK: - Group 17: Wrapping freeze semantics + cold-start restart
 
     func testPanelOpacity_WaitingToCounting_WithoutData_HoldsAtWaitingOpacity() async {
-        // When voice resumes after a waiting period and no WPM data is available yet,
-        // the panel must hold at waitingOpacity (0.5) instead of flashing to workingOpacity (0.9).
-        // The opacity will rise to workingOpacity only when the first WPM of the new counting
-        // window arrives via the wpmFirstValueSubscription sink.
+        // M5.7: voice-resume from .waiting arms the WPM gate but does NOT enter .counting immediately.
+        // State stays .waiting (and opacity holds at 0.5) until first WPM arrives via gate.
         makeComponents(runAnimation: { _, block in
             NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0; ctx.allowsImplicitAnimation = true; block() }
         })
         sut.start()
         await activateSession()
-        await showPanel()
-        XCTAssertEqual(sut.viewModel.activityState, .counting)
+        await showPanel()  // engine-ready is a no-op in M5.7, stays .warming
+        XCTAssertEqual(sut.viewModel.activityState, .warming,
+                       "M5.7: activityState stays .warming after engine-ready (no WPM calc)")
 
         // Transition to .waiting via voice-inactivity silence hold
         coordinator.isVoiceInactive = true
@@ -1018,21 +1063,23 @@ final class FloatingPanelLifecycleTests: XCTestCase {
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
                        "Precondition: panel must be at 0.5 opacity in .waiting state")
 
-        // Voice resumes — waiting→counting transition, no WPM data yet (no WPM calculator in tests)
+        // Voice resumes — gate armed, state stays .waiting until first WPM (M5.7)
         coordinator.isVoiceInactive = false
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting)
+        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+                       "M5.7: voice-resume arms WPM gate but state stays .waiting — no flash to .counting without data")
 
         XCTAssertEqual(sut.panelWindow?.alphaValue ?? -1, 0.5, accuracy: 0.01,
-                       "Panel must hold at 0.5 (waitingOpacity) when .counting but no WPM data yet — no dashes flash")
+                       "Panel holds at 0.5 (waitingOpacity) during .waiting after voice-resume — gate armed waiting for WPM (M5.7)")
     }
 
     func testWrappingFromCounting_setsFrozen() async {
         makeComponents()
         sut.start()
         await activateSession()
-        await showPanel()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "Precondition: activityState must be .counting")
+        // M5.7: engine-ready no longer drives .counting. Set activityState directly to simulate
+        // reaching .counting (e.g. via WPM gate in production), then verify the wrapping freeze.
+        sut.viewModel.activityState = .counting
 
         await endSession()  // counting → wrapping
 

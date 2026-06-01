@@ -234,8 +234,8 @@ final class WidgetDecouplingTests: XCTestCase {
 
         XCTAssertEqual(fpc.panelState, .visible,
                        "Widget must remain .visible after engine-ready")
-        XCTAssertEqual(fpc.viewModel.activityState, .counting,
-                       "activityState must transition to .counting on engine-ready (AC-FIX7)")
+        XCTAssertEqual(fpc.viewModel.activityState, .warming,
+                       "M5.7: engine-ready keeps .warming — .counting fires only via WPM gate")
     }
 
     // MARK: - T-FIX7-A.5.2: Widget clears prior dismiss on new session, shows warming then counting (AC-FIX7)
@@ -267,8 +267,8 @@ final class WidgetDecouplingTests: XCTestCase {
         coordinator.lastEngineReadyAt = Date()
         await Task.yield()
 
-        XCTAssertEqual(fpc.viewModel.activityState, .counting,
-                       "activityState must transition to .counting on engine-ready after dismiss-cleared session (AC-FIX7)")
+        XCTAssertEqual(fpc.viewModel.activityState, .warming,
+                       "M5.7: engine-ready keeps .warming after dismiss-cleared session — .counting via WPM gate")
     }
 
     // MARK: - T-FIX3-B3: totalTokens increments per token, resets on session end (AC-FIX3-B3)

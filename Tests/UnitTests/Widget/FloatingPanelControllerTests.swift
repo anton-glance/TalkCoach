@@ -110,6 +110,68 @@ final class FloatingPanelControllerTests: XCTestCase {
         await Task.yield()
     }
 
+    // MARK: - CountingFPC helpers (reach .counting via WPM gate, not engine-ready shortcut)
+
+    private final class ClockBox {
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+    }
+
+    private struct CountingFPC {
+        let fpc: FloatingPanelController
+        let coord: SessionCoordinator
+        let micProv: FakeCoreAudioDeviceProvider
+        let calc: WPMCalculator
+        let sched: FakeHideScheduler
+        let wpmSched: WPMTestScheduler
+        let clockBox: ClockBox
+        let settings: SettingsStore
+    }
+
+    private func makeCountingFPC(label: String = "CountingFPC") -> CountingFPC {
+        let suite = "\(label).\(name)"
+        let defs = UserDefaults(suiteName: suite)!
+        defs.removePersistentDomain(forName: suite)
+        defs.set(true, forKey: "coachingEnabled")
+        let settings = SettingsStore(userDefaults: defs)
+        let wpmSched = WPMTestScheduler()
+        let clockBox = ClockBox()
+        let calc = WPMCalculator(settings: settings, scheduler: wpmSched, now: { clockBox.clock })
+        let micProv = FakeCoreAudioDeviceProvider()
+        micProv.stubbedDefaultDeviceID = 42
+        micProv.stubbedIsRunning = false
+        let mic = MicMonitor(provider: micProv)
+        let coord = SessionCoordinator(micMonitor: mic, settingsStore: settings)
+        let sched = FakeHideScheduler()
+        let fpc = FloatingPanelController(
+            sessionCoordinator: coord,
+            alertPresenter: FakeAlertPresenter(),
+            hideScheduler: sched,
+            settingsStore: settings,
+            wpmCalculator: calc,
+            reducedMotionProvider: { true }
+        )
+        return CountingFPC(fpc: fpc, coord: coord, micProv: micProv, calc: calc,
+                           sched: sched, wpmSched: wpmSched, clockBox: clockBox, settings: settings)
+    }
+
+    private func driveToCountingState(_ ctx: CountingFPC) async {
+        ctx.fpc.start()
+        ctx.coord.start()
+        ctx.micProv.stubbedIsRunning = true
+        ctx.micProv.simulateIsRunningChange()
+        await Task.yield()
+        ctx.calc.sessionActivated()
+        ctx.calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        ctx.clockBox.clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        ctx.calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        ctx.clockBox.clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await ctx.calc.consume(TranscribedToken(
+            token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        ctx.clockBox.clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        ctx.wpmSched.fireNext()
+        await Task.yield()
+    }
+
     // MARK: - Initial state
 
     func testInitialStateIsHiddenWhenIdle() {
@@ -120,28 +182,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertFalse(sut.isShowingPanel)
     }
 
-    // MARK: - Visible on mic-on (warming), counting on engine-ready (AC-FIX7)
-
-    func testMicActivation_ShowsWarming_CountingOnEngineReady() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-
-        XCTAssertEqual(sut.panelState, .visible,
-                       "Widget must appear immediately on mic-on in .warming state (AC-FIX7)")
-        XCTAssertTrue(sut.isShowingPanel)
-        XCTAssertEqual(sut.viewModel.activityState, .warming,
-                       "activityState must be .warming on mic-on (AC-FIX7)")
-
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-
-        XCTAssertEqual(sut.panelState, .visible)
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-                       "activityState must transition to .counting on engine-ready")
-    }
-
     // MARK: - Idempotent visible state
 
     func testStayVisibleOnReemittedActiveState() async {
@@ -149,9 +189,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         fake.simulateIsRunningChange()
@@ -190,14 +227,9 @@ final class FloatingPanelControllerTests: XCTestCase {
 
         // Rapid reactivation during lingerFull (Phase G)
         await activateMic()
-        // Linger is cancelled immediately at mic-on — panel is warming before engine-ready
+        // Linger is cancelled immediately at mic-on — panel is visible in .warming
         XCTAssertEqual(sut.panelState, .visible,
                        "Phase G: mic-on during lingerFull must cancel linger and show .visible immediately")
-
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.panelState, .visible,
-                       "Phase G: engine-ready during lingerFull must transition to .visible")
     }
 
     // MARK: - Dismiss confirmation
@@ -207,8 +239,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         fakeAlert.stubbedResult = true
 
         sut.requestDismiss()
@@ -224,8 +254,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         fakeAlert.stubbedResult = false
 
         sut.requestDismiss()
@@ -242,8 +270,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         fakeAlert.stubbedResult = true
         sut.requestDismiss()
         XCTAssertEqual(sut.panelState, .dismissed)
@@ -252,8 +278,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertEqual(sut.panelState, .dismissed)
 
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
         XCTAssertTrue(sut.isShowingPanel, "Panel must re-appear after dismissal scope clears")
     }
@@ -265,8 +289,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         settingsStore.coachingEnabled = false
@@ -285,16 +307,11 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
         fakeScheduler.fire()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
 
         XCTAssertEqual(sut.panelState, .visible, "Only one observation path — no double show")
     }
@@ -304,8 +321,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         XCTAssertTrue(sut.isShowingPanel)
 
         sut.stop()
@@ -350,8 +365,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         coordinator.start()
 
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
@@ -364,8 +377,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertEqual(sut.panelState, .hidden)
 
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
 
         await deactivateMic()
@@ -421,31 +432,25 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         await deactivateMic()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         XCTAssertEqual(sut.panelState, .visible)
     }
 
     // MARK: - VAD-driven waiting state (Architecture Z, sub-commit 3)
 
     func testIsVoiceInactiveTriggersWaitingState() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: must be counting")
+        let ctx = makeCountingFPC(label: "IsVoiceInactive")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition: must be counting")
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting,
             "widget must stay .counting during 2s silence hold")
 
-        fakeScheduler.fire()  // advance 2s hold timer
+        ctx.sched.fire()  // advance 2s hold timer
 
         XCTAssertEqual(
-            sut.viewModel.activityState, .waiting,
+            ctx.fpc.viewModel.activityState, .waiting,
             "VAD voice-inactive signal must transition widget to .waiting after 2s hold"
         )
     }
@@ -455,118 +460,79 @@ final class FloatingPanelControllerTests: XCTestCase {
     /// Gate speechStopped + hold fires → token arrives → widget STAYS in .waiting.
     /// RED fails because handleTokenArrival() unconditionally sets .counting.
     func testTokenArrivalDoesNotOverrideWaitingState() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        let ctx = makeCountingFPC(label: "TokenWaiting")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        fakeScheduler.fire()  // advance hold timer → .waiting
+        ctx.sched.fire()  // advance hold timer → .waiting
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .waiting, "must reach .waiting before token test")
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting, "must reach .waiting before token test")
 
-        coordinator.lastTokenArrival = Date()
+        ctx.coord.lastTokenArrival = Date()
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting,
             "token arrival must NOT override gate .waiting state")
     }
 
     /// Gate speechStopped then speechStarted within 2s — timer cancelled, widget stays .counting.
     /// RED fails because isVoiceInactive=true immediately sets .waiting (no hold).
     func testBreathPauseDoesNotFade() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        let ctx = makeCountingFPC(label: "BreathPause")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting,
             "widget must stay .counting during 2s hold — breath pause must not trigger fade")
 
-        coordinator.isVoiceInactive = false
+        ctx.coord.isVoiceInactive = false
         await Task.yield()
-        fakeScheduler.fire()  // cancelled timer — must be a no-op
+        ctx.sched.fire()  // cancelled timer — must be a no-op
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting,
             "voice-resume before 2s must cancel hold: widget stays .counting")
     }
 
     /// Gate speechStopped + 2s with no voice-resume → widget fades to .waiting.
     /// RED fails because isVoiceInactive=true immediately sets .waiting (no hold timer to verify).
     func testSilenceOver2sFadesToWaiting() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        let ctx = makeCountingFPC(label: "Silence2s")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting,
             "widget must stay .counting during 2s silence hold")
 
-        fakeScheduler.fire()  // 2s hold timer fires
+        ctx.sched.fire()  // 2s hold timer fires
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting,
             "widget must fade to .waiting after 2s silence with no voice-resume")
-    }
-
-    /// From .waiting, gate speechStarted restores .counting immediately.
-    /// RED fails because voiceInactiveSubscription ignores isVoiceInactive=false.
-    func testVoiceResumeFromWaitingIsInstant() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-
-        coordinator.isVoiceInactive = true
-        await Task.yield()
-        fakeScheduler.fire()  // advance hold timer to reach .waiting
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition: must reach .waiting")
-
-        coordinator.isVoiceInactive = false
-        await Task.yield()
-
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
-            "gate speechStarted must instantly restore .counting from .waiting")
     }
 
     /// Hold timer cancelled on teardown — no .waiting transition fires after stop().
     /// RED fails because isVoiceInactive=true immediately sets .waiting (no hold timer to cancel).
     func testHoldTimerCancelledOnTeardown() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        let ctx = makeCountingFPC(label: "HoldTeardown")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting,
             "hold timer pending — widget stays in .counting before teardown")
 
-        sut.stop()
-        fakeScheduler.fire()  // cancelled timer — must be a no-op
+        ctx.fpc.stop()
+        ctx.sched.fire()  // cancelled timer — must be a no-op
 
-        XCTAssertNotEqual(sut.viewModel.activityState, .waiting,
+        XCTAssertNotEqual(ctx.fpc.viewModel.activityState, .waiting,
             "cancelled hold timer must not set .waiting after teardown")
     }
 
@@ -600,17 +566,14 @@ final class FloatingPanelControllerTests: XCTestCase {
             reducedMotionProvider: { true }
         )
 
-        // Start FPC session lifecycle: mic-on → engine-ready → .counting (immediate snapshot, WPM nil)
+        // mic-on → .warming → wpmGateSubscription armed; WPM drive triggers gate → .counting
         fpc.start()
         coord.start()
         micProvider.stubbedIsRunning = true
         micProvider.simulateIsRunningChange()
         await Task.yield()
-        coord.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
 
-        // Drive WPMCalculator to produce wpmVoiced after FPC entered .counting
+        // Drive WPMCalculator to produce wpmVoiced — gate fires → .counting on first non-nil WPM
         calc.sessionActivated()
         calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
         clock = Date(timeIntervalSinceReferenceDate: 0.6)
@@ -636,6 +599,7 @@ final class FloatingPanelControllerTests: XCTestCase {
     // fires the 1s widget refresh timer, and asserts both monologueLevel and streakSeconds.
     // monologueLevel1Minutes = 0.5 min (30s) and clock = 31s preserved from M4.4 deviation.
 
+    // swiftlint:disable:next function_body_length
     func testMonologueLevelFlowsToViewModel() async {
         let suite = "MonoWidgetFlow.\(name)"
         let monoDefaults = UserDefaults(suiteName: suite)!
@@ -644,8 +608,13 @@ final class FloatingPanelControllerTests: XCTestCase {
         monoSettings.monologueLevel1Minutes = 0.5  // 30s — lowest round value above 0.25-min floor
 
         let monoScheduler = WPMTestScheduler()
-        var clock = Date(timeIntervalSinceReferenceDate: 0)
-        let detector = MonologueDetector(settings: monoSettings, scheduler: monoScheduler, now: { clock })
+        var monoClock = Date(timeIntervalSinceReferenceDate: 0)
+        let detector = MonologueDetector(settings: monoSettings, scheduler: monoScheduler, now: { monoClock })
+
+        // WPM calc needed to reach .counting via wpmGateSubscription (M5.7)
+        let wpmScheduler = WPMTestScheduler()
+        var wpmClock = Date(timeIntervalSinceReferenceDate: 0)
+        let wpmCalc = WPMCalculator(settings: monoSettings, scheduler: wpmScheduler, now: { wpmClock })
 
         let micProvider = FakeCoreAudioDeviceProvider()
         micProvider.stubbedDefaultDeviceID = 42
@@ -658,24 +627,32 @@ final class FloatingPanelControllerTests: XCTestCase {
             alertPresenter: FakeAlertPresenter(),
             hideScheduler: fpcScheduler,
             settingsStore: monoSettings,
+            wpmCalculator: wpmCalc,
             monologueDetector: detector,
             reducedMotionProvider: { true }
         )
 
-        // Start FPC session lifecycle: mic-on → engine-ready → .counting
+        // mic-on → .warming → gate armed; drive WPM → gate fires → .counting
         fpc.start()
         coord.start()
         micProvider.stubbedIsRunning = true
         micProvider.simulateIsRunningChange()
         await Task.yield()
-        coord.lastEngineReadyAt = Date()
+        wpmCalc.sessionActivated()
+        wpmCalc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        wpmClock = Date(timeIntervalSinceReferenceDate: 0.6)
+        wpmCalc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        wpmClock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await wpmCalc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        wpmClock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmScheduler.fireNext()   // gate fires → .counting
         await Task.yield()
         XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
 
         // Drive MonologueDetector past L1 (0.5 min = 30s)
         detector.sessionActivated()
         detector.notifyVADEvent(.speechStarted(sessionTime: 0))
-        clock = Date(timeIntervalSinceReferenceDate: 31.0)
+        monoClock = Date(timeIntervalSinceReferenceDate: 31.0)
         monoScheduler.fireNext()   // → detector.monologueLevel = 1, streakSeconds ≈ 31
         await Task.yield()
 
@@ -692,19 +669,15 @@ final class FloatingPanelControllerTests: XCTestCase {
     // MARK: - M4.4: Settings-propagation tests (red phase)
 
     func testSilenceHoldDelayReadsWpmPauseThreshold() async {
-        makeSUT()
-        settingsStore.wpmPauseThreshold = 3.0
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        let ctx = makeCountingFPC(label: "SilenceHoldDelay")
+        ctx.settings.wpmPauseThreshold = 3.0
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
 
-        guard let delay = fakeScheduler.scheduledDelay else {
+        guard let delay = ctx.sched.scheduledDelay else {
             XCTFail("No delay scheduled for silence hold timer")
             return
         }
@@ -718,13 +691,10 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
 
         await deactivateMic()
 
-        XCTAssertEqual(sut.panelState, .lingerFull, "precondition: session-end while counting starts lingerFull")
+        XCTAssertEqual(sut.panelState, .lingerFull, "precondition: session-end while visible starts lingerFull")
         guard let delay = fakeScheduler.scheduledDelay else {
             XCTFail("No delay scheduled for lingerFull timer")
             return
@@ -761,8 +731,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
         await deactivateMic()
         XCTAssertEqual(sut.panelState, .lingerFull, "precondition")
 
@@ -785,8 +753,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
 
         coordinator.audioPipelineDidBeginRecovery()
         await Task.yield()
@@ -803,53 +769,42 @@ final class FloatingPanelControllerTests: XCTestCase {
 
     // MARK: - M5.1: Widget refresh timer lifecycle
 
-    func testWidgetTimerStartsOnEngineReady() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
+    func testWidgetTimerStartsOnCounting() async {
+        let ctx = makeCountingFPC(label: "WidgetTimerStart")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
-
-        guard let delay = fakeScheduler.scheduledDelay else {
-            XCTFail("No delay scheduled after engine-ready — widget refresh timer not started (M5.1)")
+        guard let delay = ctx.sched.scheduledDelay else {
+            XCTFail("No delay scheduled after .counting entry — widget refresh timer not started (M5.1)")
             return
         }
         XCTAssertEqual(delay, 1.0, accuracy: 0.001,
-            "widget refresh timer must be scheduled at 1.0s on engine-ready (M5.1)")
+            "widget refresh timer must be scheduled at 1.0s on .counting entry (M5.1)")
     }
 
     func testWidgetTimerStopsOnSessionIdle() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
+        let ctx = makeCountingFPC(label: "TimerStopIdle")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition: timer must be running")
+        let cancelsBefore = ctx.sched.cancelCallCount
+
+        ctx.micProv.stubbedIsRunning = false
+        ctx.micProv.simulateIsRunningChange()
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: timer must be running")
-        let cancelsBefore = fakeScheduler.cancelCallCount
 
-        await deactivateMic()
-
-        XCTAssertGreaterThan(fakeScheduler.cancelCallCount, cancelsBefore,
+        XCTAssertGreaterThan(ctx.sched.cancelCallCount, cancelsBefore,
             "widget refresh timer must be cancelled when session ends (M5.1)")
     }
 
     func testWidgetTimerStopsOnStop() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: timer must be running")
-        let cancelsBefore = fakeScheduler.cancelCallCount
+        let ctx = makeCountingFPC(label: "TimerStopStop")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition: timer must be running")
+        let cancelsBefore = ctx.sched.cancelCallCount
 
-        sut.stop()
+        ctx.fpc.stop()
 
-        XCTAssertGreaterThan(fakeScheduler.cancelCallCount, cancelsBefore,
+        XCTAssertGreaterThan(ctx.sched.cancelCallCount, cancelsBefore,
             "widget refresh timer must be cancelled on stop() (M5.1)")
     }
 
@@ -860,8 +815,13 @@ final class FloatingPanelControllerTests: XCTestCase {
         let streakSettings = SettingsStore(userDefaults: streakDefaults)
 
         let monoScheduler = WPMTestScheduler()
-        var clock = Date(timeIntervalSinceReferenceDate: 0)
-        let detector = MonologueDetector(settings: streakSettings, scheduler: monoScheduler, now: { clock })
+        var monoClock = Date(timeIntervalSinceReferenceDate: 0)
+        let detector = MonologueDetector(settings: streakSettings, scheduler: monoScheduler, now: { monoClock })
+
+        // WPM calc needed to reach .counting via wpmGateSubscription (M5.7)
+        let wpmScheduler = WPMTestScheduler()
+        var wpmClock = Date(timeIntervalSinceReferenceDate: 0)
+        let wpmCalc = WPMCalculator(settings: streakSettings, scheduler: wpmScheduler, now: { wpmClock })
 
         let micProvider = FakeCoreAudioDeviceProvider()
         micProvider.stubbedDefaultDeviceID = 42
@@ -874,23 +834,32 @@ final class FloatingPanelControllerTests: XCTestCase {
             alertPresenter: FakeAlertPresenter(),
             hideScheduler: fpcScheduler,
             settingsStore: streakSettings,
+            wpmCalculator: wpmCalc,
             monologueDetector: detector,
             reducedMotionProvider: { true }
         )
 
+        // mic-on → .warming → gate armed; drive WPM → gate → .counting
         fpc.start()
         coord.start()
         micProvider.stubbedIsRunning = true
         micProvider.simulateIsRunningChange()
         await Task.yield()
-        coord.lastEngineReadyAt = Date()
+        wpmCalc.sessionActivated()
+        wpmCalc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        wpmClock = Date(timeIntervalSinceReferenceDate: 0.6)
+        wpmCalc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        wpmClock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await wpmCalc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        wpmClock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmScheduler.fireNext()   // gate fires → .counting
         await Task.yield()
         XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
 
         // Drive detector to 45s streak (below default L1=60s → monologueLevel stays 0)
         detector.sessionActivated()
         detector.notifyVADEvent(.speechStarted(sessionTime: 0))
-        clock = Date(timeIntervalSinceReferenceDate: 45.0)
+        monoClock = Date(timeIntervalSinceReferenceDate: 45.0)
         monoScheduler.fireNext()   // → detector.streakSeconds ≈ 45
         await Task.yield()
 
@@ -906,8 +875,6 @@ final class FloatingPanelControllerTests: XCTestCase {
         sut.start()
         coordinator.start()
         await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
 
         sut.viewModel.streakSeconds = 30.0
         XCTAssertEqual(sut.viewModel.streakSeconds, 30.0, "precondition")
@@ -971,13 +938,11 @@ final class FloatingPanelControllerTests: XCTestCase {
         monoScheduler.fireNext()   // → detector.streakSeconds = 31.0
         await Task.yield()
 
-        // Trigger engine-ready → setActivityState(.counting) → snapshotNow() synchronously
+        // mic-on → .warming → wpmGateSubscription fires immediately (WPM already non-nil) → .counting → snapshotNow
         fpc.start()
         coord.start()
         micProvider.stubbedIsRunning = true
         micProvider.simulateIsRunningChange()
-        await Task.yield()
-        coord.lastEngineReadyAt = Date()   // → snapshotNow fires here
         await Task.yield()
 
         // Values must be present WITHOUT firing the 1s widget timer
@@ -1015,17 +980,14 @@ final class FloatingPanelControllerTests: XCTestCase {
             reducedMotionProvider: { true }
         )
 
+        // mic-on → .warming → wpmGateSubscription armed
         fpc.start()
         coord.start()
         micProvider.stubbedIsRunning = true
         micProvider.simulateIsRunningChange()
         await Task.yield()
-        coord.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
-        XCTAssertNil(fpc.viewModel.currentWPMVoiced,
-            "precondition: WPM must be nil at .counting entry — first hop not yet computed")
 
+        // Drive WPM: gate fires → .counting → snapshotNow() pushes value without waiting for 1s timer
         calc.sessionActivated()
         calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
         clock = Date(timeIntervalSinceReferenceDate: 0.6)
@@ -1033,10 +995,10 @@ final class FloatingPanelControllerTests: XCTestCase {
         clock = Date(timeIntervalSinceReferenceDate: 1.1)
         await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
         clock = Date(timeIntervalSinceReferenceDate: 3.1)
-        wpmScheduler.fireNext()  // → calc.wpmVoiced becomes non-nil → subscription → snapshotNow()
+        wpmScheduler.fireNext()  // → calc.wpmVoiced non-nil → gate fires → .counting → snapshotNow()
         await Task.yield()
 
-        // No fpcScheduler.fire() — the subscription must push the value without timer fire
+        // No fpcScheduler.fire() — snapshotNow on .counting entry must push the value without timer fire
         XCTAssertNotNil(fpc.viewModel.currentWPMVoiced,
             "first WPM value arriving must immediately snapshot to viewModel without 1s timer fire (M5.1 Bug 1)")
     }
@@ -1069,12 +1031,12 @@ final class FloatingPanelControllerTests: XCTestCase {
         coord.start()
         micProvider.stubbedIsRunning = true
         micProvider.simulateIsRunningChange()
-        await Task.yield()
-        coord.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition")
-        let cancelCountAfterCounting = fpcScheduler.cancelCallCount
+        await Task.yield()  // mic-on → .warming → gate armed
 
+        // Capture cancel count before WPM fires
+        let cancelCountBeforeWPM = fpcScheduler.cancelCallCount
+
+        // Drive WPM: gate fires → .counting → T1 started → wpmFirstValueSubscription fires → T1 cancelled + T2
         calc.sessionActivated()
         calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
         clock = Date(timeIntervalSinceReferenceDate: 0.6)
@@ -1082,10 +1044,10 @@ final class FloatingPanelControllerTests: XCTestCase {
         clock = Date(timeIntervalSinceReferenceDate: 1.1)
         await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
         clock = Date(timeIntervalSinceReferenceDate: 3.1)
-        wpmScheduler.fireNext()  // → calc.wpmVoiced non-nil → subscription fires → re-phases timer
+        wpmScheduler.fireNext()  // → calc.wpmVoiced non-nil → gate → .counting → wpmFirstValueSubscription → re-phase
         await Task.yield()
 
-        XCTAssertGreaterThan(fpcScheduler.cancelCallCount, cancelCountAfterCounting,
+        XCTAssertGreaterThan(fpcScheduler.cancelCallCount, cancelCountBeforeWPM,
             "first WPM value must cancel existing timer token to re-phase from current moment (M5.1 Bug 1)")
         guard let rePhasedDelay = fpcScheduler.scheduledDelay else {
             XCTFail("no timer rescheduled after first WPM value — re-phasing did not fire (M5.1 Bug 1)")
@@ -1100,50 +1062,42 @@ final class FloatingPanelControllerTests: XCTestCase {
     // .counting persist into .waiting because the timer stops before it can write the nil/0 snapshot.
 
     func testCountingToWaitingForcesFinalSnapshot() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        let ctx = makeCountingFPC(label: "FinalSnapshot")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
         // Simulate stale values that would persist without an exit snapshot
-        sut.viewModel.currentWPMVoiced = 120
-        sut.viewModel.streakSeconds = 45.0
+        ctx.fpc.viewModel.currentWPMVoiced = 120
+        ctx.fpc.viewModel.streakSeconds = 45.0
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        fakeScheduler.fire()  // silence hold fires → enterWaiting() on nil calculators → .waiting
+        ctx.sched.fire()  // silence hold fires → enterWaiting() on nil calculators → .waiting
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition")
-        XCTAssertNil(sut.viewModel.currentWPMVoiced,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting, "precondition")
+        XCTAssertNil(ctx.fpc.viewModel.currentWPMVoiced,
             "exit from .counting must snapshot nil — stale WPM must not persist into .waiting (M5.1 Bug 2)")
-        XCTAssertEqual(sut.viewModel.streakSeconds, 0.0, accuracy: 0.001,
+        XCTAssertEqual(ctx.fpc.viewModel.streakSeconds, 0.0, accuracy: 0.001,
             "exit from .counting must snapshot 0 — stale streakSeconds must not persist into .waiting (M5.1 Bug 2)")
     }
 
     func testCountingToWaitingStopsTimerAfterSnapshot() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        let ctx = makeCountingFPC(label: "TimerStopSnapshot")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
 
-        sut.viewModel.currentWPMVoiced = 99
-        let cancelsBefore = fakeScheduler.cancelCallCount
+        ctx.fpc.viewModel.currentWPMVoiced = 99
+        let cancelsBefore = ctx.sched.cancelCallCount
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        fakeScheduler.fire()  // silence hold → snapshotNow() + stopWidgetRefreshTimer()
+        ctx.sched.fire()  // silence hold → snapshotNow() + stopWidgetRefreshTimer()
         await Task.yield()
 
-        XCTAssertGreaterThan(fakeScheduler.cancelCallCount, cancelsBefore,
+        XCTAssertGreaterThan(ctx.sched.cancelCallCount, cancelsBefore,
             "widget refresh timer must be cancelled when .counting exits to .waiting (M5.1 Bug 2)")
-        XCTAssertNil(sut.viewModel.currentWPMVoiced,
+        XCTAssertNil(ctx.fpc.viewModel.currentWPMVoiced,
             "stale WPM must be cleared synchronously by exit snapshot before timer stops (M5.1 Bug 2)")
     }
 
@@ -1196,13 +1150,20 @@ final class FloatingPanelControllerTests: XCTestCase {
         var clock = Date(timeIntervalSinceReferenceDate: 0)
         let fix = makeResumeFPCComponents(clock: { clock })
 
-        // Reach .waiting via full session lifecycle
+        // mic-on → .warming → gate armed; drive WPM → gate → .counting
         fix.fpc.start()
         fix.coord.start()
         fix.micProvider.stubbedIsRunning = true
         fix.micProvider.simulateIsRunningChange()
         await Task.yield()
-        fix.coord.lastEngineReadyAt = Date()   // → .counting
+        fix.calc.sessionActivated()
+        fix.calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        fix.calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await fix.calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        fix.wpmScheduler.fireNext()   // gate fires → .counting
         await Task.yield()
         XCTAssertEqual(fix.fpc.viewModel.activityState, .counting, "precondition")
 
@@ -1213,28 +1174,28 @@ final class FloatingPanelControllerTests: XCTestCase {
         await Task.yield()
         XCTAssertEqual(fix.fpc.viewModel.activityState, .waiting, "precondition: must reach .waiting")
 
-        // Drive WPM and streak to known values while in .waiting
+        // Voice resume → gate armed, stays .waiting (M5.7)
+        fix.coord.isVoiceInactive = false
+        await Task.yield()
+        XCTAssertEqual(fix.fpc.viewModel.activityState, .waiting, "precondition: stays .waiting after resume")
+
+        // Drive WPM and streak while gate is armed; gate fires → .counting → snapshotNow() synchronously
+        // Token must arrive within the 10s window when WPM fires (clock=45): consume at 45 not 4.6.
         fix.calc.sessionActivated()
         fix.calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
-        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        clock = Date(timeIntervalSinceReferenceDate: 4.0)
         fix.calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
-        clock = Date(timeIntervalSinceReferenceDate: 1.1)
-        await fix.calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
-        clock = Date(timeIntervalSinceReferenceDate: 3.1)
-        fix.wpmScheduler.fireNext()
-        await Task.yield()
         fix.detector.sessionActivated()
         fix.detector.notifyVADEvent(.speechStarted(sessionTime: 0))
         clock = Date(timeIntervalSinceReferenceDate: 45.0)
-        fix.monoScheduler.fireNext()   // → detector.streakSeconds ≈ 45
+        fix.monoScheduler.fireNext()   // → detector.streakSeconds ≈ 41 (45 - speechStart 4.0)
         await Task.yield()
-
-        // Voice resumes → .counting → snapshotNow() synchronously
-        fix.coord.isVoiceInactive = false
+        await fix.calc.consume(TranscribedToken(token: "one two three", startTime: 43, endTime: 44, isFinal: true))
+        fix.wpmScheduler.fireNext()   // gate fires → .counting → snapshotNow captures WPM + streak
         await Task.yield()
 
         XCTAssertEqual(fix.fpc.viewModel.activityState, .counting,
-            "precondition: voice resume must restore .counting")
+            "WPM gate must restore .counting on first WPM after voice-resume from .waiting (M5.7)")
         XCTAssertNotNil(fix.fpc.viewModel.currentWPMVoiced,
             "immediate snapshot on .waiting→.counting must capture WPM synchronously (M5.1)")
         XCTAssertGreaterThan(fix.fpc.viewModel.streakSeconds, 40.0,
@@ -1244,93 +1205,45 @@ final class FloatingPanelControllerTests: XCTestCase {
     // MARK: - M5.4a: hasReceivedWPM persists through a waiting cycle (no mark on resume)
 
     func testHasReceivedWPM_survivesWaitingReEntry() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()
+        let ctx = makeCountingFPC(label: "HasReceivedWPM")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition")
+        // First WPM landed via gate → hasReceivedWPM should be true via viewModel's internal Combine sink
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition")
+        XCTAssertTrue(ctx.fpc.viewModel.hasReceivedWPM, "precondition: hasReceivedWPM set by first WPM")
 
-        // Simulate first WPM arriving — triggers hasReceivedWPM=true via WidgetViewModel's Combine sink.
-        sut.viewModel.currentWPMVoiced = 130
+        // Silence hold fires → .waiting
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
+        ctx.sched.fire()
         await Task.yield()
-        XCTAssertTrue(sut.viewModel.hasReceivedWPM, "precondition: hasReceivedWPM set by first WPM")
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting, "precondition: .waiting after silence hold")
 
-        // Silence hold fires → .waiting; snapshotNow reads nil from nil calculator → currentWPMVoiced=nil.
-        coordinator.isVoiceInactive = true
+        // Voice resumes → gate armed, stays .waiting
+        ctx.coord.isVoiceInactive = false
         await Task.yield()
-        fakeScheduler.fire()
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition: .waiting after silence hold")
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting, "gate armed: stays .waiting until first WPM")
 
-        // Voice resumes → .counting with nil WPM (skipOpacityChange active, no calculator).
-        coordinator.isVoiceInactive = false
+        // Drive WPM again to fire gate → .counting
+        ctx.calc.sessionActivated()
+        ctx.calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        ctx.calc.notifyVADEvent(.speechStarted(sessionTime: 0))
+        ctx.clockBox.clock = Date(timeIntervalSinceReferenceDate: 4.0)
+        await ctx.calc.consume(TranscribedToken(
+            token: "one two three", startTime: 3, endTime: 4, isFinal: true))
+        ctx.clockBox.clock = Date(timeIntervalSinceReferenceDate: 6.1)
+        ctx.wpmSched.fireNext()  // gate fires → .counting
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: .counting after vad-active")
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition: .counting after gate")
 
-        XCTAssertTrue(sut.viewModel.hasReceivedWPM,
+        XCTAssertTrue(ctx.fpc.viewModel.hasReceivedWPM,
             "hasReceivedWPM must remain true through a mid-session waiting cycle — resetViewModel is never called here (M5.4a)")
         XCTAssertFalse(
-            WidgetView.showColdStartMark(activityState: sut.viewModel.activityState, hasReceivedWPM: sut.viewModel.hasReceivedWPM),
+            WidgetView.showColdStartMark(
+                activityState: ctx.fpc.viewModel.activityState,
+                hasReceivedWPM: ctx.fpc.viewModel.hasReceivedWPM),
             "cold-start mark must not reappear on resume from waiting: dashes hold, not the pulsing mark (M5.4a)"
         )
-    }
-
-    // MARK: - M5.4a: waiting→counting with nil WPM defers opacity raise (no bright-dashes flash)
-
-    func testWaitingToCountingNilWPM_skipsOpacityRaise() async {
-        let suiteName = "WaitingSkipOpacity.\(name)"
-        let defs = UserDefaults(suiteName: suiteName)!
-        defs.removePersistentDomain(forName: suiteName)
-        defs.set(true, forKey: "coachingEnabled")
-        let skipSettings = SettingsStore(userDefaults: defs)
-        let skipDev = FakeCoreAudioDeviceProvider()
-        skipDev.stubbedDefaultDeviceID = 42
-        skipDev.stubbedIsRunning = false
-        let skipAlert = FakeAlertPresenter()
-        let skipSched = FakeHideScheduler()
-        let skipMic = MicMonitor(provider: skipDev)
-        let skipCoord = SessionCoordinator(micMonitor: skipMic, settingsStore: skipSettings)
-        var animationCalls: [TimeInterval] = []
-        let skipFPC = FloatingPanelController(
-            sessionCoordinator: skipCoord,
-            alertPresenter: skipAlert,
-            hideScheduler: skipSched,
-            settingsStore: skipSettings,
-            reducedMotionProvider: { true },
-            runAnimation: { dur, block in animationCalls.append(dur); block() }
-        )
-
-        skipFPC.start()
-        skipCoord.start()
-        skipDev.stubbedIsRunning = true
-        skipDev.simulateIsRunningChange()
-        await Task.yield()
-        skipCoord.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(skipFPC.viewModel.activityState, .counting, "precondition")
-
-        // Silence hold → .waiting
-        skipCoord.isVoiceInactive = true
-        await Task.yield()
-        skipSched.fire()
-        await Task.yield()
-        XCTAssertEqual(skipFPC.viewModel.activityState, .waiting, "precondition")
-
-        // Clear any opacity calls accumulated during warming/counting/waiting transitions.
-        animationCalls.removeAll()
-
-        // Resume → .counting with nil WPM (no calculator injected). skipOpacityChange must suppress
-        // the opacity raise that would otherwise flash the dashes to full brightness before a number lands.
-        skipCoord.isVoiceInactive = false
-        await Task.yield()
-        XCTAssertEqual(skipFPC.viewModel.activityState, .counting, "precondition: resumed to .counting")
-        XCTAssertNil(skipFPC.viewModel.currentWPMVoiced, "precondition: WPM nil (no calculator)")
-
-        XCTAssertTrue(animationCalls.isEmpty,
-            "runAnimation must NOT be called on waiting→counting with nil WPM — skipOpacityChange guard defers opacity raise until first WPM arrives (S045 smoke #5, M5.4a)")
     }
 
     // MARK: - M5.4a: first WPM after waiting triggers 0.7s animated opacity raise (S045 smoke #5)
@@ -1364,49 +1277,53 @@ final class FloatingPanelControllerTests: XCTestCase {
             runAnimation: { dur, block in animationCalls.append(dur); block() }
         )
 
-        // Drive to .counting
+        // mic-on → .warming → gate armed; drive WPM → gate → .counting (initial session)
         raisedFPC.start()
         raisedCoord.start()
         raisedDev.stubbedIsRunning = true
         raisedDev.simulateIsRunningChange()
         await Task.yield()
-        raisedCoord.lastEngineReadyAt = Date()
-        await Task.yield()
-        XCTAssertEqual(raisedFPC.viewModel.activityState, .counting, "precondition")
-
-        // Arm WPMCalculator (matches production wiring sequence)
         calc.sessionActivated()
-        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.0))  // engineReadyCutoff = 0.5
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmSched.fireNext()   // gate fires → .counting
+        await Task.yield()
+        XCTAssertEqual(raisedFPC.viewModel.activityState, .counting, "precondition: reach .counting")
 
-        // Silence hold → .waiting (enterWaiting clears calculator state, wpmFirstValueSubscription torn down)
+        // Silence hold → .waiting
         raisedCoord.isVoiceInactive = true
         await Task.yield()
         raisedSched.fire()
         await Task.yield()
-        XCTAssertEqual(raisedFPC.viewModel.activityState, .waiting, "precondition")
+        XCTAssertEqual(raisedFPC.viewModel.activityState, .waiting, "precondition: reach .waiting")
         XCTAssertNil(raisedFPC.viewModel.currentWPMVoiced, "precondition: WPM cleared by enterWaiting")
 
-        // Resume → .counting (nil WPM, skipOpacityChange; wpmFirstValueSubscription re-established)
+        // Voice resume → stays .waiting (gate re-armed, M5.7)
         raisedCoord.isVoiceInactive = false
         await Task.yield()
-        XCTAssertEqual(raisedFPC.viewModel.activityState, .counting, "precondition: resumed to .counting")
+        XCTAssertEqual(raisedFPC.viewModel.activityState, .waiting, "precondition: stays .waiting until WPM")
 
-        // Clear opacity calls from setup (warming/counting/waiting/resume transitions)
+        // Clear opacity calls from warming/counting/waiting transitions
         animationCalls.removeAll()
 
-        // Drive WPMCalculator via the production re-arm path (speechStarted restarts the refresh loop
-        // when refreshToken==nil and engineReadyCutoff!=nil). New speech + tokens meet the floor guards.
-        calc.notifyVADEvent(.speechStarted(sessionTime: 0))   // re-arms loop; currentSpeechStart = t=0
-        clock = Date(timeIntervalSinceReferenceDate: 1.0)     // arrival time for token (> cutoff 0.5)
+        // Drive WPM: gate fires → .waiting→.counting → setActivityState calls applyPanelOpacity(0.7s)
+        calc.sessionActivated()
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0))
+        clock = Date(timeIntervalSinceReferenceDate: 1.0)
         await calc.consume(TranscribedToken(token: "one two three four", startTime: 0, endTime: 1, isFinal: true))
-        clock = Date(timeIntervalSinceReferenceDate: 3.5)
-        // voicedSec: clippedStart=max(0.0, 0.5)=0.5; voiced=3.5−0.5=3.0 ≥ 2.0 ✓; words=4 ≥ 3 ✓
-        wpmSched.fireNext()  // computeAndPublish → wpmVoiced = non-nil → wpmFirstValueSubscription fires
+        clock = Date(timeIntervalSinceReferenceDate: 5.5)  // advance past 2s minVoiced from speechStart (3.1)
+        wpmSched.fireNext()  // gate fires → .counting → applyPanelOpacity(0.7)
+        await Task.yield()
 
         XCTAssertNotNil(raisedFPC.viewModel.currentWPMVoiced,
-            "first WPM after waiting must land in viewModel immediately via wpmFirstValueSubscription (M5.4a)")
+            "first WPM after waiting must land in viewModel immediately via gate→.counting snapshotNow (M5.7)")
         XCTAssertTrue(animationCalls.contains(where: { abs($0 - 0.7) < 0.01 }),
-            "applyPanelOpacity(duration: 0.7) must fire on first WPM after waiting — animated fade from dim to workingOpacity, not an instant snap (S045 smoke #5, M5.4a)")
+            "applyPanelOpacity(duration: 0.7) must fire on .waiting→.counting transition — 0.7s fade from dim to workingOpacity (S045 smoke #5, M5.7)")
     }
 
     // MARK: - M5.7 Part 3: counting fires only on first WPM (wpmGateSubscription)
@@ -1442,7 +1359,6 @@ final class FloatingPanelControllerTests: XCTestCase {
     }
 
     // First non-nil WPM in .warming fires wpmGateSubscription → .counting (M5.7).
-    // swiftlint:disable:next function_body_length
     func testFirstWPM_inWarming_transitionsToCounting() async {
         let suite = "FirstWPMWarming.\(name)"
         let defs = UserDefaults(suiteName: suite)!
@@ -1487,24 +1403,20 @@ final class FloatingPanelControllerTests: XCTestCase {
 
     // Voice-resume from .waiting arms the gate only; state stays .waiting until first WPM (M5.7).
     func testWaiting_resumes_staysWaitingUntilFirstWPM() async {
-        makeSUT()
-        sut.start()
-        coordinator.start()
-        await activateMic()
-        coordinator.lastEngineReadyAt = Date()   // precondition shortcut; migrated to WPM path in green
-        await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .counting, "precondition: reach .counting")
+        let ctx = makeCountingFPC(label: "WaitingResumes")
+        await driveToCountingState(ctx)
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .counting, "precondition: reach .counting")
 
-        coordinator.isVoiceInactive = true
+        ctx.coord.isVoiceInactive = true
         await Task.yield()
-        fakeScheduler.fire()
+        ctx.sched.fire()
         await Task.yield()
-        XCTAssertEqual(sut.viewModel.activityState, .waiting, "precondition: reach .waiting via silence hold")
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting, "precondition: reach .waiting via silence hold")
 
-        coordinator.isVoiceInactive = false
+        ctx.coord.isVoiceInactive = false
         await Task.yield()
 
-        XCTAssertEqual(sut.viewModel.activityState, .waiting,
+        XCTAssertEqual(ctx.fpc.viewModel.activityState, .waiting,
             "voice-resume from .waiting must NOT immediately enter .counting — gate waits for first WPM (M5.7)")
     }
 
@@ -1537,12 +1449,18 @@ final class FloatingPanelControllerTests: XCTestCase {
         micProv.stubbedIsRunning = true
         micProv.simulateIsRunningChange()
         await Task.yield()
-        coord.lastEngineReadyAt = Date()   // precondition shortcut; migrated to WPM path in green
-        await Task.yield()
-        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition: reach .counting via engine-ready")
 
+        // Initial WPM drive to reach .counting via wpmGateSubscription
         calc.sessionActivated()
-        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.0))
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmSched.fireNext()
+        await Task.yield()
+        XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition: reach .counting via wpmGateSubscription (M5.7)")
 
         coord.isVoiceInactive = true
         await Task.yield()
@@ -1556,11 +1474,15 @@ final class FloatingPanelControllerTests: XCTestCase {
         XCTAssertEqual(fpc.viewModel.activityState, .waiting,
             "after voice-resume, must stay .waiting until first WPM (M5.7)")
 
+        // Re-arm calc after enterWaiting cleared its state
+        calc.sessionActivated()
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.0))
+
         calc.notifyVADEvent(.speechStarted(sessionTime: 0))
         clock = Date(timeIntervalSinceReferenceDate: 1.0)
         await calc.consume(TranscribedToken(
             token: "one two three four", startTime: 0, endTime: 1, isFinal: true))
-        clock = Date(timeIntervalSinceReferenceDate: 3.5)
+        clock = Date(timeIntervalSinceReferenceDate: 5.5)  // advance past 2s minVoiced from speechStart (3.1)
         wpmSched.fireNext()   // calc.wpmVoiced non-nil → gate fires → .counting
         await Task.yield()
 
@@ -1684,6 +1606,9 @@ final class FloatingPanelControllerTests: XCTestCase {
         defs.removePersistentDomain(forName: suiteName)
         defs.set(true, forKey: "coachingEnabled")
         let settings = SettingsStore(userDefaults: defs)
+        let wpmSched = WPMTestScheduler()
+        var clock = Date(timeIntervalSinceReferenceDate: 0)
+        let calc = WPMCalculator(settings: settings, scheduler: wpmSched, now: { clock })
         let dev = FakeCoreAudioDeviceProvider()
         dev.stubbedDefaultDeviceID = 42
         dev.stubbedIsRunning = false
@@ -1695,6 +1620,7 @@ final class FloatingPanelControllerTests: XCTestCase {
             alertPresenter: FakeAlertPresenter(),
             hideScheduler: sched,
             settingsStore: settings,
+            wpmCalculator: calc,
             reducedMotionProvider: { true },
             runAnimation: { _, block in animationCount += 1; block() }
         )
@@ -1703,7 +1629,16 @@ final class FloatingPanelControllerTests: XCTestCase {
         dev.stubbedIsRunning = true
         dev.simulateIsRunningChange()
         await Task.yield()
-        coord.lastEngineReadyAt = Date()   // precondition shortcut; migrated to WPM path in green
+
+        // WPM drive to reach .counting via wpmGateSubscription
+        calc.sessionActivated()
+        calc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
+        clock = Date(timeIntervalSinceReferenceDate: 0.6)
+        calc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 0.5))
+        clock = Date(timeIntervalSinceReferenceDate: 1.1)
+        await calc.consume(TranscribedToken(token: "one two three", startTime: 0, endTime: 1, isFinal: true))
+        clock = Date(timeIntervalSinceReferenceDate: 3.1)
+        wpmSched.fireNext()
         await Task.yield()
         XCTAssertEqual(fpc.viewModel.activityState, .counting, "precondition: .counting")
 

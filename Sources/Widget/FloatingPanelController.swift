@@ -42,6 +42,7 @@ final class FloatingPanelController {
     private var hideToken: HideSchedulerToken?
     private var widgetRefreshToken: HideSchedulerToken?
     private var wpmFirstValueSubscription: AnyCancellable?
+    private var wpmGateSubscription: AnyCancellable?
     private var dragDebounceToken: HideSchedulerToken?
     private var recoveryEndToken: HideSchedulerToken?
     private var silenceHoldToken: HideSchedulerToken?
@@ -49,6 +50,7 @@ final class FloatingPanelController {
 
     private var isProgrammaticMove = false
     private var isStarted = false
+    private var isHoverActive = false
     private var lastTokenObservedAtNs: UInt64 = 0
     private var lingerStartedAt: Date?
 
@@ -132,8 +134,9 @@ final class FloatingPanelController {
                     self.startSilenceHoldTimer()
                 } else {
                     self.cancelSilenceHoldTimer()
+                    // M5.7: voice-resume arms the WPM gate; .counting fires when WPM arrives.
                     if self.panelState == .visible, self.viewModel.activityState == .waiting {
-                        self.setActivityState(.counting, reason: "vad-active")
+                        self.startWPMGateSubscription()
                     }
                 }
             }
@@ -160,6 +163,7 @@ final class FloatingPanelController {
         engineReadySubscription = nil
         voiceInactiveSubscription = nil
         recoverySubscription = nil
+        wpmGateSubscription = nil
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
             moveObserver = nil
@@ -303,10 +307,12 @@ final class FloatingPanelController {
             // Unreachable: handleSessionActive always shows the panel (warming) before engine-ready fires.
             assertionFailure("engine-ready while hidden — handleSessionActive should have shown warming panel first")
         case .visible:
-            // warming → counting
-            setActivityState(.counting, reason: "engine-ready")
+            // M5.7: engine-ready is now a no-op for activityState. .counting fires only on first WPM
+            // via wpmGateSubscription started when .warming was entered.
+            Logger.floatingPanel.info("engine-ready received — WPM gate active, waiting for first non-nil WPM")
         case .lingerFull:
-            // Phase G: in-place content swap — cancel linger, reset content, stay showing
+            // Phase G: in-place content swap — cancel linger, reset content, stay showing, go to .warming.
+            // wpmGateSubscription starts inside setActivityState(.warming).
             cancelPendingHide()
             lingerStartedAt = nil
             resetViewModel()
@@ -314,10 +320,10 @@ final class FloatingPanelController {
             viewModel.sessionStartedAt = ctx.startedAt
             panelState = .visible
             applyPanelOpacity(duration: nil)
-            setActivityState(.counting, reason: "engine-ready-phase-g")
-            Logger.floatingPanel.info("Phase G: engine-ready during lingerFull — in-place content swap → .counting")
+            setActivityState(.warming, reason: "engine-ready-phase-g")
+            Logger.floatingPanel.info("Phase G: engine-ready during lingerFull — in-place content swap → .warming")
         case .lingerFade:
-            // Phase G: cancel fade, snap alpha, reset content, stay showing
+            // Phase G: cancel fade, snap alpha, reset content, stay showing, go to .warming.
             cancelPendingHide()
             panel?.alphaValue = 1.0
             lingerStartedAt = nil
@@ -326,8 +332,8 @@ final class FloatingPanelController {
             viewModel.sessionStartedAt = ctx.startedAt
             panelState = .visible
             applyPanelOpacity(duration: nil)
-            setActivityState(.counting, reason: "engine-ready-phase-g")
-            Logger.floatingPanel.info("Phase G: engine-ready during lingerFade — fade cancelled → .counting")
+            setActivityState(.warming, reason: "engine-ready-phase-g")
+            Logger.floatingPanel.info("Phase G: engine-ready during lingerFade — fade cancelled → .warming")
         case .dismissed:
             break
         }
@@ -339,10 +345,10 @@ final class FloatingPanelController {
         case .visible:
             viewModel.totalTokens += 1
             cancelRecoveryEndTimer()
-            // Gate is the sole authority for counting↔waiting. Tokens exit .warming
-            // but must not override .waiting set by the gate's hold timer.
-            if viewModel.activityState != .waiting {
-                setActivityState(.counting, reason: "token")
+            // M5.7: tokens no longer drive .counting directly. If recovering, arm the WPM gate so
+            // the next non-nil WPM transitions .recovering → .counting via wpmGateSubscription.
+            if viewModel.activityState == .recovering {
+                startWPMGateSubscription()
             }
             let t3Ns = DispatchTime.now().uptimeNanoseconds
             let t1Ns = lastTokenObservedAtNs
@@ -352,7 +358,6 @@ final class FloatingPanelController {
         case .lingerFull, .lingerFade:
             viewModel.totalTokens += 1
             cancelRecoveryEndTimer()
-            setActivityState(.counting, reason: "token")
         case .hidden, .dismissed:
             break
         }
@@ -402,6 +407,7 @@ final class FloatingPanelController {
 
     private func resetViewModel() {
         stopWidgetRefreshTimer()
+        wpmGateSubscription = nil
         viewModel.totalTokens = 0
         viewModel.sessionStartedAt = nil
         viewModel.isSessionActive = false
@@ -598,9 +604,11 @@ final class FloatingPanelController {
         default:
             break
         }
+        setHoverActive(true)
     }
 
     func handleHoverExited() {
+        setHoverActive(false)
         guard panelState == .lingerFull else { return }
         cancelPendingHide()  // multi-fire fix: cancel prior token before scheduling
         let remaining: TimeInterval
@@ -666,14 +674,17 @@ final class FloatingPanelController {
         // Only freeze to live values when wrapping from .counting (numbers showing).
         // Wrapping from .waiting keeps the dashed/dimmed waiting presentation — do not resurrect numbers.
         if state == .wrapping && prev == .counting { viewModel.isFrozen = true }
-        // Suppress opacity increase when entering .counting from .waiting with no data yet.
-        // The panel holds at waitingOpacity until the first WPM of this counting window arrives,
-        // avoiding a bright-dashes flash during the pre-data window. Opacity is applied in the
-        // wpmFirstValueSubscription sink once currentWPMVoiced becomes non-nil.
-        let skipOpacityChange = state == .counting && prev == .waiting && viewModel.currentWPMVoiced == nil
-        if !skipOpacityChange {
-            applyPanelOpacity(duration: Self.panelOpacityDuration(from: prev, to: state))
+        // M5.7: when warming begins, arm the WPM gate. The gate fires .counting when the first
+        // non-nil WPM arrives, ensuring .counting is never entered with nil WPM.
+        if state == .warming {
+            startWPMGateSubscription()
         }
+        // M5.7: cancel any pending gate subscription on terminal states so a stale WPM publish
+        // cannot fire .counting after the session has wrapped or been dismissed.
+        if state == .wrapping || state == .dismissed || state == .idle {
+            wpmGateSubscription = nil
+        }
+        applyPanelOpacity(duration: Self.panelOpacityDuration(from: prev, to: state))
     }
 
     // MARK: - Widget Refresh Timer
@@ -700,11 +711,11 @@ final class FloatingPanelController {
         wpmFirstValueSubscription = nil
     }
 
-    // Subscribe to the WPM calculator's published value so the first non-nil reading
-    // lands in the viewModel immediately — without waiting up to 1s for the display timer.
-    // Also re-phases the 1s timer from the moment data appears, keeping updates coherent.
-    // Uses the publisher value directly because @Published fires on willSet; the property
-    // itself still holds the old value when the sink runs.
+    // Subscribe to the WPM calculator's published value so each new non-nil reading
+    // lands in the viewModel promptly — re-phases the 1s timer from the moment data appears.
+    // M5.7: applyPanelOpacity removed from this sink; opacity is raised by setActivityState(.counting)
+    // which is guaranteed to fire before this subscription is established (gate → .counting → startWidgetRefreshTimer
+    // → startWPMFirstValueSubscription). The first Combine replay here is redundant data but harmless.
     private func startWPMFirstValueSubscription() {
         guard let calc = wpmCalculator else { return }
         wpmFirstValueSubscription = calc.$wpmVoiced
@@ -720,10 +731,32 @@ final class FloatingPanelController {
                 self.widgetRefreshToken = self.hideScheduler.schedule(delay: 1.0) { [weak self] in
                     self?.onWidgetRefreshFired()
                 }
-                // Raise to workingOpacity now that live data has arrived. Required when the panel
-                // was held at waitingOpacity through a waiting→counting transition with no initial
-                // data — the skipOpacityChange guard deferred this call until here.
-                self.applyPanelOpacity(duration: 0.7)
+            }
+    }
+
+    // One-shot subscription that fires .counting the first time WPMCalculator produces a non-nil value
+    // while the widget is in .warming or .waiting. Started on .warming entry and on voice-resume from
+    // .waiting. After setActivityState(.counting) the gate seeds currentWPMVoiced and re-phases the
+    // refresh timer because Combine @Published fires in willSet — wpmVoiced is not stored yet when
+    // snapshotNow() and startWPMFirstValueSubscription() run inside setActivityState.
+    private func startWPMGateSubscription() {
+        guard let calc = wpmCalculator else { return }
+        wpmGateSubscription = calc.$wpmVoiced
+            .compactMap { $0 }
+            .prefix(1)
+            .sink { [weak self] latestWPM in
+                guard let self else { return }
+                self.wpmGateSubscription = nil
+                self.setActivityState(.counting, reason: "first-wpm")
+                // @Published fires in willSet: wpmVoiced is not yet stored when snapshotNow() runs.
+                // Seed the value directly and re-phase the refresh timer from this moment.
+                self.viewModel.currentWPMVoiced = latestWPM
+                if let token = self.widgetRefreshToken {
+                    self.hideScheduler.cancel(token)
+                }
+                self.widgetRefreshToken = self.hideScheduler.schedule(delay: 1.0) { [weak self] in
+                    self?.onWidgetRefreshFired()
+                }
             }
     }
 
@@ -735,6 +768,31 @@ final class FloatingPanelController {
 
     // MARK: - Panel Opacity
 
+    // M5.7: hover override — raises panel to 1.0 on enter; restores natural alpha on exit.
+    // Duration is 0 when Reduce Motion is on, 200ms otherwise. applyPanelOpacity is suppressed
+    // while isHoverActive so state transitions during hover don't interfere.
+    // On hover-exit, the natural alpha is read from targetAlpha at the moment of exit,
+    // not at hover-start — so a state change during hover takes effect when hover ends.
+    private func setHoverActive(_ active: Bool) {
+        isHoverActive = active
+        let hoverDuration: TimeInterval = reducedMotionProvider() ? 0.0 : 0.2
+        let target: CGFloat?
+        if active {
+            target = 1.0
+        } else {
+            target = Self.targetAlpha(
+                for: viewModel.activityState,
+                workingOpacity: settingsStore.workingOpacity,
+                waitingOpacity: settingsStore.waitingOpacity
+            )
+        }
+        guard let alpha = target else { return }
+        guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
+        runAnimation(hoverDuration) { [weak self] in
+            self?.panel?.animator().alphaValue = alpha
+        }
+    }
+
     /// Returns the target window alpha for a given activity state. `nil` means no change.
     /// Extracted as a pure function so tests can assert without a live panel.
     static func targetAlpha(
@@ -745,7 +803,9 @@ final class FloatingPanelController {
         switch state {
         case .waiting: return CGFloat(waitingOpacity)
         case .counting: return CGFloat(workingOpacity)
-        case .warming, .recovering: return 1.0
+        // M5.7: warming uses waitingOpacity (same "system not ready" family as .waiting).
+        case .warming: return CGFloat(waitingOpacity)
+        case .recovering: return 1.0
         case .idle, .wrapping, .dismissed: return nil
         }
     }
@@ -762,6 +822,9 @@ final class FloatingPanelController {
     }
 
     private func applyPanelOpacity(duration: TimeInterval?) {
+        // M5.7: hover holds window alpha at 1.0; state changes during hover must not interrupt it.
+        // On hover-exit, setHoverActive(false) restores the natural alpha for the current state.
+        guard !isHoverActive else { return }
         guard panelState == .visible || panelState == .lingerFull || panelState == .lingerFade else { return }
         guard let alpha = Self.targetAlpha(
             for: viewModel.activityState,
