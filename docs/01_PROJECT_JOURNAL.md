@@ -1,5 +1,73 @@
 # Project Journal — Locto
 
+## Session 049 — 2026-06-01 — M5.7 COMPLETE & PHASE 5 CLOSED. Tag m5.7-complete.
+
+**Format:** Architect + product-owner + agent. Final module of Phase 5 (Widget UI). Rescoped from accessibility audit to four critical v1 fixes from S048 smoke + Reduce Motion verification sweep. Phase 5 retrospective at the bottom.
+
+### M5.7 — CLOSED ✅ (tag m5.7-complete, commit 3ec9a5b)
+
+**Original M5.7 scope (accessibility audit) DEFERRED to v2.** Locto's target user — a professional doing real-time speaking coaching during calls — doesn't warrant the v1 audit cost. VoiceOver labels + Increase Contrast moved to backlog as v2-accessibility. Reduce Motion verification was the one piece kept (it's the only kinetic-gate the v1 user materially needs), and it sweep-passed clean.
+
+**Four product decisions locked (S049):**
+- Warming alpha = `waitingOpacity` (0.5, was 1.0). Pulsing mark visibly dim.
+- Hover bumps window alpha to 1.0 in any state; mouse-leave returns to natural target alpha at that moment (not at hover-start). FPC/AppKit level via existing `TrackingContentView` NSTrackingArea, not SwiftUI routing.
+- `.counting` is entered ONLY when `WPMCalculator` publishes its first non-nil WPM. The three prior direct triggers (`reason=engine-ready`, `reason=token`, `reason=vad-active`) all removed; gate subscription is the single source of `.counting`. `.warming` is session-start-only — resumptions go `.waiting → .counting` directly.
+- Silence-hold during `.warming` is disabled. Warming-with-no-speech stays in `.warming` indefinitely (pulsing mark, 0.5 alpha), never drops to `.waiting`. The `.waiting` state is only reachable after `.counting` has been entered at least once in the session.
+
+**Architecture wins from the state-machine change:**
+- `skipOpacityChange` guard from M5.4 removed — became redundant because `.waiting → .counting` only fires with non-nil WPM (the gate guarantees it).
+- `applyPanelOpacity` removed from `wpmFirstValueSubscription` sink — the state transition itself drives the opacity raise via `panelOpacityDuration(from:to:)`.
+- Gate sink is exactly 3 lines: `wpmGateSubscription = nil; setActivityState(.counting, reason: "first-wpm"); viewModel.currentWPMVoiced = latestWPM`. No timer management, no overlap with `wpmFirstValueSubscription`, no Combine willSet workarounds.
+
+**One smoke regression caught and fixed inline:** closing mic during `.warming` (no WPM ever) was flashing to dashes before the 3+2 fade. The M5.4 `isFrozen` mechanism only covered `.counting → .wrapping`. Fix: extended `showColdStartMark` predicate to `(idle || warming || counting || wrapping) && !hasReceivedWPM` so the mark holds through `lingerFull + lingerFade` when no WPM ever arrived. Considered the alternative of extending `isFrozen` to cover wrapping-from-warming — rejected because the frozen branch renders non-idle values (numbers/bar/labels) at nil, producing dashes again. The predicate fix is cleaner.
+
+**Two known-deferrals from S049 smoke** (filed as v1.x backlog items M6.9 and M6.10):
+- **M6.9 — Reduce Motion wrap-fade snap:** the `lingerFull → lingerFade` wrap animation still runs under Reduce Motion. Anton's call: defer — an abrupt session-end is consistent with "animations off" intent.
+- **M6.10 — Mid-monologue dash flash:** Anton observed dashes appearing once mid-long-speech; couldn't reproduce. With M5.7's gate changes this should be rarer. Log-and-investigate-if-recurs item, not blocking.
+
+**Test infrastructure fix uncovered during M5.7:** `WPMTestScheduler.fireNext()` was setting `lastAction = nil` AFTER invoking the action, which wiped any new hop the action scheduled during invocation. Fix: capture the action first (`let action = lastAction; lastAction = nil; action?()`). The bug was latent — no pre-M5.7 test called `fireNext()` twice on chained hops — but M5.7's gate-fires-counting-which-starts-the-refresh-timer flow required consecutive hops. Genuine new capability enabled, no prior tests passing for the wrong reason.
+
+**Combine `@Published` willSet race understood and worked around cleanly.** During the gate sink → setActivityState(.counting) → startWidgetRefreshTimer → snapshotNow path, snapshotNow reads `wpmCalculator.wpmVoiced` and gets nil because the willSet sink fires before the property finishes updating. The 3-line sink writes `currentWPMVoiced = latestWPM` AFTER setActivityState, which overwrites snapshotNow's nil before any timer fires. Considered `.receive(on: DispatchQueue.main)` to defer the sink past willSet — rejected because tests rely on synchronous sink invocation, and async sinks make `Task.yield()` test patterns flaky.
+
+### Phase 5 retrospective — what shipped, what hurt, what we learned
+
+**Phase 5 ran Sessions 044–049. Six weeks of architect+agent+product-owner work. Closed today.**
+
+What shipped:
+- M5.1 (ViewModel + 1s refresh timer)
+- M5.2 (DesignTokens Swift port)
+- M5.3 (two-zone tile + Inter Display fonts bundled)
+- M5.4 (opacity state machine + cold-start pulsing mark + caret slide + hero-number tween + wrapping freeze + brand icons — M5.8 folded in here)
+- M5.4a (silence-latch + waiting-hold + no-flash regression-lock tests, verification-only)
+- M5.5 (Liquid Glass + hover lift + accessibility fallbacks via `ShadowStyle.inner`)
+- M5.6 (L3 monologue escalation pulse, continuous breathing)
+- M5.7 (counting-on-first-WPM + silence-gate + warming/hover-alpha + wrapping-from-warming mark hold)
+
+What ended up in production:
+- 7-state widget model with the `.counting` entry now firmly gated on real WPM.
+- Two orthogonal opacity layers (window alpha + content opacity) composed multiplicatively, with hover override at the AppKit layer.
+- Liquid Glass `.glassEffect()` background with two-zone tinted gradient above it, real inner shadow fallback for Reduce Transparency.
+- Cold-start pulsing Locto mark covering the entire pre-first-WPM window (idle/warming/counting-before-WPM/wrapping-before-WPM), restartable per session.
+- Continuous L3 breathing on the bottom cluster only, Reduce-Motion-gated.
+- Hover-bumps-alpha at AppKit level, lift + X-reveal in SwiftUI — two clean channels with no feedback loop.
+
+What hurt:
+- **Push-before-smoke broke FOUR times in M5** (M5.4 round 1, M5.4a, M5.5 GREEN, M5.5 split). Even after the explicit "done = pushed" rule was added in S045, the agent kept declaring done while local-only. The corrective that finally worked: architect attempts `git cat-file -e <sha>` to detect local-only state (failure = correct, success = wrongly pushed), then audits via `git show <sha>` description-only, then Anton smokes local build, then push. This pattern locked in S048 and worked cleanly for M5.6 + M5.7.
+- **Plan-phase verification claims required byte audits.** M5.4a was a "no production code change" module — agent traced three call paths and concluded all three concerns were already correct. Architect required the trace be confirmed against actual HEAD bytes before approval. The conclusion was right, but the verification step was non-optional.
+- **Drop-shadow-vs-inner-shadow in M5.5** showed an agent flag is not the same as agent correcting. Agent honestly surfaced "technically a drop shadow" in the plan, did not correct it. Architect override required to ship the real `.shadow(.inner(…))`. Lesson: honest flags need explicit architect decisions, not implicit accept.
+- **State-machine refactor in M5.7 was the largest module** (~20 tests migrated, three direct `.counting` triggers removed). The `@Published` willSet race emerged only at integration time, not in the plan trace. Workaround was clean but only after architect rejected the agent's first (over-engineered, 5-line) fix and required the 3-line form. **Lesson: when a plan says "this is a small simplification" near a Combine boundary, expect a willSet race; budget for it.**
+
+What we kept:
+- The strawman pattern, the no-skipping rule, the verification-via-bytes audit, the commit-local→SHA-audit→smoke→push closure. All paid off across M5.
+
+**Phase 5 done. Phase 6 next.**
+
+### Carried forward
+
+- **Phase 6** — polish & ship-readiness. Backlog items M6.1 (manual language override), M6.2 (WPM band slider in Settings), M6.4 (dark/light mode visual check), M6.5 (first-launch defaults), M6.6 (perf pass), M6.7 (notarization + DMG), M6.8 (AirPods/HFP device-switch fix), plus the two v1.x deferrals from M5.7 (M6.9 Reduce Motion wrap-fade, M6.10 mid-monologue dash flash).
+- **Phase 6 estimate**: ~22–24h (was ~18h pre-M6.8, ~22h pre-M5.7 deferrals).
+- **End-of-phase checkpoint**: signed, notarized DMG. App passes all three success criteria from `02_PRODUCT_SPEC.md` after 2 weeks of personal use.
+
 ## Session 048 — 2026-05-31 — M5.6 COMPLETE: L3 monologue escalation pulse. Tag m5.6-complete.
 
 **Format:** Architect + product-owner + agent. Small module, single threshold, single behavior. Plan-approved with two corrections; commit-local → audit → smoke → push sequence worked cleanly for the first time this phase.
