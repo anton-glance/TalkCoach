@@ -23,6 +23,9 @@ struct WidgetView: View {
     // Hover state — purely visual. Never reaches viewModel, FPC, or any state machine.
     @State private var isHovered: Bool = false
 
+    // M5.6 — breathing pulse opacity for the bottom cluster at L3 (1↔0.5, 2s period).
+    @State private var pulseOpacity: Double = 1.0
+
     // Widget.jsx hardcodes borderAlpha=0.45, overriding tokens.js Border.restingWhiteOpacity=0.55.
     // tokens.js value is pre-iteration and stale.
     private static let borderAlpha: Double = 0.45
@@ -50,6 +53,11 @@ struct WidgetView: View {
         let reducedMotion = reducedMotionProvider()
         let reduceTransparency = reduceTransparencyProvider()
         let tintAlpha = WidgetView.effectiveTintAlpha(reduceTransparency: reduceTransparency)
+        let shouldPulse = WidgetView.shouldPulseBottomCluster(
+            monologueLevel: viewModel.monologueLevel,
+            reducedMotion: reducedMotion,
+            activityState: viewModel.activityState
+        )
 
         let wpmTint = idle ? Self.idleTint
             : DesignTokens.paceColors(wpm: wpm).tint
@@ -104,7 +112,7 @@ struct WidgetView: View {
                     Spacer(minLength: 0)
                     barZone(wpm: wpm, streak: streak, idle: idle)
                     Spacer(minLength: 0)
-                    bottomCluster(streak: streak, idle: idle, reducedMotion: reducedMotion)
+                    bottomCluster(streak: streak, idle: idle, reducedMotion: reducedMotion, shouldPulse: shouldPulse)
                 }
                 .padding(.horizontal, Self.paddingH)
                 .padding(.vertical, Self.paddingV)
@@ -152,11 +160,14 @@ struct WidgetView: View {
         )
         .onHover { isHovered = $0 }
         // Sync animated caret positions on first appear (no animation — snap to initial state).
+        // Also starts the L3 pulse immediately if the view is constructed while already at L3
+        // (e.g., construction smoke tests, or a session resumed mid-monologue).
         .onAppear {
             animatedPacePos = DesignTokens.spectrumPosition(wpm: wpm)
             animatedMonoPos = WidgetView.monoCaretFraction(
                 streakSeconds: streak, l3Seconds: viewModel.monoL3Seconds
             )
+            if shouldPulse { startPulse() }
         }
         // Animate pace caret to new WPM position — 400ms easeOut per design spec.
         .onChange(of: wpm) { _, newWPM in
@@ -173,6 +184,24 @@ struct WidgetView: View {
             withAnimation(.easeOut(duration: WidgetView.effectiveDuration(0.4, reducedMotion: reducedMotion))) {
                 animatedMonoPos = newPos
             }
+        }
+        // M5.6 — start or stop the L3 bottom-cluster breathing pulse on monologueLevel transitions.
+        .onChange(of: shouldPulse) { _, newValue in
+            newValue ? startPulse() : stopPulse()
+        }
+    }
+
+    // MARK: - M5.6 pulse helpers
+
+    private func startPulse() {
+        withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+            pulseOpacity = 0.5
+        }
+    }
+
+    private func stopPulse() {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            pulseOpacity = 1.0
         }
     }
 
@@ -260,7 +289,7 @@ struct WidgetView: View {
     // MARK: - Bottom cluster (monologue half)
 
     @ViewBuilder
-    private func bottomCluster(streak: TimeInterval, idle: Bool, reducedMotion: Bool) -> some View {
+    private func bottomCluster(streak: TimeInterval, idle: Bool, reducedMotion: Bool, shouldPulse: Bool) -> some View {
         let level2Seconds = viewModel.monoL2Seconds
 
         // Cluster opacity ramps 0.6 → 1.0 as streak approaches L2, matching Widget.jsx monoOpacity.
@@ -311,5 +340,6 @@ struct WidgetView: View {
                 .opacity(idle ? 0 : 1)
         }
         .opacity(monoOpacity)
+        .opacity(shouldPulse ? pulseOpacity : 1.0)
     }
 }

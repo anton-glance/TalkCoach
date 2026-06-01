@@ -85,4 +85,21 @@ extension WidgetView {
     static func effectiveTintAlpha(reduceTransparency: Bool) -> Double {
         reduceTransparency ? solidTintAlpha : glassTintAlpha
     }
+
+    // MARK: - M5.6 pulse predicate
+
+    /// True when the bottom cluster (M:SS + label) should breathe 1↔0.5 at 2s period.
+    /// Fires only at L3 (monologueLevel == 3) while .counting, with Reduce Motion suppression.
+    ///
+    /// Scope note: the spec called for the mono caret (in barZone) to pulse alongside M:SS + label.
+    /// The caret lives in barZone, not bottomCluster; splitting barZone to isolate it is out of scope
+    /// for M5.6. The pulse covers M:SS + label only. The caret already animates on streak changes
+    /// (400ms easeOut), keeping the L3 signal legible without the additional pulse.
+    static func shouldPulseBottomCluster(
+        monologueLevel: Int,
+        reducedMotion: Bool,
+        activityState: WidgetActivityState
+    ) -> Bool {
+        monologueLevel == 3 && !reducedMotion && activityState == .counting
+    }
 }

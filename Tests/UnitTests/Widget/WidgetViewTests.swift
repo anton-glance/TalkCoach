@@ -306,4 +306,44 @@ import XCTest
         )
         _ = view.body
     }
+
+    // MARK: - M5.6 shouldPulseBottomCluster predicate
+
+    func testShouldPulse_L3_counting_normalMotion_isTrue() {
+        XCTAssertTrue(WidgetView.shouldPulseBottomCluster(
+            monologueLevel: 3, reducedMotion: false, activityState: .counting))
+    }
+
+    func testShouldPulse_L3_counting_reducedMotion_isFalse() {
+        XCTAssertFalse(WidgetView.shouldPulseBottomCluster(
+            monologueLevel: 3, reducedMotion: true, activityState: .counting))
+    }
+
+    func testShouldPulse_L2_counting_normalMotion_isFalse() {
+        XCTAssertFalse(WidgetView.shouldPulseBottomCluster(
+            monologueLevel: 2, reducedMotion: false, activityState: .counting))
+    }
+
+    func testShouldPulse_L3_waiting_normalMotion_isFalse() {
+        XCTAssertFalse(WidgetView.shouldPulseBottomCluster(
+            monologueLevel: 3, reducedMotion: false, activityState: .waiting))
+    }
+
+    func testShouldPulse_L3_wrapping_normalMotion_isFalse() {
+        XCTAssertFalse(WidgetView.shouldPulseBottomCluster(
+            monologueLevel: 3, reducedMotion: false, activityState: .wrapping))
+    }
+
+    // MARK: - M5.6 construction smoke
+
+    func testConstructs_monologueL3_counting_doesNotCrash() {
+        let viewModel = WidgetViewModel()
+        viewModel.monologueLevel = 3
+        viewModel.activityState = .counting
+        viewModel.currentWPMVoiced = 140
+        viewModel.hasReceivedWPM = true
+        viewModel.streakSeconds = 130
+        let view = WidgetView(viewModel: viewModel, onDismiss: {})
+        _ = view.body
+    }
 }
