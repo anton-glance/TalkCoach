@@ -1,5 +1,36 @@
 # Project Journal — Locto
 
+## Session 048 — 2026-05-31 — M5.6 COMPLETE: L3 monologue escalation pulse. Tag m5.6-complete.
+
+**Format:** Architect + product-owner + agent. Small module, single threshold, single behavior. Plan-approved with two corrections; commit-local → audit → smoke → push sequence worked cleanly for the first time this phase.
+
+### M5.6 — CLOSED ✅ (tag m5.6-complete, commit c9d87cc)
+
+**Two product decisions locked (S048):**
+- THRESHOLD: L3 only (single threshold at `monologueLevel == 3`, default 120s). No pulse at L1/L2 — those still drive the color gradient via existing `monoColors`, but motion is L3-exclusive.
+- BEHAVIOR: continuous breathing while at L3 — `1↔0.5↔1`, 2s period (`.easeInOut(duration: 1.0).repeatForever(autoreverses: true)`). Stops naturally on the next pause when MonologueDetector resets streak to 0.
+
+**Implementation:**
+- Pure helper `WidgetView.shouldPulseBottomCluster(monologueLevel:reducedMotion:activityState:)` returns `monologueLevel == 3 && !reducedMotion && activityState == .counting`. The `.counting` guard is belt-and-suspenders: `enterWaiting()` already resets monologue to 0 on silence, but the explicit guard handles fringe non-atomic transitions and makes the helper self-contained for testing.
+- `@State pulseOpacity: Double = 1.0` on `WidgetView`. Pulse start/stop factored into `startPulse()` / `stopPulse()` methods called from both `.onChange(of: shouldPulse)` AND `.onAppear` (fixed Risk 1 — initial-appear at L3 wouldn't otherwise start, since `.onChange` only fires on transitions).
+- `.opacity(shouldPulse ? pulseOpacity : 1.0)` applied to the M:SS + label VStack in `bottomCluster` — composes multiplicatively with the existing `monoOpacity`. Outside L3 the selector is 1.0 and has no effect.
+- `stopPulse` uses `.easeInOut(duration: 0.3)` non-repeating to gracefully restore opacity = 1.0; SwiftUI replaces the in-progress `repeatForever` animation with the new one.
+
+**Plan corrections required:**
+1. Risk 1 (initial-appear at L3) was flagged as "very unlikely" — architect required it be fixed, not flagged. Test #6 (`testConstructs_monologueL3_counting_doesNotCrash`) constructs at L3, and without the `.onAppear` mitigation the pulse would silently not start. Two-line fix landed; `startPulse()` factored so animation parameters live in one place.
+2. Mono caret spec deviation: task spec said "M:SS + label + caret all pulse together," but mono caret lives in `barZone`, not `bottomCluster` — refactoring `barZone` to split was out of scope. Accepted the simplification (caret omitted; M:SS + label cover the textual signal) with documentation in the helper's code comment so future readers know the spec said caret-too and it was deliberately scoped out.
+
+**`nonisolated` → plain `static` adjustment:** the agent had to drop the `nonisolated` keyword from the helper because `WidgetActivityState.Equatable` synthesis is `@MainActor`-isolated under Swift 6 strict concurrency. Tests are `@MainActor` test classes so testability is unchanged. Same pattern as `showColdStartMark`.
+
+**6 new tests, 617/618 total (1 pre-existing skip).** swiftlint --strict clean. No production bug surfaced in smoke — the local-commit / SHA-audit / smoke / push sequence completed cleanly on the first attempt.
+
+### Process note: commit-local → audit → smoke → push worked
+
+After three consecutive M5 modules where the agent pushed before Anton's smoke (S045 M5.4 round 1, S046 M5.4a, S047 M5.5 + split), this session used the corrected closure consistently: agent commit-locally-only with explicit "DO NOT PUSH" instruction, report SHA, architect attempted `git show <sha>` audit (SHA not reachable from origin — confirmed local-only by failed fetch, which is the correct signal), Anton smoked the local build, Anton pushed after smoke passed. Clean separation between local-validation and origin-of-truth. Worth keeping as the default closure for all future modules.
+
+### Carried forward
+- **M5.7 (next, last of Phase 5):** accessibility audit — VoiceOver combined labels for the widget, Increase Contrast adjustments (the brand teal may need a higher-contrast variant), and verification of all Reduce Motion gates added in M5.4–M5.6.
+
 ## Session 047 — 2026-05-31 — M5.5 COMPLETE: Liquid Glass + hover + accessibility fallbacks. Tag m5.5-complete.
 
 **Format:** Architect + product-owner + agent. Largest visual module remaining in Phase 5. Plan-approved with three corrections; smoke surfaced three real bugs; one file split for line-count debt; tagged.
