@@ -8,7 +8,7 @@ nonisolated struct AudioPipelineBufferProvider: AudioBufferProvider {
     let pipeline: AudioPipeline
 
     func bufferStream() -> AsyncStream<CapturedAudioBuffer> {
-        pipeline.bufferStream
+        pipeline.mediumStream
     }
 }
 

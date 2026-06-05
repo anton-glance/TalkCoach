@@ -156,6 +156,12 @@ final class FloatingPanelController {
                     self.handleRecoveryEnded()
                 }
             }
+
+        sessionCoordinator.onSwitchStarted = { [weak self] in
+            guard let self else { return }
+            self.wpmCalculator?.enterWaiting()
+            self.setActivityState(.warming, reason: "device-switch")
+        }
     }
 
     func stop() {

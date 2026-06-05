@@ -1,4 +1,5 @@
 // swiftlint:disable file_length
+import AVFAudio
 import Combine
 import OSLog
 
@@ -100,6 +101,9 @@ final class SessionCoordinator: ObservableObject {
     private var localeMonitorTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
     private var speakingMonitorTask: Task<Void, Never>?
+    private var switchTask: Task<Void, Never>?
+    // Per-session AVAudioEngineConfigurationChange observer (deregistered in teardownWiring).
+    nonisolated(unsafe) private var configChangeObserver: (any NSObjectProtocol)?
     // Serialises session 2's runSession() against session 1's teardownWiring().
     // Without this guard, session 2's relay can start consuming tokenStream while
     // session 1's cancelled relay is still exiting — two concurrent consumers on a
@@ -312,12 +316,6 @@ final class SessionCoordinator: ObservableObject {
 
         // Step 1: AudioPipeline
         do {
-            capturedWiring.audioPipeline.onRecoveryBegan = { [weak self] in
-                self?.audioPipelineDidBeginRecovery()
-            }
-            capturedWiring.audioPipeline.onRecoveryEnded = { [weak self] in
-                self?.audioPipelineDidEndRecovery()
-            }
             try capturedWiring.audioPipeline.start()
             activePipeline = capturedWiring.audioPipeline
             Logger.session.info("SessionCoordinator: AudioPipeline started")
@@ -326,6 +324,18 @@ final class SessionCoordinator: ObservableObject {
             Logger.session.error("SessionCoordinator: wiring failed at AudioPipeline.start after \(elapsedMs)ms: \(error). Rollback complete in 0ms.")
             sessionStartTime = nil
             return
+        }
+
+        // Register per-session config-change observer so AVAudioEngineConfigurationChange
+        // (e.g. Bluetooth device connects mid-session) routes through micDeviceChanged() (AC-SW3).
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.micDeviceChanged()
+            }
         }
 
         // Step 2: LanguageDetector
@@ -396,7 +406,7 @@ final class SessionCoordinator: ObservableObject {
         activeBroadcaster = broadcaster
         let backendStream = await broadcaster.makeStream()
         let vadStream = await broadcaster.makeStream()
-        await broadcaster.drive(from: wiring.audioPipeline.bufferStream)
+        await broadcaster.drive(from: wiring.audioPipeline.mediumStream)
         await gate.start(stream: vadStream)
         activeVADGate = gate
         return StreamAudioBufferProvider(stream: backendStream)
@@ -451,6 +461,17 @@ final class SessionCoordinator: ObservableObject {
     private func teardownWiring() async {
         let teardownStart = Date()
         let sessionMs = sessionStartTime.map { Int(teardownStart.timeIntervalSince($0) * 1000) } ?? 0
+
+        // Deregister per-session config-change observer before any pipeline teardown.
+        if let observer = configChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configChangeObserver = nil
+        }
+
+        // Cancel any in-flight device switch so it doesn't restart the engine after teardown.
+        switchTask?.cancel()
+        switchTask = nil
+        isSwitching = false
 
         sessionWiringTask?.cancel()
         engineReadyTask?.cancel()
@@ -528,6 +549,25 @@ extension SessionCoordinator: MicMonitorDelegate {
         endCurrentSession(reason: .micOffListener)
     }
 
-    // Stub: M6.8 Path B — calls onSwitchStarted and spawns performDeviceSwitch task.
-    func micDeviceChanged() {}
+    func micDeviceChanged() {
+        guard case .active = state else { return }
+        guard !isSwitching else { return }
+        isSwitching = true
+        onSwitchStarted?()
+        Logger.session.info("SessionCoordinator: micDeviceChanged — spawning performDeviceSwitch")
+        switchTask = Task { [weak self] in
+            await self?.performDeviceSwitch()
+        }
+    }
+
+    private func performDeviceSwitch() async {
+        defer { isSwitching = false }
+        guard let pipeline = activePipeline else { return }
+        do {
+            try await pipeline.switchDevice()
+            Logger.session.info("SessionCoordinator: device switch complete (AC-SW9)")
+        } catch {
+            Logger.session.error("SessionCoordinator: device switch failed: \(error)")
+        }
+    }
 }

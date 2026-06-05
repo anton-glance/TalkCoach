@@ -11,6 +11,9 @@ final class MicMonitor {
     private let provider: CoreAudioDeviceProvider
     private var lastKnownRunningState: Bool = false
     private var monitoredDeviceID: AudioObjectID?
+    // Set to now+2s when a default-device change fires. Suppresses handleIsRunningChanged()
+    // within the window to prevent a double-rebuild race (AC-SW5).
+    private var deviceChangeUntil: Date = .distantPast
     // nonisolated(unsafe) because deinit needs access for cleanup and AnyObject is non-Sendable.
     // Mutation only occurs on @MainActor (start/stop); deinit has exclusive ownership.
     nonisolated(unsafe) private var isRunningListenerToken: AnyObject?
@@ -66,6 +69,8 @@ final class MicMonitor {
 
     private func handleIsRunningChanged() {
         guard isRunning else { return }
+        // Suppress within the device-change settle window to prevent a double-rebuild race (AC-SW5).
+        guard Date() >= deviceChangeUntil else { return }
         guard let deviceID = monitoredDeviceID else { return }
         let running = provider.isDeviceRunningSomewhere(deviceID) ?? false
         guard running != lastKnownRunningState else { return }
@@ -76,32 +81,30 @@ final class MicMonitor {
 
     private func handleDefaultDeviceChanged() {
         guard isRunning else { return }
+
+        // Arm the settle window unconditionally — suppresses handleIsRunningChanged() for 2s (AC-SW5).
+        deviceChangeUntil = Date().addingTimeInterval(2.0)
+
         let newDeviceID = provider.defaultInputDeviceID()
 
         if newDeviceID == nil {
-            Logger.mic.info("Default input device removed")
+            Logger.mic.info("Default input device removed (AC-SW6) — routing via micDeviceChanged")
             detachIsRunningListener()
             monitoredDeviceID = nil
-            if lastKnownRunningState {
-                lastKnownRunningState = false
-                emitStateChange(running: false)
-            }
+            delegate?.micDeviceChanged()
             return
         }
 
         guard newDeviceID != monitoredDeviceID else { return }
 
-        Logger.mic.info("Default input device changed from \(String(describing: self.monitoredDeviceID)) to \(newDeviceID!)")
+        Logger.mic.info("Default input device changed from \(String(describing: self.monitoredDeviceID)) to \(newDeviceID!) (AC-SW6)")
 
         detachIsRunningListener()
         monitoredDeviceID = newDeviceID
-        let running = provider.isDeviceRunningSomewhere(newDeviceID!) ?? false
         attachIsRunningListener(to: newDeviceID!)
 
-        if running != lastKnownRunningState {
-            lastKnownRunningState = running
-            emitStateChange(running: running)
-        }
+        // Route via micDeviceChanged() so coordinator drives the switch (AC-SW6).
+        delegate?.micDeviceChanged()
     }
 
     // MARK: - Listener Management

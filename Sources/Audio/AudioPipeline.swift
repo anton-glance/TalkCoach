@@ -59,72 +59,118 @@ nonisolated func makeTapBlock(
 
 // MARK: - AudioPipeline
 
-/// Owns an `AVAudioEngine` input tap and delivers `CapturedAudioBuffer` values
-/// via `AsyncStream`. Copied from the canonical pattern in
-/// `MicTapTightenSpike/AudioTapBridge.swift` (Spike #4 Phase 2, Session 022).
-/// Composes with `MicMonitor`'s log-and-continue pattern: if the default device
-/// disappears during recovery, the pipeline logs and awaits the next config-change.
+/// Owns an `AVAudioEngine` input tap and delivers `CapturedAudioBuffer` values via two streams:
+///
+/// - `mediumStream`: session-lifetime stream. Created fresh on each `start()`, finished on `stop()`.
+///   Survives `switchDevice()` so consumers (VAD gate, Parakeet backend) see only a brief buffer
+///   gap during a device switch, never a stream termination.
+///
+/// - Per-engine stream (internal): created fresh inside `startEngine()`, finished inside
+///   `stopEngine()`. A pump task bridges per-engine buffers into `mediumStream`.
+///
+/// Path B device-switch sequence: `stopEngine()` → sleep 300ms → `startEngine()`.
+/// The pump drains before the new engine starts, preventing concurrent writers on `mediumStream`.
 final class AudioPipeline {
     private(set) var isStarted: Bool = false
-    private(set) var lastRecoveryDuration: TimeInterval?
-    var onRecoveryBegan: (() -> Void)?
-    var onRecoveryEnded: (() -> Void)?
-    // AsyncStream is single-consumer per SE-0314. Recreated on each start() so each
-    // session's feedTask iterator operates on a fresh stream. nonisolated(unsafe) because
-    // AudioPipelineBufferProvider.bufferStream() may read this from non-MainActor contexts;
-    // the write in start() happens-before the read via the SessionCoordinator wiring sequence.
-    nonisolated(unsafe) private(set) var bufferStream: AsyncStream<CapturedAudioBuffer>
-    nonisolated(unsafe) private var continuation: AsyncStream<CapturedAudioBuffer>.Continuation
-    // Session-lifetime stream exposed to consumers (M6.8 Path B stub — points at bufferStream
-    // until the real mediumStream + pumpTask implementation lands in this session).
-    nonisolated(unsafe) var mediumStream: AsyncStream<CapturedAudioBuffer> { bufferStream }
+    // Set by stopEngine() so the next startEngine() recreates the AVAudioEngine instance.
+    private var needsEngineRecreateOnNextStart = false
+
+    // Session-lifetime stream: survives engine switches; only finished on stop().
+    // nonisolated(unsafe): read by backends/LD from non-MainActor task contexts; the write in
+    // start() happens-before the read via the SessionCoordinator wiring sequence.
+    nonisolated(unsafe) private(set) var mediumStream: AsyncStream<CapturedAudioBuffer>
+    nonisolated(unsafe) private var mediumContinuation: AsyncStream<CapturedAudioBuffer>.Continuation
+
+    // Per-engine continuation: written by the Core Audio tap callback (any thread).
+    nonisolated(unsafe) private var engineContinuation: AsyncStream<CapturedAudioBuffer>.Continuation?
+
+    // Bridges per-engine buffers into mediumStream. One pump per engine lifetime.
+    private var pumpTask: Task<Void, Never>?
 
     private let provider: any AudioEngineProvider
-    nonisolated(unsafe) private var configChangeObserver: (any NSObjectProtocol)?
 
     init(provider: any AudioEngineProvider = SystemAudioEngineProvider()) {
         self.provider = provider
+        // Placeholder; replaced by the first start().
         var cont: AsyncStream<CapturedAudioBuffer>.Continuation!
-        self.bufferStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { cont = $0 }
-        self.continuation = cont
+        self.mediumStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { cont = $0 }
+        self.mediumContinuation = cont
     }
 
     deinit {
-        if let observer = configChangeObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        continuation.finish()
+        mediumContinuation.finish()
     }
+
+    // MARK: - Public API
 
     func start() throws {
         guard !isStarted else { return }
 
-        // Recreate stream + continuation each session (see property comment).
+        // Fresh session-lifetime stream for this session.
         var cont: AsyncStream<CapturedAudioBuffer>.Continuation!
-        self.bufferStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { cont = $0 }
-        self.continuation = cont
+        self.mediumStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) { cont = $0 }
+        self.mediumContinuation = cont
+
+        try startEngine()
+        isStarted = true
+    }
+
+    func stop() {
+        guard isStarted else { return }
+        stopEngine()
+        mediumContinuation.finish()
+        isStarted = false
+    }
+
+    /// Recycles the AVAudioEngine on the current session's `mediumStream`.
+    /// Consumers see a brief buffer gap but not stream termination (AC-SW7).
+    func switchDevice() async throws {
+        // Capture and detach the old pump before touching the engine.
+        let oldPump = pumpTask
+        pumpTask = nil
+        engineContinuation?.finish()
+        engineContinuation = nil
+        provider.removeTap()
+        provider.stop()
+        needsEngineRecreateOnNextStart = true
+
+        // Drain the old pump so two pumps never write to mediumContinuation concurrently.
+        oldPump?.cancel()
+        await oldPump?.value
+
+        // HAL settle window (Path B — Spike #19 Hypothesis B).
+        try await Task.sleep(for: .milliseconds(300))
+        try startEngine()
+    }
+
+    // MARK: - Private
+
+    private func startEngine() throws {
+        if needsEngineRecreateOnNextStart {
+            provider.recreate()
+            needsEngineRecreateOnNextStart = false
+        }
+
+        // Per-engine stream: tap callback writes here; pump reads.
+        var engCont: AsyncStream<CapturedAudioBuffer>.Continuation!
+        let engineStream = AsyncStream<CapturedAudioBuffer>(bufferingPolicy: .bufferingNewest(64)) {
+            engCont = $0
+        }
+        self.engineContinuation = engCont
 
         do {
             try provider.setVoiceProcessingEnabled(false)
         } catch {
+            engCont.finish()
+            self.engineContinuation = nil
             throw AudioPipelineError.vpioConfigurationFailed(underlying: error)
         }
 
         provider.installTap(
             bufferSize: 0,
             format: nil,
-            block: makeTapBlock(continuation: continuation)
+            block: makeTapBlock(continuation: engCont)
         )
-
-        configChangeObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.recover()
-            }
-        }
 
         provider.prepare()
 
@@ -132,32 +178,30 @@ final class AudioPipeline {
             try provider.start()
         } catch {
             provider.removeTap()
-            if let observer = configChangeObserver {
-                NotificationCenter.default.removeObserver(observer)
-                configChangeObserver = nil
-            }
+            engCont.finish()
+            self.engineContinuation = nil
             throw AudioPipelineError.engineStartFailed(underlying: error)
         }
 
-        logInputDeviceIdentity()
-        isStarted = true
-    }
-
-    func stop() {
-        guard isStarted else { return }
-
-        provider.removeTap()
-        provider.stop()
-
-        if let observer = configChangeObserver {
-            NotificationCenter.default.removeObserver(observer)
-            configChangeObserver = nil
+        // Pump bridges per-engine buffers into the session-lifetime mediumStream.
+        let mc = mediumContinuation
+        pumpTask = Task { [engineStream] in
+            for await buffer in engineStream {
+                mc.yield(buffer)
+            }
         }
 
-        // Finish current session's stream so its iterator terminates cleanly.
-        // The next start() will recreate both stream and continuation.
-        continuation.finish()
-        isStarted = false
+        logInputDeviceIdentity()
+    }
+
+    private func stopEngine() {
+        engineContinuation?.finish()
+        engineContinuation = nil
+        pumpTask?.cancel()
+        pumpTask = nil
+        provider.removeTap()
+        provider.stop()
+        needsEngineRecreateOnNextStart = true
     }
 
     private func logInputDeviceIdentity() {
@@ -215,45 +259,5 @@ final class AudioPipeline {
         guard status == noErr, ptrValue != 0,
               let rawPtr = UnsafeRawPointer(bitPattern: ptrValue) else { return "unknown" }
         return Unmanaged<CFString>.fromOpaque(rawPtr).takeRetainedValue() as String
-    }
-
-    // Stub: replaces stop+sleep+start cycle for device switch (M6.8 Path B).
-    // Full implementation in M6.8 green commit.
-    func switchDevice() async throws {}
-
-    func recover() {
-        guard isStarted else { return }
-        onRecoveryBegan?()
-        let start = CFAbsoluteTimeGetCurrent()
-        let interval = signposter.beginInterval("AudioRecovery")
-
-        provider.stop()
-        provider.removeTap()
-
-        do {
-            try provider.setVoiceProcessingEnabled(false)
-        } catch {
-            logger.warning("VPIO re-disable failed during recovery: \(error.localizedDescription)")
-        }
-
-        provider.installTap(
-            bufferSize: 0,
-            format: nil,
-            block: makeTapBlock(continuation: continuation)
-        )
-
-        provider.prepare()
-
-        do {
-            try provider.start()
-        } catch {
-            logger.warning("Engine restart failed during recovery: \(error.localizedDescription)")
-        }
-
-        let elapsed = CFAbsoluteTimeGetCurrent() - start
-        lastRecoveryDuration = elapsed
-        signposter.endInterval("AudioRecovery", interval)
-        logger.info("Recovered in \(Int(elapsed * 1000))ms")
-        onRecoveryEnded?()
     }
 }

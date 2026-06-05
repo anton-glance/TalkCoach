@@ -117,9 +117,9 @@ final class DeviceSwitchTests: XCTestCase {
         wpmCalc.sessionActivated()
         // engineReadyCutoff = 99.0 + 0.5 = 99.5; clock starts at 100.0 → tokens accepted
         wpmCalc.engineReadyFired(at: Date(timeIntervalSinceReferenceDate: 99))
-        wpmCalc.notifyVADEvent(.speechStarted)
+        wpmCalc.notifyVADEvent(.speechStarted(sessionTime: 0.0))
         clock.advance(by: 3.0)           // now = 103; voiced = 3s ≥ minVoicedSeconds
-        wpmCalc.notifyVADEvent(.speechStopped)
+        wpmCalc.notifyVADEvent(.speechStopped(sessionTime: 3.0))
         await wpmCalc.consume(
             TranscribedToken(token: "one two three four", startTime: 0, endTime: 0.1, isFinal: true)
         )
@@ -172,7 +172,7 @@ final class DeviceSwitchTests: XCTestCase {
             name: .AVAudioEngineConfigurationChange,
             object: nil
         )
-        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        try await Task.sleep(for: .milliseconds(200))
 
         XCTAssertTrue(hookCalled,
                       "Config-change notification must trigger onSwitchStarted when session active (AC-SW3)")
