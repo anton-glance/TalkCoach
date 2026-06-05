@@ -1,5 +1,150 @@
 # Project Journal — Locto
 
+## Session 050 — 2026-06-04 — M6.8 device-switch saga + Spike #19 (Hypothesis B) + Path B locked for Session 051. No tag.
+
+**Format:** Architect + product-owner + agent. Phase 6 module M6.8 (AirPods/HFP device-switch robustness) attempted across 12 incremental iterations + 1 architectural pivot (M6.8 rebuild) + 1 follow-up patch (M6.8b) + 1 diagnostic spike (Spike #19). All attempts FAILED to deliver shippable mid-session device-switch behavior. Spike #19 conclusively identified the architectural reason and locked the Path B design for Session 051.
+
+### M6.8 — STILL OPEN. Repo reverted to `m5.7-complete` (3ec9a5b) at session end.
+
+**The product requirement (locked Session 050):** when the default input device changes mid-session, the widget should remain visible and recoverable. Two acceptable shapes: (1) transparent rewire with same session + counters preserved; (2) brief "switching..." visible artifact then resume with session+counters preserved. The CURRENT shippable behavior (multiple session-restarts, stuck-warming, stuck-dashes, 71-second teardowns piling up) is NOT acceptable for v1. This is a ship-blocker.
+
+**Twelve iterations attempted, all reverted:**
+
+- **M6.8, M6.8b, M6.8c** (Sessions 041 → 050 prep) — engine recreation + bounded `-10868` retry + hot-swap detection broadened
+- **M6.8d** — teardown ordering (`pipeline.stop` before broadcaster.stop) + 14 instrumentation logs
+- **M6.8e** — `isRewireInProgress` flag + 300ms HAL settle + buffer-flow watchdog
+- **M6.8f** — AudioProcessProber respects rewire flag + staleness 5s
+- **M6.8g** — Counting→waiting transition suppressed during rewire (both paths)
+- **M6.8h** — WidgetViewModel suppresses nil WPM during 3s post-rewire warmup
+- **M6.8i** — Pipeline-recovery widget transition suppressed during rewire
+- **M6.8j** — Tried moving warmup deadline to rewire-start (5s budget); WRONG — reverted by M6.8k
+- **M6.8k** — `waitForHWBoundInputFormat` polling loop (200ms ceiling) for the engine-recreate format race + revert M6.8j
+
+After M6.8k smoke showed widget stuck in warming for an entire session (not even a switch yet, just dev-load starvation under parallel Xcode), Anton called the architectural pivot: **abandon the "100% invisible" goal**. The accumulated 11-commit stack of suppression flags was making the codebase worse, not better.
+
+**Revert + clean rebuild attempt (M6.8 rebuild):**
+
+Stack reverted to `m5.7-complete` (3ec9a5b). Single clean module rebuilt at SHA `99f37de`:
+
+- `SessionCoordinator.isSwitching` flag, `switchTask`, `micDeviceChanged()`, `performDeviceSwitch()`, `onSwitchStarted` callback
+- `MicMonitor` emits `micDeviceChanged` when default device changes; guard `handleIsRunningChanged` on `delegate.isSwitching`
+- `MicMonitorDelegate` protocol additions with default `{}` / `false`
+- `AudioEngineProvider.recreate()`, `inputNodeInputFormat()`, `waitForHWBoundInputFormat` polling
+- `AudioPipeline.start()` recreates engine via `needsEngineRecreateOnNextStart`
+- `FloatingPanelController.start()` wires `onSwitchStarted` → `viewModel.setActivityState(.warming, reason: "device-switch")`
+- `WPMCalculator.clearCurrentWPM()` (critical subtlety: stale `wpmVoiced` would auto-fire the `.warming` gate and skip warming visually)
+- Six tests, banned-symbol grep clean, 638/640 tests green (1 pre-existing flaky `testHoverActive_overridesAlphaTo1`).
+
+**Smoke result:** failed worse than M6.8k. First switch session ended via `reason=mic-off-listener` BEFORE `micDeviceChanged` reached the SessionCoordinator. Race between `MicMonitor.handleIsRunningChanged` and `handleDefaultDeviceChanged` — both arrive as `Task { @MainActor }` from independent CoreAudio listener threads.
+
+**M6.8b (Session 050) — fix the race:**
+
+SHA `ebfe462`. Added `deviceChangeUntil` local timestamp window to MicMonitor — set to now+0.5s synchronously inside `handleDefaultDeviceChanged` BEFORE any other logic, then `handleIsRunningChanged` early-returns if `now < deviceChangeUntil`. Both guards layered: local guard covers the 0-500ms pre-coordinator window, delegate guard covers the post-coordinator ~1.3s stability window.
+
+Then architect insisted on a second guard (gate the IN-handler `emitStateChange(running: false)` during the same window, because it fires synchronously in the same call frame as `micDeviceChanged` and would also collapse the architecture). Agent initially dropped this gate citing a broken test; architect required adding it back with the test marked `XCTSkip` for the spike duration.
+
+**M6.8b smoke result:** still failed. Different mode this time — the local guard fired correctly (`SPIKE: isRunning change suppressed`) but the upstream pipeline died via a DIFFERENT path (the AVAudioEngine tap continuation finishing when the OS-level device teardown ran). Widget stuck in pulsing logo, never recovered.
+
+### Architectural conclusion (Session 050 lock)
+
+After 12+ iterations the architect was repeatedly **patching symptoms in 6 different listener handlers** when the real problem is that **the SessionCoordinator audio plane has no concept of an "engine being substituted under live consumers" state**. The audio data path is:
+
+```
+AVAudioEngine input tap
+  → AudioPipeline.continuation
+    → bufferStream (AsyncStream<CapturedAudioBuffer>)
+      → AudioBufferBroadcaster.drive(from:) reads this
+        → fans out to N consumer streams (VAD, Parakeet)
+```
+
+When the HW device disappears, the OS-level teardown (`HALPlugIn::StopIOProc 560227702`) finishes the AVAudioEngine tap's AsyncStream. That `.finish()` propagates DOWNSTREAM through every consumer continuation. **The broadcaster's drive loop is downstream of where the death occurs.** Pausing yields doesn't help.
+
+### Spike #19 — broadcaster pause hypothesis test (CONCLUSIVE)
+
+Diagnostic-only spike at SHA `0984279` (local-only, reverted at session end). Added: broadcaster `paused: Bool` flag, `setPaused()` actor method, drive-loop gate skipping yields when paused, full instrumentation. SessionCoordinator hooks `micDeviceChanged → setPaused(true) → Task.sleep(1500ms) → setPaused(false)`. MicMonitor local 2s suppression window for the spike duration.
+
+Three hypotheses:
+- **A** (best): pause works, source stream keeps producing, Parakeet bufferTask survives, resume works
+- **B** (intermediate): pause works but source stream dies anyway, bufferTask dies in cascade
+- **C** (worst): pause never gets a chance, existing race kills the session first
+
+**Smoke proved Hypothesis B.** Verbatim log sequence at the moment of switch:
+
+```
+SPIKE: micDeviceChanged received — pausing broadcaster      ← hook fires
+SPIKE: in-handler micDeactivated suppressed                  ← gate works
+broadcaster: paused false → true                             ← pause executes
+SPIKE: broadcaster paused, sleeping 1500ms                   ← 1500ms window opens
+SPIKE: isRunning change suppressed (×4)                      ← gate works during window
+
+... ~1000ms later ...
+
+broadcaster: drive loop EXITING after 264 buffers — source stream finished   ← KILLER LINE
+AudioBufferBroadcaster: source stream finished — all consumer streams finished
+pk: bufferTask exited at 241 buffers                                          ← Parakeet died
+```
+
+The pause executed correctly. The session-end suppression worked. But the AVAudioEngine's underlying AsyncStream finished anyway when the OS detached the device. The broadcaster's drive loop is `for await buffer in source` — when source finishes, loop exits, broadcaster calls `cont.finish()` on every consumer continuation, Parakeet's `for await captured in provider.bufferStream()` exits.
+
+### Architectural lock for Session 051 (Path B)
+
+**Insertion of an intermediate `AsyncStream` that the broadcaster reads from, and that we control.**
+
+Today: `AVAudioEngine tap → AudioPipeline.continuation → bufferStream → Broadcaster reads bufferStream`. When AVAudioEngine dies, bufferStream finishes, every consumer dies.
+
+Path B: `AVAudioEngine tap → AudioPipeline.continuation → bufferStream → [PUMP] → mediumStream → Broadcaster reads mediumStream`. The PUMP is a Task we own that copies from bufferStream to mediumStream. When a device change happens: cancel the pump (the AVAudioEngine tap can die freely without finishing mediumStream), recreate the AVAudioEngine, restart the pump from the new bufferStream into the SAME mediumStream. The broadcaster never sees an interruption. Parakeet's bufferTask sees a brief gap in buffers and resumes.
+
+mediumStream uses `.bufferingNewest(N)` so a gap during the switch silently drops audio rather than blocking. When the new pump starts, fresh buffers flow.
+
+**Estimated work for Session 051:** 4–6h focused. Single module. The intermediate-stream pattern is small surface area (~50 lines in AudioPipeline + ~30 in SessionCoordinator). The hard part is the engine recreate + format polling, which we already have working from M6.8k.
+
+**What WILL be retained from the abandoned M6.8 stack as wisdom (not code):**
+
+- `provider.recreate()` and `waitForHWBoundInputFormat` polling (1ch, sampleRate ≥ 16000, 200ms ceiling). Re-implement in Path B.
+- `needsEngineRecreateOnNextStart` flag pattern.
+- 300ms HAL settle timing.
+- MicMonitor's `deviceChangeUntil` 500ms-2s local suppression window — pattern that addresses the pre-delegate race.
+- The `MicMonitorDelegate.isSwitching` flag pattern — gates `handleIsRunningChanged` and AudioProcessProber polls during the switch window.
+
+**What MUST be REJECTED from the abandoned M6.8 stack:**
+
+- `isInRewire`, `rewireWarmupUntil`, `applyWPMVoiced`, `onRewireStateChanged`, `rewireInProgress`, `rewireAudioPipeline`, `replaceAudioProvider` — none of these come back.
+- The "100% invisible" UX goal. Visible "switching..." widget state for ~1-2s during the switch is ACCEPTABLE.
+- The 11-iteration suppression-flag-everywhere pattern. If the architectural foundation is wrong, no amount of downstream gating fixes it.
+
+### Process learnings (locked Session 050)
+
+1. **The NO-SKIPPING rule needs a counterweight: the BREAK-AFTER-N rule.** Twelve iterations on the same bug across a single session is a clear signal that the architectural foundation is wrong, not that the next patch will work. By M6.8h I should have stopped, not continued through to M6.8b. A reasonable counterweight: after 3 consecutive iterations on the same bug fail smoke with the bug recurring (not transforming), STOP and re-architect. The fact that each iteration uncovered a DIFFERENT race was the signal — racing in many places means the data-flow ordering is wrong, not that individual fixes are wrong.
+
+2. **Diagnostic spikes are cheap and decisive.** Spike #19 took ~1h and gave a definitive architectural answer that 12+ iterations of patching did not. Pattern: when iteration N fails the same way as iteration N-1 with a different stack trace, write a spike to test the underlying assumption, not another patch.
+
+3. **The agent's diff-reading + the architect's diff-reading must both happen.** Multiple times in this session the architect approved agent self-review reports that didn't match the actual diff. Mitigation: architect must read `git diff` bytes directly for every critical claim before approving smoke, not the agent's prose summary. Once during M6.8k the architect made the OPPOSITE error — misread a unified diff `-` prefix and accused the agent of leaving a stale line in place when the agent had correctly removed it. Both directions are real failure modes. Verification by raw bytes only, not by prose.
+
+4. **The agent will sometimes drop part of a spec citing "test break" without flagging it.** Happened in M6.8-SPIKE Phase 1 — the in-handler `emitStateChange(running: false)` gate was silently omitted by the agent citing a pre-existing test conflict, when the right answer was to add `XCTSkip` to the test for the spike duration. Architects must spec-audit Phase 1 plans against the spec they wrote, not skim them.
+
+### Repo state at session end
+
+- HEAD at `3ec9a5b`, tag `m5.7-complete`. Local-only spike commits (M6.8 ebfe462, M6.8b 0984279, M6.8-SPIKE 0984279 amended) all discarded by `git reset --hard m5.7-complete`.
+- Untracked `docs/design/onboarding/` and deleted `research/Screenshot*.png` are pre-existing housekeeping, unrelated to M6.8.
+- `docs/spikes/spike-19-broadcaster-pause-architectural-test.md` filed with the Hypothesis B finding (added this session).
+- `docs/session-051-bootstrap-pathB.md` filed with the Path B spec for the next session (added this session).
+- Test suite at 633/634 green on baseline (1 pre-existing flake unchanged).
+
+### What unblocks Session 051
+
+A fresh-conversation Path B implementation of the intermediate-stream pump architecture. Spec is in `docs/session-051-bootstrap-pathB.md`. Estimated 4–6h focused. The spike result is the load-bearing input — without it we'd still be guessing.
+
+### Time accounting
+
+- Session start: 2026-06-04 ~10:30 -05:00 (Mexico)
+- Session end: 2026-06-04 ~21:30 -05:00 (Mexico, approximate)
+- Wall-clock total: ~11h continuous (with intra-session breaks for build/smoke cycles)
+- Modules touched: M6.8 (12 iterations), M6.8 rebuild, M6.8b, Spike #19. All reverted; baseline restored to m5.7-complete.
+- Variance against original M6.8 estimate (4–6h): +183% / +275% with NO production progress. Session ends with the bug still open and the architectural path forward locked but unimplemented.
+- Net session output: one architectural conclusion (intermediate-stream pump required), one validated spike (Hypothesis B), one Session 051 bootstrap doc. Zero shipped code. All M6.8 work discarded.
+
+---
+
 ## Session 049 — 2026-06-01 — M5.7 COMPLETE & PHASE 5 CLOSED. Tag m5.7-complete.
 
 **Format:** Architect + product-owner + agent. Final module of Phase 5 (Widget UI). Rescoped from accessibility audit to four critical v1 fixes from S048 smoke + Reduce Motion verification sweep. Phase 5 retrospective at the bottom.
