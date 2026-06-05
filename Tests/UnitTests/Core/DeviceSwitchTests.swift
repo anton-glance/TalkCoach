@@ -201,6 +201,32 @@ final class DeviceSwitchTests: XCTestCase {
                       "micDeviceChanged must trigger engine restart via switchDevice (AC-SW4); callLog=\(provider.callLog)")
     }
 
+    // MARK: - AC-SW-FAIL: restart failure ends session with .pipelineRestartFailed
+
+    func testSwitch_OnRestartFailure_EndsSessionNormally() async throws {
+        let provider = SwitchTestEngineProvider()
+        let sut = makeSUT()
+        let (wiring, _, _) = makeWiring(engineProvider: provider)
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        // Cause the next engine start (inside switchDevice) to fail.
+        provider.startShouldThrow = true
+        sut.onSwitchStarted = {}
+        sut.micDeviceChanged()
+
+        // Wait for 300ms settle + failed startEngine + performDeviceSwitch return.
+        if let task = sut.switchTask { await task.value }
+
+        XCTAssertEqual(sut.state, .idle,
+                       "Session must end when switchDevice() throws (AC-SW-FAIL)")
+        XCTAssertEqual(sut.lastEndReason, .pipelineRestartFailed,
+                       "End reason must be .pipelineRestartFailed on engine restart failure")
+        XCTAssertFalse(sut.isSwitching,
+                       "isSwitching must be false after failed switch (defer block)")
+    }
+
     // MARK: - AC-SW9: isSwitching resets to false after switch completes
 
     func testIsSwitching_ResetsToFalse_AfterSwitchCompletes() async throws {

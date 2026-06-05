@@ -71,6 +71,8 @@ final class MicMonitor {
         guard isRunning else { return }
         // Suppress within the device-change settle window to prevent a double-rebuild race (AC-SW5).
         guard Date() >= deviceChangeUntil else { return }
+        // Suppress while coordinator is mid-switch; avoids a second rebuild from isRunning noise.
+        guard !(delegate?.isSwitching ?? false) else { return }
         guard let deviceID = monitoredDeviceID else { return }
         let running = provider.isDeviceRunningSomewhere(deviceID) ?? false
         guard running != lastKnownRunningState else { return }

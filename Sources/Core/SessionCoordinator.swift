@@ -101,7 +101,7 @@ final class SessionCoordinator: ObservableObject {
     private var localeMonitorTask: Task<Void, Never>?
     private var relayTask: Task<Void, Never>?
     private var speakingMonitorTask: Task<Void, Never>?
-    private var switchTask: Task<Void, Never>?
+    private(set) var switchTask: Task<Void, Never>?
     // Per-session AVAudioEngineConfigurationChange observer (deregistered in teardownWiring).
     nonisolated(unsafe) private var configChangeObserver: (any NSObjectProtocol)?
     // Serialises session 2's runSession() against session 1's teardownWiring().
@@ -468,8 +468,11 @@ final class SessionCoordinator: ObservableObject {
             configChangeObserver = nil
         }
 
-        // Cancel any in-flight device switch so it doesn't restart the engine after teardown.
-        switchTask?.cancel()
+        // Cancel and drain any in-flight device switch so it can't restart the engine after teardown.
+        if let task = switchTask {
+            task.cancel()
+            await task.value
+        }
         switchTask = nil
         isSwitching = false
 
@@ -567,7 +570,8 @@ extension SessionCoordinator: MicMonitorDelegate {
             try await pipeline.switchDevice()
             Logger.session.info("SessionCoordinator: device switch complete (AC-SW9)")
         } catch {
-            Logger.session.error("SessionCoordinator: device switch failed: \(error)")
+            Logger.session.error("SessionCoordinator: device switch failed, ending session: \(error)")
+            endCurrentSession(reason: .pipelineRestartFailed)
         }
     }
 }

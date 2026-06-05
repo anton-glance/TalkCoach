@@ -70,6 +70,8 @@ private final class DelegateSpy: MicMonitorDelegate {
     private(set) var activatedCount = 0
     private(set) var deactivatedCount = 0
     private(set) var micDeviceChangedCount = 0
+    var stubbedIsSwitching = false
+    var isSwitching: Bool { stubbedIsSwitching }
 
     func micActivated() {
         activatedCount += 1
@@ -328,6 +330,25 @@ final class MicMonitorTests: XCTestCase {
 
         XCTAssertEqual(spy.micDeviceChangedCount, 1,
                        "micDeviceChanged must be called once when default device changes (AC-SW6)")
+    }
+
+    // handleIsRunningChanged() must be suppressed when delegate.isSwitching is true,
+    // independently of the deviceChangeUntil window (AC-SW5 second gate).
+    func testMicMonitor_IsRunningSuppressedDuringSwitching() async {
+        makeSUT(isRunning: false)
+        sut.start()
+
+        // Arm the isSwitching gate without triggering the deviceChangeUntil window.
+        spy.stubbedIsSwitching = true
+
+        fake.stubbedIsRunning = true
+        fake.simulateIsRunningChange()
+        await Task.yield()
+
+        XCTAssertEqual(spy.activatedCount, 0,
+                       "IsRunning emission must be suppressed while delegate.isSwitching is true (AC-SW5)")
+        XCTAssertEqual(spy.deactivatedCount, 0,
+                       "No deactivation must fire while delegate.isSwitching is true (AC-SW5)")
     }
 
     func testDeinitRemovesListenersIfStillRunning() {
