@@ -48,6 +48,14 @@ private final class FakeAudioEngineProvider: AudioEngineProvider {
     func stop() {
         callLog.append("stop")
     }
+
+    func recreate() {
+        callLog.append("recreate")
+    }
+
+    func inputNodeInputFormat() -> AVAudioFormat? {
+        nil
+    }
 }
 
 // MARK: - Tests
@@ -105,14 +113,6 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertNotNil(fake.lastInstalledBlock)
     }
 
-    func testStartRegistersConfigChangeObserver() throws {
-        makeSUT()
-        try sut.start()
-        fake.callLog.removeAll()
-        sut.recover()
-        XCTAssertFalse(fake.callLog.isEmpty, "recover() should execute steps after start()")
-    }
-
     // MARK: - Buffer flow
 
     func testStartProducesBufferWithinTimeout() async throws {
@@ -120,7 +120,7 @@ final class AudioPipelineTests: XCTestCase {
         try sut.start()
 
         let expectation = XCTestExpectation(description: "Buffer received")
-        let stream = sut.bufferStream
+        let stream = sut.mediumStream
         let task = Task { @MainActor in
             for await _ in stream {
                 expectation.fulfill()
@@ -139,7 +139,7 @@ final class AudioPipelineTests: XCTestCase {
 
         var receivedBuffer: CapturedAudioBuffer?
         let expectation = XCTestExpectation(description: "Buffer received")
-        let stream = sut.bufferStream
+        let stream = sut.mediumStream
         let task = Task { @MainActor in
             for await buffer in stream {
                 receivedBuffer = buffer
@@ -164,7 +164,7 @@ final class AudioPipelineTests: XCTestCase {
         var times: [Int64] = []
         let expectation = XCTestExpectation(description: "Two buffers received")
         expectation.expectedFulfillmentCount = 2
-        let stream = sut.bufferStream
+        let stream = sut.mediumStream
         let task = Task { @MainActor in
             var count = 0
             for await buffer in stream {
@@ -220,79 +220,6 @@ final class AudioPipelineTests: XCTestCase {
                        "Second start must reinstall the tap")
     }
 
-    // MARK: - Recovery
-
-    func testRecoverRunsStepsInOrder() throws {
-        makeSUT()
-        try sut.start()
-        fake.callLog.removeAll()
-        sut.recover()
-        XCTAssertEqual(fake.callLog, [
-            "stop", "removeTap", "setVPIO(false)", "installTap", "prepare", "start"
-        ])
-    }
-
-    func testRecoverReusesStreamContinuation() async throws {
-        makeSUT()
-        try sut.start()
-
-        var received: [Int64] = []
-        let expectation = XCTestExpectation(description: "Two buffers received")
-        expectation.expectedFulfillmentCount = 2
-        let stream = sut.bufferStream
-        let task = Task { @MainActor in
-            var count = 0
-            for await buffer in stream {
-                received.append(buffer.sampleTime)
-                count += 1
-                expectation.fulfill()
-                if count >= 2 { break }
-            }
-        }
-
-        deliverSyntheticBuffer(sampleTime: 100)
-        sut.recover()
-        deliverSyntheticBuffer(sampleTime: 200)
-        await fulfillment(of: [expectation], timeout: 1.0)
-        task.cancel()
-
-        XCTAssertEqual(received.count, 2)
-        XCTAssertEqual(received[0], 100)
-        XCTAssertEqual(received[1], 200)
-    }
-
-    func testRecoverReDisablesVPIO() throws {
-        makeSUT()
-        try sut.start()
-        fake.callLog.removeAll()
-        sut.recover()
-        XCTAssertTrue(fake.callLog.contains("setVPIO(false)"))
-    }
-
-    func testRecoverAfterStopIsNoOp() async throws {
-        makeSUT()
-        try sut.start()
-        sut.stop()
-        fake.callLog.removeAll()
-        sut.recover()
-        XCTAssertTrue(
-            fake.callLog.isEmpty,
-            "No recovery steps should run after stop: \(fake.callLog)"
-        )
-        XCTAssertNil(sut.lastRecoveryDuration)
-    }
-
-    // MARK: - Recovery latency
-
-    func testRecoverMeasuresLatencyOnFirstEvent() throws {
-        makeSUT()
-        try sut.start()
-        XCTAssertNil(sut.lastRecoveryDuration)
-        sut.recover()
-        XCTAssertNotNil(sut.lastRecoveryDuration)
-        XCTAssertGreaterThanOrEqual(sut.lastRecoveryDuration!, 0)
-    }
-
     // MARK: - Frame size
 
     func testFrameLengthMatchesDeliveredBuffer() async throws {
@@ -301,7 +228,7 @@ final class AudioPipelineTests: XCTestCase {
 
         var receivedBuffer: CapturedAudioBuffer?
         let expectation = XCTestExpectation(description: "Buffer received")
-        let stream = sut.bufferStream
+        let stream = sut.mediumStream
         let task = Task { @MainActor in
             for await buffer in stream {
                 receivedBuffer = buffer
@@ -334,16 +261,6 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertTrue(matches.isEmpty, "Found hardcoded 4096 in AudioPipeline.swift")
     }
 
-    // MARK: - Device vanish
-
-    func testRecoverLogsAndContinuesOnEngineStartFailure() throws {
-        makeSUT()
-        try sut.start()
-        fake.startShouldThrow = true
-        sut.recover()
-        XCTAssertTrue(sut.isStarted, "Pipeline stays conceptually started after recovery failure")
-    }
-
     // MARK: - Concurrency
 
     func testCapturedAudioBufferIsSendable() {
@@ -368,36 +285,34 @@ final class AudioPipelineTests: XCTestCase {
 
     // MARK: - Cleanup
 
-    // stop() removes the tap and finishes the current session's stream. The next start()
-    // provides a fresh stream for the next session (single-consumer contract, SE-0314).
+    // stop() removes the tap and finishes the session-lifetime mediumStream.
+    // The next start() provides a fresh mediumStream for the next session (SE-0314).
     func testStop_RemovesTapAndFinishesCurrentStream() async throws {
         makeSUT()
         try sut.start()
-        let streamFromSession1 = sut.bufferStream
+        let streamFromSession1 = sut.mediumStream
         sut.stop()
 
         XCTAssertTrue(fake.callLog.contains("removeTap"),
                       "stop() must remove the AVAudioEngine tap")
 
-        // The session-1 stream must terminate so its iterator drains naturally.
         let finishExpectation = XCTestExpectation(description: "Session-1 stream finishes after stop()")
         let drainTask = Task { @MainActor in
-            for await _ in streamFromSession1 {}  // drains until continuation.finish()
+            for await _ in streamFromSession1 {}
             finishExpectation.fulfill()
         }
         await fulfillment(of: [finishExpectation], timeout: 2.0)
         drainTask.cancel()
     }
 
-    // Each session gets a NEW iterator on a fresh bufferStream — mirroring production behavior
-    // where AppleTranscriberBackend creates a new feedTask per session that calls bufferStream()
-    // after AudioPipeline.start() recreates the stream.
+    // Each session gets a NEW iterator on a fresh mediumStream — mirroring production behavior
+    // where backends create a new feedTask per session after AudioPipeline.start() recreates the stream.
     func testAudioPipeline_Restart_AfterStopProducesBuffers() async throws {
         makeSUT()
 
         // Session 1: subscribe, deliver, stop
         try sut.start()
-        let stream1 = sut.bufferStream
+        let stream1 = sut.mediumStream
         var received1: [Int64] = []
         let exp1 = XCTestExpectation(description: "Session 1 buffer received")
         let task1 = Task { @MainActor in
@@ -414,7 +329,7 @@ final class AudioPipelineTests: XCTestCase {
 
         // Session 2: fresh stream from start() — new iterator, new session
         try sut.start()
-        let stream2 = sut.bufferStream
+        let stream2 = sut.mediumStream
         var received2: [Int64] = []
         let exp2 = XCTestExpectation(description: "Session 2 buffer received on fresh stream")
         let task2 = Task { @MainActor in
@@ -433,22 +348,6 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertEqual(received2, [200], "Session 2 iterator must receive its buffer via the fresh stream")
     }
 
-    func testStopDeregistersObserver() throws {
-        makeSUT()
-        try sut.start()
-        sut.stop()
-        fake.callLog.removeAll()
-        NotificationCenter.default.post(
-            name: .AVAudioEngineConfigurationChange,
-            object: nil
-        )
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        XCTAssertTrue(
-            fake.callLog.isEmpty,
-            "No recovery steps should run after stop: \(fake.callLog)"
-        )
-    }
-
     // MARK: - Error paths
 
     func testStartCleansUpOnEngineStartFailure() throws {
@@ -460,5 +359,59 @@ final class AudioPipelineTests: XCTestCase {
             fake.callLog.contains("removeTap"),
             "Should clean up tap on start failure: \(fake.callLog)"
         )
+    }
+
+    // MARK: - Device switch (M6.8 Path B)
+
+    // switchDevice() stops the engine and restarts it without finishing mediumStream,
+    // so existing stream consumers see a brief buffer gap but not a stream termination.
+    func testSwitchDevice_RecyclesEngineWithoutFinishingMediumStream() async throws {
+        makeSUT()
+        try sut.start()
+        fake.callLog.removeAll()
+
+        let stream = sut.mediumStream
+        var received: [Int64] = []
+        let exp = XCTestExpectation(description: "Two buffers received across switch")
+        exp.expectedFulfillmentCount = 2
+        let task = Task { @MainActor in
+            for await buffer in stream {
+                received.append(buffer.sampleTime)
+                exp.fulfill()
+                if received.count >= 2 { break }
+            }
+        }
+
+        deliverSyntheticBuffer(sampleTime: 100)
+        try await Task.sleep(for: .milliseconds(50))
+
+        try await sut.switchDevice()
+
+        // Engine must have been stopped and re-tapped
+        XCTAssertTrue(fake.callLog.contains("stop"),
+                      "switchDevice must stop the engine; callLog=\(fake.callLog)")
+        XCTAssertEqual(fake.callLog.filter { $0 == "installTap" }.count, 1,
+                       "switchDevice must reinstall the tap; callLog=\(fake.callLog)")
+
+        // Deliver buffer after switch — must arrive on the SAME mediumStream iterator
+        deliverSyntheticBuffer(sampleTime: 200)
+        await fulfillment(of: [exp], timeout: 2.0)
+        task.cancel()
+
+        XCTAssertEqual(received.count, 2, "mediumStream must survive the engine switch (AC-SW7)")
+        XCTAssertTrue(received.contains(200), "Post-switch buffer must be delivered on same stream")
+    }
+
+    // switchDevice() must call recreate() to replace the AVAudioEngine instance.
+    // ORT cannot reinitialize OrtSessions in-process (Spike #18 / Session 034).
+    func testSwitchDevice_CallsRecreateOnProvider() async throws {
+        makeSUT()
+        try sut.start()
+        fake.callLog.removeAll()
+
+        try await sut.switchDevice()
+
+        XCTAssertTrue(fake.callLog.contains("recreate"),
+                      "switchDevice must recreate the AVAudioEngine (Spike #18); callLog=\(fake.callLog)")
     }
 }

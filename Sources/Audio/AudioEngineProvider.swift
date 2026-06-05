@@ -12,12 +12,19 @@ protocol AudioEngineProvider: AnyObject {
     func prepare()
     func start() throws
     func stop()
+    func recreate()
+    func inputNodeInputFormat() -> AVAudioFormat?
+}
+
+extension AudioEngineProvider {
+    func recreate() {}
+    func inputNodeInputFormat() -> AVAudioFormat? { nil }
 }
 
 // MARK: - Production Implementation
 
 final class SystemAudioEngineProvider: AudioEngineProvider {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
 
     var isVoiceProcessingEnabled: Bool {
         engine.inputNode.isVoiceProcessingEnabled
@@ -54,5 +61,13 @@ final class SystemAudioEngineProvider: AudioEngineProvider {
 
     func stop() {
         engine.stop()
+    }
+
+    func recreate() {
+        engine = AVAudioEngine()
+    }
+
+    func inputNodeInputFormat() -> AVAudioFormat? {
+        engine.inputNode.inputFormat(forBus: 0)
     }
 }

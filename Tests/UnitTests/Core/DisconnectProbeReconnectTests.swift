@@ -50,6 +50,8 @@ final class ProbeTestEngineProvider: AudioEngineProvider {
         callLog.append("start")
     }
     func stop() { callLog.append("stop") }
+    func recreate() { callLog.append("recreate") }
+    func inputNodeInputFormat() -> AVAudioFormat? { nil }
 }
 
 // MARK: - DisconnectProbeReconnectTests

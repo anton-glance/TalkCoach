@@ -85,6 +85,10 @@ final class SessionCoordinator: ObservableObject {
     // MARK: Wiring (optional — nil in unit tests that skip the audio pipeline)
 
     var wiring: SessionWiring?
+    // Stub: set by FloatingPanelController in M6.8 implementation to call enterWaiting() + .warming.
+    var onSwitchStarted: (() -> Void)?
+    // Stub: true while a device-switch task is in flight (M6.8 Path B).
+    private(set) var isSwitching: Bool = false
     private var consumers: [any TokenConsumer] = []
     private var wpmCalculator: WPMCalculator?
     private var monologueDetector: MonologueDetector?
@@ -523,4 +527,7 @@ extension SessionCoordinator: MicMonitorDelegate {
         guard case .active = state else { return }
         endCurrentSession(reason: .micOffListener)
     }
+
+    // Stub: M6.8 Path B — calls onSwitchStarted and spawns performDeviceSwitch task.
+    func micDeviceChanged() {}
 }

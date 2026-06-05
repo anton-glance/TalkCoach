@@ -43,6 +43,8 @@ private final class WiringFakeAudioEngineProvider: AudioEngineProvider {
         callLog.append("start")
     }
     func stop() { callLog.append("stop") }
+    func recreate() { callLog.append("recreate") }
+    func inputNodeInputFormat() -> AVAudioFormat? { nil }
 }
 
 // MARK: - FakeLanguageDetector
@@ -358,7 +360,7 @@ final class SessionCoordinatorWiringTests: XCTestCase {
         let newBufferExpectation = XCTestExpectation(
             description: "New consumer receives buffer after LD releases stream"
         )
-        let stream = pipeline.bufferStream
+        let stream = pipeline.mediumStream
         let consumeTask = Task { @MainActor in
             for await _ in stream {
                 newBufferExpectation.fulfill()

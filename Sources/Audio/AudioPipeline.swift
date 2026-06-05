@@ -75,6 +75,9 @@ final class AudioPipeline {
     // the write in start() happens-before the read via the SessionCoordinator wiring sequence.
     nonisolated(unsafe) private(set) var bufferStream: AsyncStream<CapturedAudioBuffer>
     nonisolated(unsafe) private var continuation: AsyncStream<CapturedAudioBuffer>.Continuation
+    // Session-lifetime stream exposed to consumers (M6.8 Path B stub — points at bufferStream
+    // until the real mediumStream + pumpTask implementation lands in this session).
+    nonisolated(unsafe) var mediumStream: AsyncStream<CapturedAudioBuffer> { bufferStream }
 
     private let provider: any AudioEngineProvider
     nonisolated(unsafe) private var configChangeObserver: (any NSObjectProtocol)?
@@ -213,6 +216,10 @@ final class AudioPipeline {
               let rawPtr = UnsafeRawPointer(bitPattern: ptrValue) else { return "unknown" }
         return Unmanaged<CFString>.fromOpaque(rawPtr).takeRetainedValue() as String
     }
+
+    // Stub: replaces stop+sleep+start cycle for device switch (M6.8 Path B).
+    // Full implementation in M6.8 green commit.
+    func switchDevice() async throws {}
 
     func recover() {
         guard isStarted else { return }

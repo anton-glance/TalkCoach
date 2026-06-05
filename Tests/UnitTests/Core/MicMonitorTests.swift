@@ -69,6 +69,7 @@ private final class FakeCoreAudioDeviceProvider: CoreAudioDeviceProvider, @unche
 private final class DelegateSpy: MicMonitorDelegate {
     private(set) var activatedCount = 0
     private(set) var deactivatedCount = 0
+    private(set) var micDeviceChangedCount = 0
 
     func micActivated() {
         activatedCount += 1
@@ -76,6 +77,10 @@ private final class DelegateSpy: MicMonitorDelegate {
 
     func micDeactivated() {
         deactivatedCount += 1
+    }
+
+    func micDeviceChanged() {
+        micDeviceChangedCount += 1
     }
 }
 
@@ -212,27 +217,33 @@ final class MicMonitorTests: XCTestCase {
         )
     }
 
-    func testDefaultDeviceChangeNoReplacementTreatsAsNotRunning() async {
+    // In M6.8 Path B: nil replacement no longer emits deactivated directly;
+    // higher-level coordinator handles device-loss via micDeviceChanged() routing.
+    func testDefaultDeviceChangeNoReplacementDoesNotEmitDeactivated() async {
         makeSUT(isRunning: true)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 1)
         fake.stubbedDefaultDeviceID = nil
         fake.simulateDefaultDeviceChange()
         await Task.yield()
-        XCTAssertEqual(spy.deactivatedCount, 1)
+        XCTAssertEqual(spy.deactivatedCount, 0,
+                       "Nil replacement must not emit deactivated directly (AC-SW6)")
     }
 
-    func testDefaultDeviceChangeNewDeviceRunningEmitsActivation() async {
+    // In M6.8 Path B: device change routes via micDeviceChanged(), not direct emission.
+    func testDefaultDeviceChangeNewDeviceDoesNotEmitDirectly() async {
         makeSUT(isRunning: false)
         sut.start()
         fake.stubbedDefaultDeviceID = 99
         fake.stubbedIsRunning = true
         fake.simulateDefaultDeviceChange()
         await Task.yield()
-        XCTAssertEqual(spy.activatedCount, 1)
+        XCTAssertEqual(spy.activatedCount, 0,
+                       "New device change must not emit activated directly (AC-SW6)")
     }
 
-    func testDefaultDeviceChangeNewDeviceNotRunningEmitsDeactivation() async {
+    // In M6.8 Path B: device change routes via micDeviceChanged(), not direct emission.
+    func testDefaultDeviceChangeNewDeviceDoesNotEmitDeactivationDirectly() async {
         makeSUT(isRunning: true)
         sut.start()
         XCTAssertEqual(spy.activatedCount, 1)
@@ -240,7 +251,8 @@ final class MicMonitorTests: XCTestCase {
         fake.stubbedIsRunning = false
         fake.simulateDefaultDeviceChange()
         await Task.yield()
-        XCTAssertEqual(spy.deactivatedCount, 1)
+        XCTAssertEqual(spy.deactivatedCount, 0,
+                       "New device change must not emit deactivated directly (AC-SW6)")
     }
 
     // MARK: - Cleanup
@@ -279,6 +291,43 @@ final class MicMonitorTests: XCTestCase {
         fake.simulateIsRunningChange()
         await Task.yield()
         XCTAssertEqual(spy.deactivatedCount, 1)
+    }
+
+    // MARK: - Device switch (M6.8 Path B)
+
+    // After handleDefaultDeviceChanged() fires, handleIsRunningChanged() must be suppressed
+    // for the deviceChangeUntil window (2s) to prevent a double-rebuild race.
+    func testDeviceChange_SuppressesSubsequentIsRunningEmission() async {
+        makeSUT(isRunning: false)
+        sut.start()
+
+        // Fire device change (in new code: sets deviceChangeUntil = now + 2s)
+        fake.stubbedDefaultDeviceID = 99
+        fake.simulateDefaultDeviceChange()
+        await Task.yield()
+
+        // Immediately simulate isRunning = true — must be suppressed within the window
+        fake.stubbedIsRunning = true
+        fake.simulateIsRunningChange()
+        await Task.yield()
+
+        XCTAssertEqual(spy.activatedCount, 0,
+                       "IsRunning change must be suppressed within device-change window (AC-SW5)")
+    }
+
+    // handleDefaultDeviceChanged() must call micDeviceChanged() on the delegate
+    // when the device switches to a new ID.
+    func testDefaultDeviceChange_CallsMicDeviceChangedOnDelegate() async {
+        makeSUT()
+        sut.start()
+
+        fake.stubbedDefaultDeviceID = 99
+        fake.stubbedIsRunning = false
+        fake.simulateDefaultDeviceChange()
+        await Task.yield()
+
+        XCTAssertEqual(spy.micDeviceChangedCount, 1,
+                       "micDeviceChanged must be called once when default device changes (AC-SW6)")
     }
 
     func testDeinitRemovesListenersIfStillRunning() {
