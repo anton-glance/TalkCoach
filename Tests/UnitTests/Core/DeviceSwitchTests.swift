@@ -314,9 +314,9 @@ final class DeviceSwitchTests: XCTestCase {
                        "isSwitching must be false after switch completes")
     }
 
-    // MARK: - AC-SW-E: AVAudioEngineConfigurationChange during switch is dropped by isSwitching guard
+    // MARK: - AC-SW-E: AVAudioEngineConfigurationChange during switch supersedes via cancel-and-drain
 
-    func testConfigChange_DuringSwitch_DoesNotDoubleRebuild() async throws {
+    func testConfigChange_DuringSwitch_Supersedes() async throws {
         let provider = SwitchTestEngineProvider()
         let sut = makeSUT()
         let (wiring, _, _) = makeWiring(engineProvider: provider)
@@ -326,16 +326,24 @@ final class DeviceSwitchTests: XCTestCase {
 
         provider.callLog.removeAll()
         sut.onSwitchStarted = {}
-        sut.micDeviceChanged()   // sets isSwitching=true synchronously, spawns switchTask
+        sut.micDeviceChanged()   // sets isSwitching=true synchronously, spawns task1
         NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)   // before the 300ms sleep elapses
-        try await Task.sleep(for: .milliseconds(50))   // gives the observer's Task { @MainActor } a turn, where the !isSwitching guard fires
-        try await Task.sleep(for: .milliseconds(600))   // original switch completes
+        // AVAudioEngineConfigurationChange mid-switch supersedes via the same path as a second
+        // micDeviceChanged — both routes converge on the single rebuild authority.
+        try await Task.sleep(for: .milliseconds(1400))   // two switch cycles: task1 cancelled after stop, task2 full cycle
 
-        XCTAssertEqual(provider.callLog.filter { $0 == "stop" }.count, 1,
-                       "Config-change during switch must not trigger a second stop; callLog=\(provider.callLog)")
+        // task1 calls stop then is cancelled during the 300ms HAL settle; task2 drains it and completes.
+        XCTAssertEqual(provider.callLog.filter { $0 == "stop" }.count, 2,
+                       "Both tasks call stop; callLog=\(provider.callLog)")
         XCTAssertEqual(provider.callLog.filter { $0 == "start" }.count, 1,
-                       "Config-change during switch must not trigger a second start; callLog=\(provider.callLog)")
+                       "Only the superseding task2 reaches start; callLog=\(provider.callLog)")
         XCTAssertEqual(provider.callLog.filter { $0 == "recreate" }.count, 1,
-                       "Config-change during switch must not trigger a second recreate; callLog=\(provider.callLog)")
+                       "Only the superseding task2 reaches recreate; callLog=\(provider.callLog)")
+        guard case .active = sut.state else {
+            XCTFail("Session must remain active after config-change supersede; state=\(sut.state)")
+            return
+        }
+        XCTAssertFalse(sut.isSwitching,
+                       "isSwitching must be false after task2 completes")
     }
 }
