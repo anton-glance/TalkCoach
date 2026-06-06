@@ -248,4 +248,92 @@ final class DeviceSwitchTests: XCTestCase {
         XCTAssertFalse(sut.isSwitching,
                        "isSwitching must reset to false after switch completes (AC-SW9)")
     }
+
+    // MARK: - AC-SW-A: session ID is preserved across device switch
+
+    func testSwitch_PreservesSessionIDAndCounters() async throws {
+        let sut = makeSUT()
+        let (wiring, _, _) = makeWiring()
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        guard case .active(let ctx) = sut.state else {
+            XCTFail("Expected active state before switch")
+            return
+        }
+        let capturedId = ctx.id
+
+        sut.onSwitchStarted = {}
+        sut.micDeviceChanged()
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(600))
+
+        guard case .active(let ctx2) = sut.state else {
+            XCTFail("Expected active state after switch")
+            return
+        }
+        XCTAssertEqual(ctx2.id, capturedId,
+                       "Session ID must be preserved across device switch")
+        XCTAssertNil(sut.lastEndReason,
+                     "No session end must occur during a successful switch")
+        XCTAssertFalse(sut.isSwitching,
+                       "isSwitching must be false after switch completes")
+    }
+
+    // MARK: - AC-SW-B: rapid double micDeviceChanged() drops the second call
+
+    func testSwitch_RapidDoubleSwitch_DropsSecond() async throws {
+        let provider = SwitchTestEngineProvider()
+        let sut = makeSUT()
+        let (wiring, _, _) = makeWiring(engineProvider: provider)
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        provider.callLog.removeAll()
+        sut.onSwitchStarted = {}
+        sut.micDeviceChanged()
+        sut.micDeviceChanged()   // immediately, before any await — same MainActor turn
+        // v1 limitation: a second micDeviceChanged() during an in-flight switch is dropped. Filed as M6.8a in backlog for v1.x cancel+supersede if needed in practice.
+        try await Task.sleep(for: .milliseconds(700))
+
+        XCTAssertEqual(provider.callLog.filter { $0 == "stop" }.count, 1,
+                       "Only one stop must occur; callLog=\(provider.callLog)")
+        XCTAssertEqual(provider.callLog.filter { $0 == "start" }.count, 1,
+                       "Only one start must occur; callLog=\(provider.callLog)")
+        XCTAssertEqual(provider.callLog.filter { $0 == "recreate" }.count, 1,
+                       "Only one recreate must occur; callLog=\(provider.callLog)")
+        guard case .active = sut.state else {
+            XCTFail("Expected active state after double switch; state=\(sut.state)")
+            return
+        }
+        XCTAssertFalse(sut.isSwitching,
+                       "isSwitching must be false after switch completes")
+    }
+
+    // MARK: - AC-SW-E: AVAudioEngineConfigurationChange during switch is dropped by isSwitching guard
+
+    func testConfigChange_DuringSwitch_DoesNotDoubleRebuild() async throws {
+        let provider = SwitchTestEngineProvider()
+        let sut = makeSUT()
+        let (wiring, _, _) = makeWiring(engineProvider: provider)
+        sut.wiring = wiring
+        sut.micActivated()
+        if let task = sut.sessionWiringTask { await task.value }
+
+        provider.callLog.removeAll()
+        sut.onSwitchStarted = {}
+        sut.micDeviceChanged()   // sets isSwitching=true synchronously, spawns switchTask
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: nil)   // before the 300ms sleep elapses
+        try await Task.sleep(for: .milliseconds(50))   // gives the observer's Task { @MainActor } a turn, where the !isSwitching guard fires
+        try await Task.sleep(for: .milliseconds(600))   // original switch completes
+
+        XCTAssertEqual(provider.callLog.filter { $0 == "stop" }.count, 1,
+                       "Config-change during switch must not trigger a second stop; callLog=\(provider.callLog)")
+        XCTAssertEqual(provider.callLog.filter { $0 == "start" }.count, 1,
+                       "Config-change during switch must not trigger a second start; callLog=\(provider.callLog)")
+        XCTAssertEqual(provider.callLog.filter { $0 == "recreate" }.count, 1,
+                       "Config-change during switch must not trigger a second recreate; callLog=\(provider.callLog)")
+    }
 }
