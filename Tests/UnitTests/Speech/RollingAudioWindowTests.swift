@@ -168,4 +168,25 @@ final class RollingAudioWindowTests: XCTestCase {
         XCTAssertNotNil(received, "hopStream must survive stopHopTimer — element must arrive at waiting consumer")
         XCTAssertEqual(received, [0.1, 0.2, 0.3])
     }
+
+    // MARK: - Test H: converter is rebuilt automatically when input format changes mid-session (FIX 2)
+
+    func testRollingAudioWindow_RebuildsConverterOnFormatChange() async throws {
+        let window = RollingAudioWindow()
+        try await window.configure(sampleRate: 48_000, channelCount: 1)
+
+        // First append at 48kHz — must succeed and produce output.
+        let buf48k = makeBuffer(sampleRate: 48_000, channelCount: 1, frameLength: 480)
+        try await window.append(buf48k)
+        let countAfter48k = await window.bufferCountForTesting
+        XCTAssertGreaterThan(countAfter48k, 0,
+                             "buffer must have samples after 48kHz append")
+
+        // Second append at 24kHz without explicit reconfigure — converter must auto-rebuild, no throw.
+        let buf24k = makeBuffer(sampleRate: 24_000, channelCount: 1, frameLength: 240)
+        try await window.append(buf24k)
+        let countAfter24k = await window.bufferCountForTesting
+        XCTAssertGreaterThan(countAfter24k, countAfter48k,
+                             "buffer must grow after 24kHz append — converter must have been rebuilt (FIX 2)")
+    }
 }

@@ -15,6 +15,7 @@ actor RollingAudioWindow {
 
     private var buffer: [Float] = []
     private var converter: AVAudioConverter?
+    private var configuredInputFormat: AVAudioFormat?
     private var hopTask: Task<Void, Never>?
 
     private var hopContinuation: AsyncStream<[Float]>.Continuation
@@ -47,11 +48,20 @@ actor RollingAudioWindow {
             throw RollingAudioWindowError.converterCreationFailed
         }
         self.converter = conv
+        self.configuredInputFormat = inputFormat
         Logger.speech.info("rw: configure done converterWasNil=\(converterWasNil ? "true" : "false") rate=\(sampleRate) ch=\(channelCount)")
     }
 
     /// Append a captured buffer. Resamples to 16 kHz mono f32 and appends to ring buffer.
     func append(_ captured: CapturedAudioBuffer) throws {
+        // Rebuild the converter when the incoming format changes (e.g. AirPods HFP 48kHz → 24kHz).
+        if let existing = configuredInputFormat,
+           converter != nil,
+           captured.sampleRate != existing.sampleRate || captured.channelCount != existing.channelCount {
+            Logger.speech.info("rw: format changed from \(existing.sampleRate)/\(existing.channelCount) to \(captured.sampleRate)/\(captured.channelCount), converter rebuilt")
+            try configure(sampleRate: captured.sampleRate, channelCount: captured.channelCount)
+        }
+
         guard let conv = converter else {
             let bufCount = buffer.count
             Logger.speech.warning("rw: append skipped — converter nil bufferCount=\(bufCount)")
@@ -136,6 +146,7 @@ actor RollingAudioWindow {
     func resetForNewSession() {
         buffer = []
         converter = nil
+        configuredInputFormat = nil
         var newCont: AsyncStream<[Float]>.Continuation!
         hopStream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { newCont = $0 }
         hopContinuation = newCont

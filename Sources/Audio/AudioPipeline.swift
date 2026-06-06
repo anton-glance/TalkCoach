@@ -183,6 +183,39 @@ final class AudioPipeline {
             throw AudioPipelineError.engineStartFailed(underlying: error)
         }
 
+        // Poll for a valid HW-bound input format. HFP negotiation can take 200-400ms after engine start.
+        // Best-effort: if format never stabilizes within 500ms, the nil-format tap from above remains.
+        // Polling is skipped when the provider returns nil on the first call — SystemAudioEngineProvider
+        // never returns nil; test fakes that do return nil do not implement format reporting.
+        if let firstCheck = provider.inputNodeInputFormat() {
+            var hwFormat: AVAudioFormat? = nil
+            if firstCheck.sampleRate > 0, firstCheck.channelCount > 0 {
+                hwFormat = firstCheck
+            } else {
+                let deadline = Date().addingTimeInterval(0.5)
+                while Date() < deadline {
+                    if let f = provider.inputNodeInputFormat(),
+                       f.sampleRate > 0,
+                       f.channelCount > 0 {
+                        hwFormat = f
+                        break
+                    }
+                    Thread.sleep(forTimeInterval: 0.02)
+                }
+            }
+            if let hwFormat {
+                // Swap the tap to pin it to the stabilized HW format.
+                provider.removeTap()
+                provider.installTap(
+                    bufferSize: 0,
+                    format: hwFormat,
+                    block: makeTapBlock(continuation: engCont)
+                )
+            } else {
+                logger.warning("AudioPipeline: HW input format did not stabilize within 500ms; tap remains on nil format (fallback)")
+            }
+        }
+
         // Pump bridges per-engine buffers into the session-lifetime mediumStream.
         let mc = mediumContinuation
         pumpTask = Task { [engineStream] in

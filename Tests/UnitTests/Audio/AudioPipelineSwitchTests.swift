@@ -8,7 +8,9 @@ import XCTest
 private final class SwitchTestEngineProvider: AudioEngineProvider {
     var callLog: [String] = []
     var lastInstalledBlock: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    var lastInstalledFormat: AVAudioFormat?
     var startShouldThrow = false
+    var stubbedInputFormat: AVAudioFormat? = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)
     var isVoiceProcessingEnabled: Bool { false }
 
     func setVoiceProcessingEnabled(_ enabled: Bool) throws {}
@@ -19,6 +21,7 @@ private final class SwitchTestEngineProvider: AudioEngineProvider {
     ) {
         callLog.append("installTap")
         lastInstalledBlock = block
+        lastInstalledFormat = format
     }
     func removeTap() { callLog.append("removeTap"); lastInstalledBlock = nil }
     func prepare() {}
@@ -28,7 +31,7 @@ private final class SwitchTestEngineProvider: AudioEngineProvider {
     }
     func stop() { callLog.append("stop") }
     func recreate() { callLog.append("recreate") }
-    func inputNodeInputFormat() -> AVAudioFormat? { nil }
+    func inputNodeInputFormat() -> AVAudioFormat? { stubbedInputFormat }
 }
 
 // MARK: - AudioPipelineSwitchTests
@@ -97,6 +100,31 @@ final class AudioPipelineSwitchTests: XCTestCase {
         XCTAssertTrue(finished,
                       "mediumStream must finish after stop()")
         consumerTask.cancel()
+    }
+
+    // MARK: - Test G: tap is installed with the HW-bound format when the provider reports a valid format
+
+    func testAudioPipeline_TapInstalledWithHWBoundFormat_WhenAvailable() throws {
+        let (pipeline, provider) = makePipeline()
+        provider.stubbedInputFormat = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)
+        try pipeline.start()
+        XCTAssertEqual(provider.lastInstalledFormat?.sampleRate, 16000,
+                       "Tap must be installed with HW-bound sample rate when provider reports a valid format (FIX 1)")
+        XCTAssertEqual(provider.lastInstalledFormat?.channelCount, 1,
+                       "Tap must be installed with HW-bound channel count when provider reports a valid format (FIX 1)")
+    }
+
+    // MARK: - Test G2: tap falls back to nil format when the provider never returns a valid format
+
+    func testAudioPipeline_TapInstalledWithNilFormat_OnPollTimeout() throws {
+        let (pipeline, provider) = makePipeline()
+        provider.stubbedInputFormat = nil
+        XCTAssertNoThrow(try pipeline.start(),
+                         "start() must not throw when poll timeout occurs — fallback to nil format (FIX 1)")
+        XCTAssertNil(provider.lastInstalledFormat,
+                     "Tap must be installed with nil format when provider returns nil (fallback path, FIX 1)")
+        XCTAssertTrue(provider.callLog.contains("start"),
+                      "Engine must have started successfully even when format poll yields no result")
     }
 
     // MARK: - Test D: mediumStream only finishes on stop(), not on switchDevice()
