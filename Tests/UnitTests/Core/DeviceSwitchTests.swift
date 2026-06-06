@@ -281,9 +281,9 @@ final class DeviceSwitchTests: XCTestCase {
                        "isSwitching must be false after switch completes")
     }
 
-    // MARK: - AC-SW-B: rapid double micDeviceChanged() drops the second call
+    // MARK: - AC-SW-B: rapid double micDeviceChanged() supersedes the first call
 
-    func testSwitch_RapidDoubleSwitch_DropsSecond() async throws {
+    func testSwitch_RapidDoubleSwitch_SupersedesFirst() async throws {
         let provider = SwitchTestEngineProvider()
         let sut = makeSUT()
         let (wiring, _, _) = makeWiring(engineProvider: provider)
@@ -295,17 +295,19 @@ final class DeviceSwitchTests: XCTestCase {
         sut.onSwitchStarted = {}
         sut.micDeviceChanged()
         sut.micDeviceChanged()   // immediately, before any await — same MainActor turn
-        // v1 limitation: a second micDeviceChanged() during an in-flight switch is dropped. Filed as M6.8a in backlog for v1.x cancel+supersede if needed in practice.
-        try await Task.sleep(for: .milliseconds(700))
+        // AirPods Pro HFP negotiation fires 2-3 device-change events per physical action; the latest event must supersede prior in-flight switches.
+        try await Task.sleep(for: .milliseconds(1400))
 
-        XCTAssertEqual(provider.callLog.filter { $0 == "stop" }.count, 1,
-                       "Only one stop must occur; callLog=\(provider.callLog)")
+        // task1 is cancelled mid-switchDevice (after stop, before start/recreate); task2 drains it
+        // then completes a full cycle — proving the second call superseded and ran.
+        XCTAssertEqual(provider.callLog.filter { $0 == "stop" }.count, 2,
+                       "Both tasks must call stop; callLog=\(provider.callLog)")
         XCTAssertEqual(provider.callLog.filter { $0 == "start" }.count, 1,
-                       "Only one start must occur; callLog=\(provider.callLog)")
+                       "Only the superseding task completes start; callLog=\(provider.callLog)")
         XCTAssertEqual(provider.callLog.filter { $0 == "recreate" }.count, 1,
-                       "Only one recreate must occur; callLog=\(provider.callLog)")
+                       "Only the superseding task completes recreate; callLog=\(provider.callLog)")
         guard case .active = sut.state else {
-            XCTFail("Expected active state after double switch; state=\(sut.state)")
+            XCTFail("Expected active state after supersede switch; state=\(sut.state)")
             return
         }
         XCTAssertFalse(sut.isSwitching,

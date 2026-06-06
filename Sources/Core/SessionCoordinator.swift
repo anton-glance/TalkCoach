@@ -554,11 +554,17 @@ extension SessionCoordinator: MicMonitorDelegate {
 
     func micDeviceChanged() {
         guard case .active = state else { return }
-        guard !isSwitching else { return }
+        // AirPods Pro HFP negotiation fires 2-3 device-change events per physical action;
+        // the latest event must supersede prior in-flight switches.
+        let priorTask = switchTask
+        priorTask?.cancel()
         isSwitching = true
         onSwitchStarted?()
-        Logger.session.info("SessionCoordinator: micDeviceChanged — spawning performDeviceSwitch")
+        Logger.session.info("SessionCoordinator: micDeviceChanged — superseding prior switch task")
         switchTask = Task { [weak self] in
+            // Drain the cancelled prior task before touching the pipeline so we never have two
+            // concurrent stopEngine/startEngine sequences on the same AudioPipeline.
+            await priorTask?.value
             await self?.performDeviceSwitch()
         }
     }
@@ -569,6 +575,8 @@ extension SessionCoordinator: MicMonitorDelegate {
         do {
             try await pipeline.switchDevice()
             Logger.session.info("SessionCoordinator: device switch complete (AC-SW9)")
+        } catch is CancellationError {
+            Logger.session.info("SessionCoordinator: device switch cancelled — superseded by newer event")
         } catch {
             Logger.session.error("SessionCoordinator: device switch failed, ending session: \(error)")
             endCurrentSession(reason: .pipelineRestartFailed)
