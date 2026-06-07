@@ -1,5 +1,119 @@
 # Project Journal — Locto
 
+## Session 051 — 2026-06-07 — M6.8 SHIPPED via Path B. Tag `m6.8-complete`. HAL-hang edge case filed as M6.8b for v1.x.
+
+**Format:** Architect + product-owner + agent. Phase 6 module M6.8 (AirPods/HFP mid-session device-switch robustness) closes after 13 cumulative iterations across Sessions 041–051: 12 reverted iterations in S050 + 1 Path B architectural pivot landed in S051 across four agent passes. Smoke validated 9 clean switches across built-in / AirPods NC (48k + HFP 24k) / AirPods Pro within a single 3-minute session. A 10th-switch cumulative-HAL-state hang surfaced once under stress-test conditions and is filed as M6.8b (v1.x).
+
+### Final state at session end
+
+- Branch `main`, four new commits on top of `m5.7-complete` (`3ec9a5b`): `8e1f16e` → `9401b61` → `6c3db1a` → `dba303a` → (docs closeout commit).
+- Tag `m6.8-complete` at `dba303a`.
+- 645 tests, 644 pass, 1 skip (pre-existing manual diagnostic `MicMonitorCompositionDiagnostic/testD2`), 0 fail.
+
+### M6.8 — Path B implementation (architectural overview)
+
+Session 050 had locked Path B as the architectural fix: insert a session-lifetime intermediate `AsyncStream` (`mediumStream`) between the `AVAudioEngine` tap and `AudioBufferBroadcaster`, with a pump task that copies per-engine buffers into it. On device-change, only the engine-side stream and the pump are replaced; the broadcaster and all consumers never see the source finish. This sidesteps the Spike #19 (S050) root cause: `AVAudioEngine` tap death propagating finish through `AudioPipeline.bufferStream` → broadcaster drive loop → consumer continuations.
+
+S051 implementation landed in four iterations.
+
+**Iteration 1 (commit `8e1f16e`, base Path B).** AudioPipeline grows session-lifetime `mediumStream + mediumContinuation` (finished ONLY in `stop()` / `deinit`). Per-engine `engineStream + engineContinuation` recreated in each `startEngine()`. `pumpTask` is `for await buf in engineStream { mc.yield(buf) }` — bare yield, NEVER calls finish on `mediumContinuation`. `switchDevice()` cancels and drains the old pump, finishes the engine-side continuation, removes the tap, calls `provider.stop()`, sets `needsRecreateOnNextStart`, sleeps 300ms for HAL settle, calls `startEngine()` which calls `provider.recreate()`, installs a new tap, and spawns a fresh pump into the SAME `mediumContinuation`. Five Path B invariant tests added in `AudioPipelineSwitchTests.swift`. **Architectural decision (CTO):** the legacy `AudioPipeline.recover()` + `AVAudioEngineConfigurationChange` observer are **removed entirely**. `switchDevice()` becomes the single rebuild authority. The configuration-change observer is reinstalled in `SessionCoordinator` and routed through `micDeviceChanged()` so both signals (default-device-change and engine-configuration-change) converge on one rebuild path, de-duplicated via the `isSwitching` / `deviceChangeUntil` window. Also landed: three production-code micro-fixes — `endCurrentSession` on `switchDevice` throw; `teardownWiring` awaits `switchTask.value`; `MicMonitor.handleIsRunningChanged` double-gates on `deviceChangeUntil` AND `delegate.isSwitching`.
+
+**Iteration 2 (architect's spec bug, then iteration 3 commit `9401b61`).** Iteration-1 smoke succeeded for same-format device swaps but wedged on AirPods HFP 24kHz transitions: a converter-input-format mismatch in `RollingAudioWindow` produced `AVAudioConverter ... FillComplexProc: format isEqual` floods after a successful switch. Two needed fixes: (a) install the tap with the actual HW-bound input format rather than `format: nil` (which binds to the input node's stale cached format); (b) rebuild `RollingAudioWindow`'s cached `AVAudioConverter` when its incoming buffer format changes. Iteration 2 attempted these via two paths in parallel and both went wrong. The agent picked the (a) async-method path I had left as an option, which cascaded `start()` from `func start() throws` to `func start() async throws` — and that signature change shifted Combine token-arrival ordering across 18 unrelated tests (`DisconnectProbeReconnectTests` etc.). Rolled back. The async-cascade approach was banned for the rest of M6.8.
+
+Iteration 3 forced sync-only signatures and added a synchronous HW-format poll inside `startEngine()` after `try provider.start()`. **Architect's spec bug:** the original iteration-3 spec said "guard let hwFormat else { throw engineStartFailed }" on a 500ms poll timeout. This cascaded into 29 test failures because the protocol's default `inputNodeInputFormat() -> AVAudioFormat? { nil }` returns nil for every existing test fake, making every `try pipeline.start()` in the test suite throw after a 500ms poll. Rolled back. Iteration 3 second attempt: best-effort fallback — if the format never stabilizes within 500ms, log a warning and install the tap with `format: nil` (current production behavior). Test fakes that don't stub keep passing.
+
+Also resolved in iteration 3: the existing `testStartCallsOperationsInCorrectOrder` test pins the operation sequence as `[setVPIO, installTap, prepare, start]`. To preserve that order while still binding the tap to the HW-stabilized format, the agent's pattern is **install-then-swap**: tap installed with `format: nil` first (preserving the pinned order), then after `provider.start()` returns and the format poll resolves, `provider.removeTap()` followed by `provider.installTap(format: hwFormat, ...)`. The swap fires for any provider that reports a valid format (production); test fakes returning nil skip the swap entirely so their call logs remain unchanged. **Note:** Fix 1 (HW-bound tap) and Fix 2 (RollingAudioWindow converter rebuild) are now mutually load-bearing — the rebuild catches the format change at the moment of the tap swap, on first start AND on every device-change. Three tests added: G (HW-bound format used when available), G2 (nil fallback when provider returns nil after poll timeout), H (RollingAudioWindow rebuilds converter on 48kHz → 24kHz mid-session append).
+
+**Iteration 4 (commit `6c3db1a` + `dba303a`, cancel-and-supersede follow-up).** First broad smoke against `9401b61` produced **6 consecutive clean switches** including the HFP 24kHz transition. Then 1 degraded switch to AirPods Pro stuck the widget at `---`. Log forensics: AirPods Pro pairing fires **2–3 rapid `Default input device changed` events for ONE physical user action** during HFP negotiation (transient device-ID flips). The v1-locked `micDeviceChanged()` guard `!isSwitching else { return }` was DROPPING the second and third events. The first event captured the engine on a transient device state; subsequent corrective events were ignored. The original v1 scope decision (drop-second) was wrong for AirPods Pro because Apple's HFP negotiation legitimately fires multiple device-change events for one physical action. Replaced with **cancel-and-supersede**: capture and cancel the in-flight `switchTask`, await its exit (`await priorTask?.value`) to serialize against AudioPipeline state, then spawn a new performDeviceSwitch with the latest device. `performDeviceSwitch` gained a `catch is CancellationError` arm to prevent superseded tasks from triggering `endCurrentSession(.pipelineRestartFailed)`. The pre-existing `testSwitch_RapidDoubleSwitch_DropsSecond` was renamed to `testSwitch_RapidDoubleSwitch_SupersedesFirst` with call-count semantics `stop=2, start=1, recreate=1` (task1 contributes only stop before cancellation in the 300ms HAL sleep; task2 supersedes and runs the full cycle). A second test, `testConfigChange_DuringSwitch_Supersedes` (was `_DoesNotDoubleRebuild`), locks the same supersede semantics for the configuration-change-during-switch path, which converges on the same `micDeviceChanged()` entry point per the single-rebuild-authority decision.
+
+### Smoke validation (final, `dba303a`)
+
+Single ~140s session, free-talking + repeated device switches:
+
+- 9 clean switches: built-in 96 ↔ AirPods NC 163 (HFP 24k) → AirPods NC 193 (48k) → AirPods Pro 223 → built-in → AirPods NC 253 → AirPods NC 279 across multiple cycles.
+- Each clean switch: visible `counting → warming → counting` transition, widget recoveries within 2-7 seconds of resume speech.
+- `rw: format changed from 48000.000000/1 to 24000.000000/1, converter rebuilt` fires correctly on HFP transitions.
+- Supersede works: every AirPods event chain logs `micDeviceChanged — superseding prior switch task` followed by `device switch cancelled — superseded by newer event`, then `device switch complete (AC-SW9)` on the final winning task.
+- 10th switch (96 → 279, AirPods NC late in session): hung. CoreAudio HAL accumulated state corruption after 9 rapid switches across 3 minutes. Verbatim final log sequence: `AudioObjectRemovePropertyListener: no object with given ID 265` (×7) → `throwing -10877` (×4) → `HALC_ShellObject::SetPropertyData: call to the proxy failed, Error: 2003332927 (who?)` (×2) → `AudioObjectSetPropertyData: no object with given ID 265` → silence on MainActor. The `switchTask` is hung inside `pipeline.switchDevice()` — one of the synchronous AVAudioEngine calls (`removeTap`, `stop`, `installTap`, `prepare`, `start`) is blocked on a CoreAudio property targeting a now-destroyed audio object ID. Widget shows `---` (last rendered frame). `AudioProcessProber: 1 external reader(s)` polling also stops because it runs on MainActor and MainActor is frozen.
+
+### Decision NOT to add a Swift-side watchdog
+
+Initial CTO recommendation was an Option B watchdog: wrap `pipeline.switchDevice()` in `Task.withTimeout(3s)`, on timeout call `endCurrentSession(.pipelineRestartFailed)` so the widget recovers without requiring app restart. Architect reversed this on closer inspection: the hang is not an `await` that doesn't resume — it's a synchronous CoreAudio kernel call holding MainActor hostage. A `Task.sleep(3s)` watchdog needs to hop back to MainActor to fire its recovery body, but MainActor is the thing that's frozen. The recovery body queues behind the hang and never runs. A Thread-based watchdog could observe the hang from outside MainActor, but its recovery (update widget state, end session, recreate pipeline) all touches MainActor-bound objects with the same problem. The only real watchdog is at the process level (force-restart), which is what manual `Quit + reopen` already accomplishes. Filed as **M6.8b** for v1.x investigation: periodic engine-recreate every N switches as a preventive measure, or process-level supervisor.
+
+### Engineering knowledge — ups and downs
+
+**Decisions that survived (locked):**
+
+- *Path B mediumStream + pump is the right architecture for transparent device switching.* Sidesteps the Spike #19 finish-cascade. Production-proven across 9 clean switches under varied HW formats including HFP 24kHz.
+- *`switchDevice()` is the single rebuild authority.* Removing the parallel `AudioPipeline.recover()` + observer path and routing the config-change observer through `SessionCoordinator.micDeviceChanged()` eliminates the entire class of concurrent-engine-rebuild races.
+- *Cancel-and-supersede in `micDeviceChanged()` is required, not optional.* AirPods Pro HFP negotiation produces 2-3 device-change events per physical action. Drop-second was the wrong v1 scope decision; supersede is correct and trivially adds the same semantics to the configuration-change observer path for free.
+- *Install-then-swap for HW-bound tap format.* Test ordering constraints (`testStartCallsOperationsInCorrectOrder`) plus production correctness (tap must bind to HW format for HFP, but must install in the pinned order) resolve cleanly via the pattern: install nil-format → start → poll for HW format → if found, removeTap + reinstall with hwFormat. Best-effort: if format never stabilizes within 500ms, the nil-format tap remains and the session continues with current production behavior.
+- *`RollingAudioWindow` rebuilds its cached `AVAudioConverter` on input-format change.* Detected on sampleRate or channelCount mismatch in `append()`. Rebuild via existing `configure()` path; ring buffer is not cleared because output format (16kHz mono f32) is stable.
+- *`stopEngine()` idempotency is load-bearing for safe cancellation.* `engineContinuation?.finish()` on nil is no-op; `pumpTask?.cancel()` on nil is no-op; `provider.removeTap()` on already-untapped engine is safe. This is what makes cancel-and-supersede safe to interrupt the prior task mid-switch.
+
+**Decisions that were wrong (reverted):**
+
+- *Making `startEngine()` or `start()` async.* Cascaded to 18 unrelated test failures via Combine token-arrival ordering. Signatures stay sync. Architect's prompt left this as an agent option in iteration 2; should not have. Banned for the duration of M6.8.
+- *Throwing on HW-format poll timeout.* Cascaded 29 test failures because protocol default returns nil for every fake. Best-effort with nil fallback is correct.
+- *Drop-second on `!isSwitching` guard.* Right for synthetic rapid double-clicks but wrong for AirPods Pro's multi-event HFP negotiation. Supersede is the production-correct pattern.
+
+**Process learnings (locked):**
+
+- *Architect's spec bugs are real and need explicit verification.* The iteration-3 over-aggressive guard caused a 29-test cascade; the iteration-2 async option caused 18-test cascade. Both were spec errors, not agent errors. The agent surfaced both honestly. Pattern: when a spec instructs the agent to throw or block in code paths that ALL test fakes can reach, the cascade is guaranteed. Architect must mentally walk the test surface before locking a spec that touches a frequently-faked protocol method.
+- *Cancellation-and-await-drain pattern is the canonical fix for concurrent-rebuild races.* `let priorTask = switchTask; priorTask?.cancel(); ... await priorTask?.value` followed by the new work. The drain serializes against shared state mutations. Combined with idempotent `stopEngine()`, this safely interrupts mid-rebuild without state corruption.
+- *Test renaming reveals semantic shifts.* `testSwitch_RapidDoubleSwitch_DropsSecond` → `_SupersedesFirst` and `testConfigChange_DuringSwitch_DoesNotDoubleRebuild` → `_Supersedes` weren't cosmetic — they're explicit acknowledgment that the v1 scope decision was wrong and the new behavior is intentional. Future archeology: a renamed-and-rewritten test is a load-bearing decision marker.
+- *Cumulative HAL state corruption is a real failure mode.* macOS CoreAudio's HAL leaks listener references and IO threads under rapid sequential device-change churn. The 9-switch / 3-minute threshold is the observed stress floor. Below that, switches are clean. Above that, eventual hang. Not addressable from app-level code; mitigation is preventive (periodic engine-recreate every N switches) or escalation (process-level supervisor). Filed as M6.8b for v1.x.
+
+**Agent-discipline observations:**
+
+- Two strikes against agent honesty observed and corrected: (1) a "9 AC-SW tests green" claim after renumbering hid 5 of 7 missing tests; (2) silent test omission on first corrections round of iteration 1. Fresh-agent-session protocol used successfully for iterations 3 and 4: fresh Xcode chat, full standalone agent prompt, no carry-over context. This worked.
+- Agent's `STOP` discipline on iteration-3 spec bug (cascade caught at 29 failures, reported verbatim, did not unilaterally "fix" the cascade) was correct behavior under the locked protocol. Architect responded with a corrected spec rather than blaming the agent.
+- Agent's unprompted `catch is CancellationError` arm in `performDeviceSwitch` during iteration 4 was correct anticipation of a real concurrency bug the architect's prompt hadn't addressed.
+
+### What ships at `m6.8-complete`
+
+Production behavior:
+
+1. Single-engine session-lifetime audio plane: mediumStream + per-engine engineStream + pump. mediumStream survives device switches.
+2. Mid-session device switches transition the widget through `counting → warming → counting` for 2-7s while the engine is swapped. Session ID + counters + locale + Parakeet bufferTask + Silero VAD gate ALL preserved across the switch.
+3. Tap is bound to HW-stabilized input format when available (production); falls back to `format: nil` on poll timeout (graceful, matches today's behavior).
+4. RollingAudioWindow rebuilds its cached converter on any input format change including HFP 24kHz transitions.
+5. Multiple rapid device-change events (AirPods Pro HFP negotiation, configuration-change-during-switch) are correctly serialized via cancel-and-supersede. The latest event always wins.
+6. Single rebuild authority: `switchDevice()` is the only path that rebuilds the engine; `AudioPipeline.recover()` and the in-pipeline `AVAudioEngineConfigurationChange` observer have been removed.
+
+V1 limitation (documented as M6.8b):
+
+- Under sustained heavy stress-test churn (8+ rapid sequential device switches in a few minutes), CoreAudio's HAL state can accumulate corruption sufficient to wedge a subsequent `switchDevice()` call inside a synchronous kernel call that holds MainActor hostage. User-visible recovery: Locto menubar → Quit → reopen (~3 seconds). Real-world impact: very low. Typical 30–60 min call: 1–3 device switches; the threshold isn't reached. Not addressable from app-level code (Swift Task cancellation can't preempt a sync CoreAudio call). Tracked as M6.8b for v1.x.
+
+### Files touched
+
+Production (4 files):
+- `Sources/Audio/AudioPipeline.swift` (mediumStream + pump + startEngine + stopEngine + switchDevice + HW format poll + install-then-swap)
+- `Sources/Audio/AudioEngineProvider.swift` (`recreate()` + `inputNodeInputFormat()` protocol method)
+- `Sources/Core/SessionCoordinator.swift` (`switchTask`, `configChangeObserver`, `micDeviceChanged` with supersede, `performDeviceSwitch` with `CancellationError` arm, `teardownWiring` awaits `switchTask`)
+- `Sources/Core/MicMonitor.swift` (`deviceChangeUntil` 0.5s window, `micDeviceChanged` delegate call, double-gate `handleIsRunningChanged`)
+- `Sources/Core/MicMonitorDelegate.swift` (added `micDeviceChanged()` + `isSwitching` with default impls)
+- `Sources/Speech/RollingAudioWindow.swift` (`configuredInputFormat` + auto-rebuild in `append`)
+- `Sources/Widget/FloatingPanelController.swift` (`onSwitchStarted` → `wpmCalculator.enterWaiting` + `setActivityState(.warming)`)
+
+Tests (5 files):
+- `Tests/UnitTests/Audio/AudioPipelineSwitchTests.swift` (5 Path B invariant tests + G + G2)
+- `Tests/UnitTests/Audio/AudioPipelineTests.swift` (compat tweaks for new signatures)
+- `Tests/UnitTests/Core/DeviceSwitchTests.swift` (4 supersede + config-change-supersede tests)
+- `Tests/UnitTests/Core/MicMonitorTests.swift` (`IsRunningSuppressedDuringSwitching`, deviceChangeUntil)
+- `Tests/UnitTests/Speech/RollingAudioWindowTests.swift` (Test H, format-change rebuild)
+
+Banned-symbol grep (zero matches in Sources/): `isInRewire`, `rewireWarmupUntil`, `applyWPMVoiced`, `onRewireStateChanged`, `rewireInProgress`, `rewireAudioPipeline`, `replaceAudioProvider`.
+
+SwiftLint: UNVERIFIED at session end; Anton to run `swiftlint --strict` manually before any subsequent push.
+
+### Cumulative M6.8 cost
+
+- Sessions 041 → 050 (S050 = ~11h pure M6.8 with zero shipped progress + 12 reverted iterations).
+- Session 051 = ~3-4h architect-side, four agent passes.
+- M6.8 total: ~14–15h actual against original 4–6h estimate = ~3x. Path B itself (S051 only) ran roughly on the S050 estimate (4-6h budget for Session 051's Path B implementation). The overage is entirely the S050 12-iteration spiral that proved the wrong architectural layer was being patched. Spike #19 (S050, ~1h) was the leverage point that unlocked S051 → close.
+
+---
 ## Session 050 — 2026-06-04 — M6.8 device-switch saga + Spike #19 (Hypothesis B) + Path B locked for Session 051. No tag.
 
 **Format:** Architect + product-owner + agent. Phase 6 module M6.8 (AirPods/HFP device-switch robustness) attempted across 12 incremental iterations + 1 architectural pivot (M6.8 rebuild) + 1 follow-up patch (M6.8b) + 1 diagnostic spike (Spike #19). All attempts FAILED to deliver shippable mid-session device-switch behavior. Spike #19 conclusively identified the architectural reason and locked the Path B design for Session 051.

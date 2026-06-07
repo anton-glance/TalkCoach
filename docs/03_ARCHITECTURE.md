@@ -101,19 +101,42 @@
 ---
 
 ### 3. `AudioPipeline`
-**Job:** Capture mic audio and provide raw buffers to `TranscriptionEngine`.
+**Job:** Capture mic audio and provide raw buffers to `TranscriptionEngine` via a session-lifetime stream that survives mid-session input-device swaps.
 
-**Implementation:**
-- `AVAudioEngine` with `inputNode` tap
+**Implementation (Path B, shipped Session 051 at tag `m6.8-complete`):**
+
+Two-stream architecture isolating consumers from `AVAudioEngine` lifetime:
+
+```
+AVAudioEngine tap → engineContinuation → engineStream
+                                              ↓
+                                          pumpTask
+                                              ↓
+                                       mediumContinuation → mediumStream → AudioBufferBroadcaster → consumers
+```
+
+- `mediumStream` and `mediumContinuation` are **session-lifetime**. Finished ONLY in `stop()` and `deinit`. NEVER finished during a device switch.
+- `engineStream` and `engineContinuation` are **per-engine**. Recreated each `startEngine()`. Finished by `stopEngine()` when an engine is being replaced.
+- `pumpTask` is `for await buf in engineStream { mediumContinuation.yield(buf) }` — a bare yield. Never calls finish on `mediumContinuation`. When the engine dies and `engineStream` finishes, the pump task exits cleanly, but the broadcaster's `for await buffer in mediumStream` keeps suspending and resuming because `mediumStream` is still open.
+- On device-change: cancel-and-drain the old pump, finish the engine-side continuation, remove the tap, `provider.stop()`, set `needsRecreateOnNextStart`, sleep 300ms for HAL settle, then `startEngine()` which calls `provider.recreate()`, installs a new tap, and spawns a fresh pump into the SAME `mediumContinuation`. Broadcaster never sees an interruption; consumers see a brief gap.
+
+Engine lifecycle:
+
 - **Voice Processing IO disabled** (`isVoiceProcessingEnabled = false`) — set before `prepare()`/`start()`. Validated stable across all 10 Spike #4 scenarios; macOS never overrode it.
-- **Tap installed with `format: nil`** — lets the system provide whatever format the device negotiates. Required because Safari Meet changes input channel count from 1→3 mid-session (Spike #4); a hardcoded format would crash on that transition.
-- **Subscribe to `AVAudioEngineConfigurationChange` notifications.** When fired (browser-based Meet joining mid-session is the known trigger), the engine has stopped — re-fetch the input format, reinstall the tap with `format: nil`, and call `engine.start()` again. Native conferencing apps (Zoom, FaceTime) do not trigger this; only browser-based audio stacks do, and they only trigger it in the harness-first ordering. Recovery is a routine Apple pattern, not an exception case.
-- Tap callback delivers buffers to `TranscriptionEngine` (forwarded to whichever backend serves the active locale).
+- **Tap installed with HW-bound format via install-then-swap.** Tap is first installed with `format: nil` (preserving the existing canonical operation order `[setVPIO, installTap, prepare, start]`). After `provider.start()` returns, AudioPipeline polls `provider.inputNodeInputFormat()` synchronously (`Thread.sleep(20ms)` per attempt, 500ms ceiling) for a non-nil format with `sampleRate > 0` and `channelCount > 0`. If found, `provider.removeTap()` then `provider.installTap(format: hwFormat, ...)` to bind the tap to the actual HAL-negotiated format. Best-effort: if the format never stabilizes within 500ms, the nil-format tap remains and a warning is logged. This solves the AirPods HFP 48kHz↔24kHz transition wedge where a nil-format tap binds to a stale cached node format.
+- **Single rebuild authority.** `switchDevice()` is the only path that rebuilds the engine. The legacy `AudioPipeline.recover()` plus `AVAudioEngineConfigurationChange` observer **were removed entirely** in Session 051. The observer is now installed in `SessionCoordinator` and routes through `SessionCoordinator.micDeviceChanged()`, so both signals (default-device-change from `MicMonitor` and engine-configuration-change from `AVAudioEngine`) converge on the same `switchTask` path, de-duplicated by the `isSwitching` flag and the 500ms `deviceChangeUntil` window. SessionCoordinator's `micDeviceChanged()` uses cancel-and-supersede semantics (`priorTask.cancel(); await priorTask?.value; performDeviceSwitch()`) because AirPods Pro HFP negotiation fires 2–3 device-change events per single physical action; the latest event always wins. `performDeviceSwitch` has a `catch is CancellationError` arm to prevent superseded tasks from triggering `endCurrentSession(.pipelineRestartFailed)`.
+- **`stopEngine()` idempotency is load-bearing.** `engineContinuation?.finish()` on nil is no-op; `pumpTask?.cancel()` on nil is no-op; `provider.removeTap()` on an already-untapped engine is safe. This is what makes mid-rebuild cancellation safe.
 
 **Swift 6 concurrency requirement (Spike #4 finding):**
 The audio tap callback runs on Core Audio's `RealtimeMessenger.mServiceQueue`. If the closure is defined in a `@MainActor`-isolated context (e.g., inside `@main struct` body or `main.swift` top level), Swift 6's runtime checks crash with `_dispatch_assert_queue_fail` because the closure inherits main-actor isolation. Define tap closures in a separate non-main-actor source file. `AVAudioEngine`/`AVAudioInputNode` are non-Sendable; when captured in such closures, annotate with `nonisolated(unsafe)`. The compiler does NOT warn — this only surfaces at runtime.
 
 **Outputs:** Audio buffers (for `TranscriptionEngine`).
+
+**Why Path B over earlier suppression-flag attempts:**
+
+Sessions 041–050 attempted 12+ iterations of suppression flags at various listener handlers (`MicMonitor.handleIsRunningChanged`, `AudioProcessProber.handlePollResult`, in-handler `emitStateChange`, etc.). Each iteration transformed the failure mode rather than eliminating it. Session 050's Spike #19 proved the architectural reason: when the OS detaches the HW device, `AVAudioEngine` finishes the tap's underlying `AsyncStream`. That `.finish()` propagates through `AudioBufferBroadcaster.drive`'s `for await buffer in source` loop, which then calls `cont.finish()` on every consumer continuation. The broadcaster pause + 1500ms hold experiment confirmed: pause executes correctly, but the source stream still finishes (verbatim spike log: `broadcaster: drive loop EXITING after 264 buffers — source stream finished`). The only architectural fix is to insert a session-lifetime stream that we control between the engine-bound stream and the broadcaster, so consumers read from a stream that we never finish during a switch.
+
+**V1 known limitation (M6.8b, v1.x):** Under sustained heavy stress-test churn (8+ rapid sequential mic switches in a few minutes), CoreAudio's HAL accumulates state corruption sufficient to wedge a subsequent `switchDevice()` inside a synchronous CoreAudio kernel call. MainActor freezes; widget shows last-rendered frame; user recovery is Locto → Quit → reopen. Not addressable from Swift code: `Task.cancel()` cannot preempt synchronous CoreAudio calls; a `Task.sleep` watchdog needs MainActor to fire its recovery body. V1.x investigation directions: periodic preventive engine-recreate every N switches, or process-level supervisor with helper-process force-restart.
 
 **Design notes:**
 - *No standalone VAD module* (locked Session 004): the previous design fed `isSpeaking` events from energy-based VAD into the WPM calculator. Replaced by deriving speaking activity from `SpeechAnalyzer` token arrival timestamps directly (see `SpeakingActivityTracker` in the `Analyzer` module). Reasons: `SpeechAnalyzer` already does ML-based speech/non-speech classification internally; energy VAD requires noise-floor calibration that fails when mic AGC adjusts during silence (FM3 violation); removing one module reduces CPU and bug surface.
