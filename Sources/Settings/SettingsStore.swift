@@ -53,6 +53,9 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    // M6.11 stub — full implementation added in Commit 2
+    @Published var hasCompletedOnboarding: Bool = false
+
     @Published var widgetPositionByDisplay: [String: CGPoint] {
         didSet {
             guard !isSyncing else { return }
