@@ -225,11 +225,11 @@ enum DesignTokens {
     // MARK: - Brand colors (onboarding, M6.11)
 
     enum Brand {
-        static let brand       = Color(red: 15/255,  green: 110/255, blue: 86/255)
-        static let brandDark   = Color(red: 8/255,   green: 80/255,  blue: 65/255)
+        static let brand       = Color(red: 15/255, green: 110/255, blue: 86/255)
+        static let brandDark   = Color(red: 8/255, green: 80/255, blue: 65/255)
         static let brandLight  = Color(red: 225/255, green: 245/255, blue: 238/255)
-        static let brandInk    = Color(red: 4/255,   green: 52/255,  blue: 44/255)
-        static let teal200     = Color(red: 93/255,  green: 202/255, blue: 165/255)
+        static let brandInk    = Color(red: 4/255, green: 52/255, blue: 44/255)
+        static let teal200     = Color(red: 93/255, green: 202/255, blue: 165/255)
     }
 
     // MARK: - Surface colors (onboarding, M6.11)
@@ -244,16 +244,16 @@ enum DesignTokens {
     // MARK: - Text colors (onboarding, M6.11)
 
     enum Text {
-        static let primary     = Color(red: 31/255,  green: 41/255,  blue: 55/255)
-        static let secondary   = Color(red: 95/255,  green: 94/255,  blue: 90/255)
+        static let primary     = Color(red: 31/255, green: 41/255, blue: 55/255)
+        static let secondary   = Color(red: 95/255, green: 94/255, blue: 90/255)
         static let tertiary    = Color(red: 156/255, green: 154/255, blue: 147/255)
     }
 
     // MARK: - Motion durations (onboarding, M6.11)
 
     enum Motion {
-        static let fast:  TimeInterval = 0.20
-        static let base:  TimeInterval = 0.35
-        static let slow:  TimeInterval = 0.60
+        static let fast: TimeInterval = 0.20
+        static let base: TimeInterval = 0.35
+        static let slow: TimeInterval = 0.60
     }
 }

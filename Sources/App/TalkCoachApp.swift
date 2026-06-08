@@ -55,7 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // swiftlint:disable:next function_body_length
     func applicationDidFinishLaunching(_ notification: Notification) {
         let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         guard !isRunningTests else {
@@ -113,7 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // is released at app termination. No Metal contexts (Architecture AA is CPU-only ONNX).
     }
 
-    // swiftlint:disable:next function_body_length
     private func bootSessionEngine() {
         sessionCoordinator.start()
 

@@ -100,6 +100,7 @@ final class FloatingPanelController {
         self.viewModel = WidgetViewModel(settings: settingsStore)
     }
 
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     func start() {
         guard !isStarted else { return }
         isStarted = true

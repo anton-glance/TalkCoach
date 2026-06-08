@@ -145,6 +145,7 @@ final class AudioPipeline {
 
     // MARK: - Private
 
+    // swiftlint:disable:next function_body_length
     private func startEngine() throws {
         if needsEngineRecreateOnNextStart {
             provider.recreate()
@@ -188,16 +189,16 @@ final class AudioPipeline {
         // Polling is skipped when the provider returns nil on the first call — SystemAudioEngineProvider
         // never returns nil; test fakes that do return nil do not implement format reporting.
         if let firstCheck = provider.inputNodeInputFormat() {
-            var hwFormat: AVAudioFormat? = nil
+            var hwFormat: AVAudioFormat?
             if firstCheck.sampleRate > 0, firstCheck.channelCount > 0 {
                 hwFormat = firstCheck
             } else {
                 let deadline = Date().addingTimeInterval(0.5)
                 while Date() < deadline {
-                    if let f = provider.inputNodeInputFormat(),
-                       f.sampleRate > 0,
-                       f.channelCount > 0 {
-                        hwFormat = f
+                    if let format = provider.inputNodeInputFormat(),
+                       format.sampleRate > 0,
+                       format.channelCount > 0 {
+                        hwFormat = format
                         break
                     }
                     Thread.sleep(forTimeInterval: 0.02)
@@ -217,6 +218,7 @@ final class AudioPipeline {
         }
 
         // Pump bridges per-engine buffers into the session-lifetime mediumStream.
+        // swiftlint:disable:next identifier_name
         let mc = mediumContinuation
         pumpTask = Task { [engineStream] in
             for await buffer in engineStream {

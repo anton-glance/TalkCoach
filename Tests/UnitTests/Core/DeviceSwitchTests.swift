@@ -54,8 +54,8 @@ private final class SwitchTestScheduler: HideScheduler {
     }
     func fireNext() {
         guard !entries.isEmpty else { return }
-        let e = entries.removeFirst()
-        e.action()
+        let entry = entries.removeFirst()
+        entry.action()
     }
 }
 
@@ -84,6 +84,7 @@ final class DeviceSwitchTests: XCTestCase {
 
     private func makeWiring(
         engineProvider: SwitchTestEngineProvider? = nil
+    // swiftlint:disable:next large_tuple
     ) -> (wiring: SessionWiring, provider: SwitchTestEngineProvider, fakeLD: FakeLanguageDetector) {
         let provider = engineProvider ?? SwitchTestEngineProvider()
         let pipeline = AudioPipeline(provider: provider)

@@ -3,9 +3,9 @@ import SwiftUI
 private let widgetPositions: [CGPoint] = [
     CGPoint(x: 340, y: 40),
     CGPoint(x: 150, y: 120),
-    CGPoint(x: 20,  y: 62),
+    CGPoint(x: 20, y: 62),
     CGPoint(x: 250, y: 92),
-    CGPoint(x: 92,  y: 34),
+    CGPoint(x: 92, y: 34)
 ]
 
 struct StepWidget: View {

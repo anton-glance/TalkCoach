@@ -100,12 +100,12 @@ struct ProgressDots: View {
     let current: Int
     var body: some View {
         HStack(spacing: 7) {
-            ForEach(1...total, id: \.self) { n in
+            ForEach(1...total, id: \.self) { step in
                 Capsule()
-                    .frame(width: n == current ? 20 : 6, height: 6)
+                    .frame(width: step == current ? 20 : 6, height: 6)
                     .foregroundStyle(
-                        n == current ? DesignTokens.Brand.brand :
-                        n < current  ? DesignTokens.Brand.teal200 :
+                        step == current ? DesignTokens.Brand.brand :
+                        step < current  ? DesignTokens.Brand.teal200 :
                         DesignTokens.Border.strong
                     )
                     .animation(.easeOut(duration: DesignTokens.Motion.base), value: current)
@@ -155,26 +155,29 @@ struct OnboardingPrimaryButton: View {
     }
 
     var body: some View {
-        Button(action: { if !isDisabled { action() } }) {
-            Text(title)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(isDisabled ? DesignTokens.Text.tertiary : Color.white)
-                .frame(minWidth: 132, minHeight: 44)
-                .padding(.horizontal, 22)
-                .background(
-                    isDisabled ? DesignTokens.Surface.surface2 :
-                    isHovered  ? DesignTokens.Brand.brandDark :
-                    DesignTokens.Brand.brand
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                .shadow(
-                    color: isDisabled ? .clear : Color(red: 15/255, green: 110/255, blue: 86/255)
-                        .opacity(isHovered ? 0.26 : 0.18),
-                    radius: isHovered ? 9 : 4,
-                    y: isHovered ? 3 : 1
-                )
-                .offset(y: (!isDisabled && isHovered) ? -1 : 0)
-        }
+        Button(
+            action: { if !isDisabled { action() } },
+            label: {
+                Text(title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(isDisabled ? DesignTokens.Text.tertiary : Color.white)
+                    .frame(minWidth: 132, minHeight: 44)
+                    .padding(.horizontal, 22)
+                    .background(
+                        isDisabled ? DesignTokens.Surface.surface2 :
+                        isHovered  ? DesignTokens.Brand.brandDark :
+                        DesignTokens.Brand.brand
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .shadow(
+                        color: isDisabled ? .clear : Color(red: 15/255, green: 110/255, blue: 86/255)
+                            .opacity(isHovered ? 0.26 : 0.18),
+                        radius: isHovered ? 9 : 4,
+                        y: isHovered ? 3 : 1
+                    )
+                    .offset(y: (!isDisabled && isHovered) ? -1 : 0)
+            }
+        )
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .onHover { isHovered = $0 }
@@ -234,7 +237,7 @@ private let cropWallpaper = LinearGradient(
     stops: [
         .init(color: Color(red: 236/255, green: 230/255, blue: 216/255), location: 0),
         .init(color: Color(red: 228/255, green: 221/255, blue: 205/255), location: 0.52),
-        .init(color: Color(red: 218/255, green: 213/255, blue: 200/255), location: 1),
+        .init(color: Color(red: 218/255, green: 213/255, blue: 200/255), location: 1)
     ],
     startPoint: .topLeading,
     endPoint: .bottomTrailing
@@ -417,16 +420,16 @@ struct OnboardingDropdown: View {
 // MARK: - AppParadeView
 
 private let appParadeItems: [(name: String, symbolName: String)] = [
-    ("Zoom",     "video"),
-    ("Teams",    "person.3"),
-    ("Meet",     "video.fill"),
+    ("Zoom", "video"),
+    ("Teams", "person.3"),
+    ("Meet", "video.fill"),
     ("FaceTime", "phone.fill"),
-    ("Slack",    "message"),
-    ("Discord",  "headphones"),
-    ("Webex",    "circle.grid.3x3"),
-    ("Skype",    "bubble.left"),
+    ("Slack", "message"),
+    ("Discord", "headphones"),
+    ("Webex", "circle.grid.3x3"),
+    ("Skype", "bubble.left"),
     ("WhatsApp", "message.fill"),
-    ("Telegram", "paperplane"),
+    ("Telegram", "paperplane")
 ]
 
 struct AppParadeView: View {
@@ -439,8 +442,8 @@ struct AppParadeView: View {
     var body: some View {
         ZStack {
             HStack(spacing: tileSpacing) {
-                ForEach(0..<appParadeItems.count * 2, id: \.self) { i in
-                    let item = appParadeItems[i % appParadeItems.count]
+                ForEach(0..<appParadeItems.count * 2, id: \.self) { index in
+                    let item = appParadeItems[index % appParadeItems.count]
                     VStack(spacing: 8) {
                         Image(systemName: item.symbolName)
                             .font(.system(size: 22, weight: .light))

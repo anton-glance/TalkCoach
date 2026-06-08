@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private let kModalWidth:  CGFloat = 560
+private let kModalWidth: CGFloat = 560
 private let kModalHeight: CGFloat = 600
 private let kCornerRadius: CGFloat = 22
 
@@ -11,9 +11,9 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     private var viewModel: OnboardingViewModel?
 
     func open(settingsStore: SettingsStore, onComplete: @escaping () -> Void) {
-        let vm = OnboardingViewModel(settingsStore: settingsStore, onComplete: onComplete)
-        viewModel = vm
-        let shell = OnboardingShell(viewModel: vm)
+        let viewModel = OnboardingViewModel(settingsStore: settingsStore, onComplete: onComplete)
+        self.viewModel = viewModel
+        let shell = OnboardingShell(viewModel: viewModel)
         let rootView = shell
             .frame(width: kModalWidth, height: kModalHeight)
         let controller = NSHostingController(rootView: rootView)
@@ -45,9 +45,9 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
             win.center(); return
         }
-        let sf = screen.frame
-        let x = sf.midX - kModalWidth / 2
-        let y = sf.midY - kModalHeight / 2
+        let screenFrame = screen.frame
+        let x = screenFrame.midX - kModalWidth / 2
+        let y = screenFrame.midY - kModalHeight / 2
         win.setFrameOrigin(NSPoint(x: x, y: y))
     }
 

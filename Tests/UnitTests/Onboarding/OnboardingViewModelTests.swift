@@ -28,64 +28,64 @@ final class OnboardingViewModelTests: XCTestCase {
     // MARK: - Test 1
 
     func testInitialStep_isOne() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
-        XCTAssertEqual(vm.currentStep, 1)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
+        XCTAssertEqual(viewModel.currentStep, 1)
     }
 
     // MARK: - Test 2
 
     func testAdvance_incrementsStep() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
-        vm.advance()
-        XCTAssertEqual(vm.currentStep, 2)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
+        viewModel.advance()
+        XCTAssertEqual(viewModel.currentStep, 2)
     }
 
     // MARK: - Test 3
 
     func testCanContinue_falseWhenMicNotGranted() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
-        vm.micGranted = false
-        vm.setPrimaryLocale("en_US")
-        XCTAssertFalse(vm.canContinueStep2)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
+        viewModel.micGranted = false
+        viewModel.setPrimaryLocale("en_US")
+        XCTAssertFalse(viewModel.canContinueStep2)
     }
 
     // MARK: - Test 4
 
     func testCanContinue_falseWhenPrimaryNil() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
-        vm.micGranted = true
-        vm.setPrimaryLocale(nil)
-        XCTAssertFalse(vm.canContinueStep2)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
+        viewModel.micGranted = true
+        viewModel.setPrimaryLocale(nil)
+        XCTAssertFalse(viewModel.canContinueStep2)
     }
 
     // MARK: - Test 5
 
     func testCanContinue_falseWhenSameLocale() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
-        vm.micGranted = true
-        vm.setPrimaryLocale("en_US")
-        vm.setSecondaryLocale("en_US")
-        XCTAssertFalse(vm.canContinueStep2)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
+        viewModel.micGranted = true
+        viewModel.setPrimaryLocale("en_US")
+        viewModel.setSecondaryLocale("en_US")
+        XCTAssertFalse(viewModel.canContinueStep2)
     }
 
     // MARK: - Test 6
 
     func testCanContinue_trueWhenAllMet() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
-        vm.micGranted = true
-        vm.setPrimaryLocale("en_US")
-        vm.setSecondaryLocale(nil)
-        XCTAssertTrue(vm.canContinueStep2)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
+        viewModel.micGranted = true
+        viewModel.setPrimaryLocale("en_US")
+        viewModel.setSecondaryLocale(nil)
+        XCTAssertTrue(viewModel.canContinueStep2)
     }
 
     // MARK: - Test 7
 
     func testCanContinue_trueWithDifferentSecondary() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
-        vm.micGranted = true
-        vm.setPrimaryLocale("en_US")
-        vm.setSecondaryLocale("fr_FR")
-        XCTAssertTrue(vm.canContinueStep2)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
+        viewModel.micGranted = true
+        viewModel.setPrimaryLocale("en_US")
+        viewModel.setSecondaryLocale("fr_FR")
+        XCTAssertTrue(viewModel.canContinueStep2)
     }
 
     // MARK: - Test 8
@@ -93,9 +93,9 @@ final class OnboardingViewModelTests: XCTestCase {
     func testRequestMicPermission_granted_setsMicGranted() async throws {
         let mock = MockPermissionStatusProvider()
         mock.micRequestResult = true
-        let vm = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
-        await vm.requestMicPermission()
-        XCTAssertTrue(vm.micGranted)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
+        await viewModel.requestMicPermission()
+        XCTAssertTrue(viewModel.micGranted)
     }
 
     // MARK: - Test 9
@@ -103,17 +103,17 @@ final class OnboardingViewModelTests: XCTestCase {
     func testRequestMicPermission_denied_staysFalse() async throws {
         let mock = MockPermissionStatusProvider()
         mock.micRequestResult = false
-        let vm = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
-        await vm.requestMicPermission()
-        XCTAssertFalse(vm.micGranted)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
+        await viewModel.requestMicPermission()
+        XCTAssertFalse(viewModel.micGranted)
     }
 
     // MARK: - Test 10
 
     func testPrimaryLocaleChange_writesToSettingsStore() {
         let store = makeStore()
-        let vm = OnboardingViewModel(settingsStore: store)
-        vm.setPrimaryLocale("fr_FR")
+        let viewModel = OnboardingViewModel(settingsStore: store)
+        viewModel.setPrimaryLocale("fr_FR")
         XCTAssertEqual(store.declaredLocales.first, "fr_FR")
     }
 
@@ -121,10 +121,10 @@ final class OnboardingViewModelTests: XCTestCase {
 
     func testSecondaryLocaleNil_removesSecondEntry() {
         let store = makeStore()
-        let vm = OnboardingViewModel(settingsStore: store)
-        vm.setPrimaryLocale("en_US")
-        vm.setSecondaryLocale("de_DE")
-        vm.setSecondaryLocale(nil)
+        let viewModel = OnboardingViewModel(settingsStore: store)
+        viewModel.setPrimaryLocale("en_US")
+        viewModel.setSecondaryLocale("de_DE")
+        viewModel.setSecondaryLocale(nil)
         XCTAssertEqual(store.declaredLocales.count, 1)
     }
 
@@ -132,8 +132,8 @@ final class OnboardingViewModelTests: XCTestCase {
 
     func testComplete_setsHasCompletedOnboarding() {
         let store = makeStore()
-        let vm = OnboardingViewModel(settingsStore: store)
-        vm.complete()
+        let viewModel = OnboardingViewModel(settingsStore: store)
+        viewModel.complete()
         XCTAssertTrue(store.hasCompletedOnboarding)
     }
 
@@ -141,8 +141,8 @@ final class OnboardingViewModelTests: XCTestCase {
 
     func testComplete_setsHasCompletedSetup() {
         let store = makeStore()
-        let vm = OnboardingViewModel(settingsStore: store)
-        vm.complete()
+        let viewModel = OnboardingViewModel(settingsStore: store)
+        viewModel.complete()
         XCTAssertTrue(store.hasCompletedSetup)
     }
 
@@ -150,8 +150,8 @@ final class OnboardingViewModelTests: XCTestCase {
 
     func testComplete_callsCompletionHandler() {
         var fired = false
-        let vm = OnboardingViewModel(settingsStore: makeStore(), onComplete: { fired = true })
-        vm.complete()
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), onComplete: { fired = true })
+        viewModel.complete()
         XCTAssertTrue(fired)
     }
 
@@ -160,8 +160,8 @@ final class OnboardingViewModelTests: XCTestCase {
     func testPreGrantedMicShowsToggleOn() {
         let mock = MockPermissionStatusProvider()
         mock.micStatus = .authorized
-        let vm = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
-        XCTAssertTrue(vm.micGranted)
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
+        XCTAssertTrue(viewModel.micGranted)
     }
 
     // MARK: - Test 16
@@ -200,26 +200,26 @@ final class OnboardingViewModelTests: XCTestCase {
         let defaults = makeIsolatedDefaults()
         let store = SettingsStore(userDefaults: defaults)
         store.declaredLocales = ["de_DE"]
-        let vm = OnboardingViewModel(settingsStore: store)
-        XCTAssertEqual(vm.primaryLocaleID, "de_DE")
+        let viewModel = OnboardingViewModel(settingsStore: store)
+        XCTAssertEqual(viewModel.primaryLocaleID, "de_DE")
     }
 
     // MARK: - Test 20
 
     func testAdvance_doesNotExceedStep5() {
-        let vm = OnboardingViewModel(settingsStore: makeStore())
+        let viewModel = OnboardingViewModel(settingsStore: makeStore())
         for _ in 0..<10 {
-            vm.advance()
+            viewModel.advance()
         }
-        XCTAssertEqual(vm.currentStep, 5)
+        XCTAssertEqual(viewModel.currentStep, 5)
     }
 
     // MARK: - Test 21
 
     func testStep5CloseX_callsComplete() {
         var fired = false
-        let vm = OnboardingViewModel(settingsStore: makeStore(), onComplete: { fired = true })
-        vm.complete()
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), onComplete: { fired = true })
+        viewModel.complete()
         XCTAssertTrue(fired)
     }
 }
