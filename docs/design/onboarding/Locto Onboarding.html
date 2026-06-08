@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Locto · First-launch onboarding</title>
+  <link rel="stylesheet" href="tokens.css">
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0d0f10; overflow: hidden; }
+    #root { height: 100%; }
+    * { -webkit-font-smoothing: antialiased; }
+
+    @keyframes locto-pulse-ring {
+      0%   { transform: scale(0.7); opacity: 0.85; }
+      70%  { transform: scale(1.7); opacity: 0; }
+      100% { transform: scale(1.7); opacity: 0; }
+    }
+    .locto-pulse-ring { animation: locto-pulse-ring 2.1s var(--ease-out) infinite; }
+
+    @keyframes locto-marquee {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+    .locto-marquee { animation: locto-marquee 26s linear infinite; }
+
+    @keyframes locto-fade-in {
+      from { transform: translateY(6px); }
+      to   { transform: translateY(0); }
+    }
+    .locto-fade-in { animation: locto-fade-in 380ms var(--ease-out) both; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .locto-marquee, .locto-pulse-ring, .locto-fade-in { animation: none !important; }
+    }
+  </style>
+
+  <script src="widget/tokens.js"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="widget/Widget.jsx"></script>
+  <script type="text/babel" src="onboarding-ui.jsx"></script>
+  <script type="text/babel" src="onboarding-steps.jsx"></script>
+  <script type="text/babel" src="onboarding-shell.jsx"></script>
+</body>
+</html>
