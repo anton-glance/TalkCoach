@@ -3,6 +3,7 @@ import SwiftUI
 
 struct StepSetup: View {
     @ObservedObject var viewModel: OnboardingViewModel
+    @State private var showMicConfirmation = false
 
     var body: some View {
         ModalSheet(align: .top) {
@@ -52,7 +53,7 @@ struct StepSetup: View {
                         .padding(.top, 8)
                 }
 
-                if viewModel.revokeHintVisible {
+                if showMicConfirmation {
                     InlineMessage("Microphone access is on. To turn it off, manage it in System Settings → Privacy.", tone: .neutral)
                         .padding(.top, 10)
                 }
@@ -112,9 +113,13 @@ struct StepSetup: View {
 
     private func handleToggle() {
         if viewModel.micGranted {
-            viewModel.revokeHintVisible = true
+            withAnimation { showMicConfirmation = true }
+            Task {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                withAnimation { showMicConfirmation = false }
+            }
         } else {
-            viewModel.revokeHintVisible = false
+            withAnimation { showMicConfirmation = false }
             Task { await viewModel.requestMicPermission() }
         }
     }

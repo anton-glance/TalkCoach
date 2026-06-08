@@ -24,8 +24,8 @@ struct ModalSheet<Content: View, Footer: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     if align == .center {
                         Spacer(minLength: 0)
@@ -35,39 +35,43 @@ struct ModalSheet<Content: View, Footer: View>: View {
                         Spacer(minLength: 0)
                     }
                 }
-                if let onClose {
-                    Button(action: onClose) {
-                        Canvas { ctx, size in
-                            let unit = size.width / 24
-                            var diagPath1 = Path()
-                            diagPath1.move(to: CGPoint(x: 6 * unit, y: 6 * unit))
-                            diagPath1.addLine(to: CGPoint(x: 18 * unit, y: 18 * unit))
-                            var diagPath2 = Path()
-                            diagPath2.move(to: CGPoint(x: 18 * unit, y: 6 * unit))
-                            diagPath2.addLine(to: CGPoint(x: 6 * unit, y: 18 * unit))
-                            let strokeStyle = StrokeStyle(lineWidth: 2 * unit, lineCap: .round)
-                            ctx.stroke(diagPath1, with: .color(DesignTokens.Text.secondary), style: strokeStyle)
-                            ctx.stroke(diagPath2, with: .color(DesignTokens.Text.secondary), style: strokeStyle)
-                        }
-                        .frame(width: 14, height: 14)
-                        .frame(width: 28, height: 28)
-                        .background(DesignTokens.Surface.surface2)
-                        .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 48)
+                .padding(.top, 44)
+
+                HStack {
+                    footer()
                 }
+                .padding(.horizontal, 48)
+                .padding(.top, 24)
+                .padding(.bottom, 30)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 48)
-            .padding(.top, 44)
 
-            HStack {
-                footer()
+            if let onClose {
+                Button(action: onClose) {
+                    Canvas { ctx, size in
+                        let unit = size.width / 24
+                        var diagPath1 = Path()
+                        diagPath1.move(to: CGPoint(x: 6 * unit, y: 6 * unit))
+                        diagPath1.addLine(to: CGPoint(x: 18 * unit, y: 18 * unit))
+                        var diagPath2 = Path()
+                        diagPath2.move(to: CGPoint(x: 18 * unit, y: 6 * unit))
+                        diagPath2.addLine(to: CGPoint(x: 6 * unit, y: 18 * unit))
+                        let strokeStyle = StrokeStyle(lineWidth: 2 * unit, lineCap: .round)
+                        ctx.stroke(diagPath1, with: .color(DesignTokens.Text.secondary), style: strokeStyle)
+                        ctx.stroke(diagPath2, with: .color(DesignTokens.Text.secondary), style: strokeStyle)
+                    }
+                    .frame(width: 14, height: 14)
+                    .frame(width: 28, height: 28)
+                    .background(DesignTokens.Surface.surface2)
+                    .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+                .padding(.top, 16)
+                .padding(.trailing, 16)
             }
-            .padding(.horizontal, 48)
-            .padding(.top, 24)
-            .padding(.bottom, 30)
         }
     }
 }
@@ -292,24 +296,15 @@ struct ScreenCrop<Content: View>: View {
 struct OnboardingLockup: View {
     let markSize: CGFloat
     init(markSize: CGFloat = 30) { self.markSize = markSize }
+    private var lockupHeight: CGFloat { markSize * 80 / 64 }
+    private var lockupWidth: CGFloat { lockupHeight * 380 / 80 }
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            ZStack {
-                Circle()
-                    .strokeBorder(DesignTokens.Brand.brand, lineWidth: markSize * 0.09)
-                    .frame(width: markSize, height: markSize)
-                Circle()
-                    .frame(width: markSize * 0.172, height: markSize * 0.172)
-                    .foregroundStyle(DesignTokens.Brand.brand)
-            }
-            .frame(width: markSize, height: markSize)
-            Text("locto")
-                .font(.custom("InterDisplay-Medium", size: markSize * 0.92))
-                .tracking(-2)
-                .foregroundStyle(DesignTokens.Brand.brand)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Locto")
+        Image("LoctoLockup")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: lockupWidth, height: lockupHeight)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Locto")
     }
 }
 
@@ -378,7 +373,7 @@ struct OnboardingDropdown: View {
             // Open list: anchored to top of pill, offset down by pill height + 6pt gap
             if isOpen {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    VStack(spacing: 0) {
                         if includeNone {
                             dropdownRow(id: nil, label: noneLabel)
                         }
@@ -456,59 +451,69 @@ private let appParadeItems: [(name: String, symbolName: String)] = [
 ]
 
 struct AppParadeView: View {
-    @State private var offset: CGFloat = 0
     let reducedMotion: Bool
     private let tileWidth: CGFloat = 92
     private let tileSpacing: CGFloat = 6
-    private var singleSetWidth: CGFloat { CGFloat(appParadeItems.count) * tileWidth + CGFloat(appParadeItems.count - 1) * tileSpacing }
+    private let cycleDuration: Double = 26
+    @State private var startDate: Date = .now
+
+    private var singleSetWidth: CGFloat {
+        CGFloat(appParadeItems.count) * tileWidth + CGFloat(appParadeItems.count - 1) * tileSpacing
+    }
+    private var cycleWidth: CGFloat { singleSetWidth + tileSpacing }
 
     var body: some View {
         ZStack {
-            HStack(spacing: tileSpacing) {
-                ForEach(0..<appParadeItems.count * 2, id: \.self) { index in
-                    let item = appParadeItems[index % appParadeItems.count]
-                    VStack(spacing: 8) {
-                        Image(systemName: item.symbolName)
-                            .font(.system(size: 22, weight: .light))
-                            .foregroundStyle(DesignTokens.Text.secondary)
-                            .frame(width: 60, height: 60)
-                            .background(DesignTokens.Surface.surface2)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .stroke(DesignTokens.Border.subtle, lineWidth: 0.5)
-                            )
-                        Text(item.name)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(DesignTokens.Text.tertiary)
-                    }
-                    .frame(width: tileWidth)
+            if reducedMotion {
+                tilesHStack(offset: 0)
+            } else {
+                TimelineView(.animation) { context in
+                    let elapsed = context.date.timeIntervalSince(startDate)
+                    let phase = elapsed.truncatingRemainder(dividingBy: cycleDuration)
+                    tilesHStack(offset: -(phase / cycleDuration) * cycleWidth)
                 }
             }
-            .offset(x: offset)
-            .onAppear {
-                if !reducedMotion {
-                    withAnimation(.linear(duration: 26).repeatForever(autoreverses: false)) {
-                        offset = -singleSetWidth - tileSpacing
-                    }
-                }
-            }
-            // Edge fades
+            // Edge fades — fixed height so they don't expand the ZStack
             HStack {
                 LinearGradient(
                     colors: [DesignTokens.Surface.surface, .clear],
                     startPoint: .leading, endPoint: .trailing
                 )
-                .frame(width: 48)
+                .frame(width: 48, height: 92)
                 Spacer()
                 LinearGradient(
                     colors: [.clear, DesignTokens.Surface.surface],
                     startPoint: .leading, endPoint: .trailing
                 )
-                .frame(width: 48)
+                .frame(width: 48, height: 92)
             }
             .allowsHitTesting(false)
         }
         .clipped()
+    }
+
+    @ViewBuilder private func tilesHStack(offset: CGFloat) -> some View {
+        HStack(spacing: tileSpacing) {
+            ForEach(0..<appParadeItems.count * 2, id: \.self) { index in
+                let item = appParadeItems[index % appParadeItems.count]
+                VStack(spacing: 8) {
+                    Image(systemName: item.symbolName)
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundStyle(DesignTokens.Text.secondary)
+                        .frame(width: 60, height: 60)
+                        .background(DesignTokens.Surface.surface2)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(DesignTokens.Border.subtle, lineWidth: 0.5)
+                        )
+                    Text(item.name)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DesignTokens.Text.tertiary)
+                }
+                .frame(width: tileWidth)
+            }
+        }
+        .offset(x: offset)
     }
 }

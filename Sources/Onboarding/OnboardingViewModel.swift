@@ -36,6 +36,12 @@ final class OnboardingViewModel: ObservableObject {
         secondaryLocaleID = settingsStore.declaredLocales.count > 1
             ? settingsStore.declaredLocales[1]
             : nil
+        if primaryLocaleID == nil, settingsStore.declaredLocales.isEmpty {
+            let langCode = Locale.current.language.languageCode?.identifier ?? "en"
+            let matched = LocaleRegistry.parakeetSupportedLocales.first { $0.identifier == langCode }
+            primaryLocaleID = matched?.identifier ?? "en"
+            syncLocalesToStore()
+        }
     }
 
     func advance() {

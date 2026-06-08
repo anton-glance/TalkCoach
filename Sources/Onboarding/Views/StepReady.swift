@@ -20,7 +20,7 @@ struct StepReady: View {
                     .frame(maxWidth: 400)
                     .padding(.top, 8)
                 AppParadeView(reducedMotion: reducedMotion)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: 92)
                     .clipped()
                     .padding(.top, 26)
             }
