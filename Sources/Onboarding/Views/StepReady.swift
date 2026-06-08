@@ -20,11 +20,16 @@ struct StepReady: View {
                     .frame(maxWidth: 400)
                     .padding(.top, 8)
                 AppParadeView(reducedMotion: reducedMotion)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
                     .padding(.top, 26)
             }
         } footer: {
-            Spacer()
-            OnboardingPrimaryButton("Start coaching") { viewModel.complete() }
+            HStack {
+                Spacer()
+                OnboardingPrimaryButton("Start coaching") { viewModel.complete() }
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 }

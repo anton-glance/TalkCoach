@@ -66,33 +66,34 @@ private struct MenuBarCrop: View {
 
 private struct LoctoMenuBarChip: View {
     var body: some View {
-        ZStack(alignment: .top) {
-            // Ring chip
-            ZStack {
-                Circle()
-                    .stroke(Color.white, lineWidth: 2.5)
-                    .frame(width: 16, height: 16)
-                Circle()
-                    .frame(width: 4.5, height: 4.5)
-                    .foregroundStyle(Color.white)
-            }
-            .frame(width: 26, height: 26)
-            .background(DesignTokens.Brand.brand)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadow(color: DesignTokens.Brand.brand.opacity(0.42), radius: 8)
-            .shadow(color: DesignTokens.Brand.brand.opacity(0.20), radius: 1)
-
-            // Caret + dropdown below
+        // The green ring chip itself
+        ZStack {
+            Circle()
+                .strokeBorder(Color.white, lineWidth: 3.6 * 16 / 64)
+                .frame(width: 16, height: 16)
+            Circle()
+                .frame(width: 16 * 0.172, height: 16 * 0.172)
+                .foregroundStyle(Color.white)
+        }
+        .frame(width: 26, height: 26)
+        .background(DesignTokens.Brand.brand)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: DesignTokens.Brand.brand.opacity(0.42), radius: 8)
+        .shadow(color: DesignTokens.Brand.brand.opacity(0.20), radius: 1)
+        // Dropdown positioned BELOW the chip via overlay — does not participate in strip layout
+        .overlay(alignment: .top) {
             VStack(spacing: 0) {
-                Spacer().frame(height: 26 + 3)
-                // Caret diamond
+                // Spacer pushes content to chip.bottom + 3pt (caret top)
+                Color.clear.frame(height: 26 + 3)
+                // Diamond caret
                 Rectangle()
                     .frame(width: 12, height: 12)
                     .foregroundStyle(Color(red: 252/255, green: 250/255, blue: 245/255))
                     .rotationEffect(.degrees(45))
-                    .clipShape(RoundedRectangle(cornerRadius: 2))
-                    .offset(y: 6)
-                // Dropdown card
+                    .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
+                    .shadow(color: .black.opacity(0.04), radius: 1, x: -1, y: -1)
+                    .offset(y: 4)   // half-height overlap so card hides caret bottom half
+                // Dropdown card at chip.bottom + 8pt
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 7) {
                         Circle()
@@ -118,10 +119,15 @@ private struct LoctoMenuBarChip: View {
                 .frame(width: 178)
                 .background(Color(red: 252/255, green: 250/255, blue: 245/255).opacity(0.98))
                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(Color.black.opacity(0.10), lineWidth: 0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(Color.black.opacity(0.10), lineWidth: 0.5)
+                )
                 .shadow(color: Color(red: 20/255, green: 30/255, blue: 28/255).opacity(0.22), radius: 19, y: 8)
             }
+            .frame(width: 178)
         }
+        .zIndex(10)
     }
 }
 

@@ -95,8 +95,12 @@ private struct WidgetCrop: View {
                 Spacer()
                 HStack(spacing: 11) {
                     ZStack {
-                        Circle().stroke(Color.white, lineWidth: 2).frame(width: 13, height: 13)
-                        Circle().frame(width: 3, height: 3).foregroundStyle(DesignTokens.Brand.brand)
+                        Circle()
+                            .strokeBorder(DesignTokens.Text.primary.opacity(0.78), lineWidth: 1.5)
+                            .frame(width: 13, height: 13)
+                        Circle()
+                            .frame(width: 13 * 0.172, height: 13 * 0.172)
+                            .foregroundStyle(DesignTokens.Text.primary.opacity(0.78))
                     }
                     .frame(width: 13, height: 13)
                     Image(systemName: "battery.75").font(.system(size: 11)).foregroundStyle(DesignTokens.Text.primary.opacity(0.78))
@@ -110,19 +114,28 @@ private struct WidgetCrop: View {
             .background(Color(red: 247/255, green: 245/255, blue: 239/255).opacity(0.92))
             .overlay(alignment: .bottom) { Divider().opacity(0.10) }
 
-            // Widget at 0.72 scale
-            WidgetView(viewModel: syntheticVM) { }
-                .scaleEffect(0.72, anchor: .topLeading)
-                .offset(x: pos.x, y: pos.y)
-                .animation(.timingCurve(0.4, 0, 0.2, 1, duration: 0.95), value: pos)
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "cursorarrow")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Color.white)
-                        .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
-                        .offset(x: pos.x + 80, y: pos.y + 80)
-                        .animation(.timingCurve(0.4, 0, 0.2, 1, duration: 0.95), value: pos)
+            // Widget at 0.72 scale, cursor rides inside the same animated container
+            ZStack(alignment: .bottomTrailing) {
+                WidgetView(viewModel: syntheticVM) { }
+                // Drag cursor: spec path "M5 3l5.5 16 2.2-6.4L19 10 5 3z"
+                Canvas { ctx, size in
+                    var path = Path()
+                    path.move(to: CGPoint(x: 5, y: 3))
+                    path.addLine(to: CGPoint(x: 10.5, y: 19))
+                    path.addLine(to: CGPoint(x: 12.7, y: 12.6))
+                    path.addLine(to: CGPoint(x: 19, y: 10))
+                    path.closeSubpath()
+                    ctx.fill(path, with: .color(.white))
+                    ctx.stroke(path, with: .color(Color(red: 31/255, green: 41/255, blue: 55/255)), style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
                 }
+                .frame(width: 22, height: 22)
+                .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
+                .padding(.trailing, 8)
+                .padding(.bottom, 6)
+            }
+            .scaleEffect(0.72, anchor: .topLeading)
+            .offset(x: pos.x, y: pos.y)
+            .animation(.timingCurve(0.4, 0, 0.2, 1, duration: 0.95), value: pos)
         }
     }
 }

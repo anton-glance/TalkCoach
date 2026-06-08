@@ -25,6 +25,9 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         win.isMovableByWindowBackground = false
         win.isReleasedWhenClosed = false
         win.level = .floating
+        win.contentView?.wantsLayer = true
+        win.contentView?.layer?.cornerRadius = kCornerRadius
+        win.contentView?.layer?.masksToBounds = true
         win.setContentSize(NSSize(width: kModalWidth, height: kModalHeight))
         win.delegate = self
         centerOnScreen(win)

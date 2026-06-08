@@ -37,12 +37,22 @@ struct ModalSheet<Content: View, Footer: View>: View {
                 }
                 if let onClose {
                     Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(DesignTokens.Text.secondary)
-                            .frame(width: 28, height: 28)
-                            .background(DesignTokens.Surface.surface2)
-                            .clipShape(Circle())
+                        Canvas { ctx, size in
+                            let s = size.width / 24
+                            var p1 = Path()
+                            p1.move(to: CGPoint(x: 6 * s, y: 6 * s))
+                            p1.addLine(to: CGPoint(x: 18 * s, y: 18 * s))
+                            var p2 = Path()
+                            p2.move(to: CGPoint(x: 18 * s, y: 6 * s))
+                            p2.addLine(to: CGPoint(x: 6 * s, y: 18 * s))
+                            let style = StrokeStyle(lineWidth: 2 * s, lineCap: .round)
+                            ctx.stroke(p1, with: .color(DesignTokens.Text.secondary), style: style)
+                            ctx.stroke(p2, with: .color(DesignTokens.Text.secondary), style: style)
+                        }
+                        .frame(width: 14, height: 14)
+                        .frame(width: 28, height: 28)
+                        .background(DesignTokens.Surface.surface2)
+                        .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close")
@@ -56,7 +66,7 @@ struct ModalSheet<Content: View, Footer: View>: View {
                 footer()
             }
             .padding(.horizontal, 48)
-            .padding(.top, 16)
+            .padding(.top, 24)
             .padding(.bottom, 30)
         }
     }
@@ -206,6 +216,7 @@ struct InlineMessage: View {
                     : DesignTokens.Text.secondary
                 )
                 .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 9)
@@ -282,15 +293,16 @@ struct OnboardingLockup: View {
     let markSize: CGFloat
     init(markSize: CGFloat = 30) { self.markSize = markSize }
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .center, spacing: 14) {
             ZStack {
                 Circle()
-                    .stroke(DesignTokens.Brand.brand, lineWidth: markSize * 0.09)
+                    .strokeBorder(DesignTokens.Brand.brand, lineWidth: markSize * 0.09)
                     .frame(width: markSize, height: markSize)
                 Circle()
                     .frame(width: markSize * 0.172, height: markSize * 0.172)
                     .foregroundStyle(DesignTokens.Brand.brand)
             }
+            .frame(width: markSize, height: markSize)
             Text("locto")
                 .font(.custom("InterDisplay-Medium", size: markSize * 0.92))
                 .tracking(-2)
@@ -309,6 +321,7 @@ struct OnboardingDropdown: View {
     let includeNone: Bool
     let noneLabel: String
     @State private var isOpen = false
+    @State private var hoveredID: String? = nil  // nil means none-row hover
 
     init(
         selectedID: Binding<String?>,
@@ -324,7 +337,7 @@ struct OnboardingDropdown: View {
 
     private var displayName: String {
         if let id = selectedID,
-           let entry = LocaleRegistry.allLocales.first(where: { $0.identifier == id }) {
+           let entry = LocaleRegistry.parakeetSupportedLocales.first(where: { $0.identifier == id }) {
             return entry.displayName
         }
         return includeNone ? noneLabel : placeholder
@@ -333,43 +346,43 @@ struct OnboardingDropdown: View {
     private var isPlaceholder: Bool { selectedID == nil }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Button {
-                withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) { isOpen.toggle() }
-            } label: {
-                HStack(spacing: 10) {
-                    Text(displayName)
-                        .font(.system(size: 14))
-                        .foregroundStyle(isPlaceholder ? DesignTokens.Text.tertiary : DesignTokens.Text.primary)
-                        .lineLimit(1)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(DesignTokens.Text.tertiary)
-                        .rotationEffect(isOpen ? .degrees(180) : .degrees(0))
-                }
-                .padding(.horizontal, 14)
-                .frame(height: 42)
-                .background(Color.white)
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(
-                            isOpen ? DesignTokens.Brand.brand : DesignTokens.Border.strong,
-                            lineWidth: isOpen ? 1.0 : 0.5
-                        )
-                )
+        // Pill button with overlay for the open list — list does NOT participate in layout
+        Button {
+            withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) { isOpen.toggle() }
+        } label: {
+            HStack(spacing: 10) {
+                Text(displayName)
+                    .font(.system(size: 14))
+                    .foregroundStyle(isPlaceholder ? DesignTokens.Text.tertiary : DesignTokens.Text.primary)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DesignTokens.Text.tertiary)
+                    .rotationEffect(isOpen ? .degrees(180) : .degrees(0))
             }
-            .buttonStyle(.plain)
-            .zIndex(1)
-
+            .padding(.horizontal, 14)
+            .frame(height: 42)
+            .background(Color.white)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(
+                        isOpen ? DesignTokens.Brand.brand : DesignTokens.Border.strong,
+                        lineWidth: isOpen ? 1.0 : 0.5
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            // Open list: anchored to top of pill, offset down by pill height + 6pt gap
             if isOpen {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         if includeNone {
                             dropdownRow(id: nil, label: noneLabel)
                         }
-                        ForEach(LocaleRegistry.allLocales, id: \.identifier) { entry in
+                        ForEach(LocaleRegistry.parakeetSupportedLocales, id: \.identifier) { entry in
                             dropdownRow(id: entry.identifier, label: entry.displayName)
                         }
                     }
@@ -384,15 +397,17 @@ struct OnboardingDropdown: View {
                 )
                 .shadow(color: .black.opacity(0.16), radius: 18, y: 6)
                 .shadow(color: .black.opacity(0.08), radius: 4, y: 1)
-                .offset(y: 48)
+                .offset(y: 42 + 6)  // pill height (42) + 6pt gap
                 .zIndex(10)
             }
         }
+        .zIndex(isOpen ? 10 : 0)
         .accessibilityLabel(placeholder)
     }
 
     private func dropdownRow(id: String?, label: String) -> some View {
-        let actualSelected: Bool = id == nil ? (selectedID == nil && includeNone) : (selectedID == id)
+        let isSelected: Bool = id == nil ? (selectedID == nil && includeNone) : (selectedID == id)
+        let rowID = id ?? "__none__"
         return Button {
             selectedID = id
             withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) { isOpen = false }
@@ -400,9 +415,9 @@ struct OnboardingDropdown: View {
             HStack {
                 Text(label)
                     .font(.system(size: 14))
-                    .foregroundStyle(actualSelected ? Color.white : (id == nil ? DesignTokens.Text.secondary : DesignTokens.Text.primary))
+                    .foregroundStyle(isSelected ? Color.white : (id == nil ? DesignTokens.Text.secondary : DesignTokens.Text.primary))
                 Spacer()
-                if actualSelected {
+                if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.white)
@@ -410,10 +425,18 @@ struct OnboardingDropdown: View {
             }
             .padding(.vertical, 8)
             .padding(.horizontal, 12)
-            .background(actualSelected ? DesignTokens.Brand.brand : Color.clear)
+            .background(
+                isSelected ? DesignTokens.Brand.brand :
+                hoveredID == rowID ? Color.black.opacity(0.04) : Color.clear
+            )
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            hoveredID = hovering ? rowID : nil
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
     }
 }
 
@@ -472,11 +495,17 @@ struct AppParadeView: View {
             }
             // Edge fades
             HStack {
-                LinearGradient(colors: [Color.white, .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 48)
+                LinearGradient(
+                    colors: [DesignTokens.Surface.surface, .clear],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: 48)
                 Spacer()
-                LinearGradient(colors: [.clear, Color.white], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 48)
+                LinearGradient(
+                    colors: [.clear, DesignTokens.Surface.surface],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: 48)
             }
             .allowsHitTesting(false)
         }

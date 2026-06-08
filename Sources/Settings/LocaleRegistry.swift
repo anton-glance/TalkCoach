@@ -71,4 +71,32 @@ enum LocaleRegistry: Sendable {
         Entry(identifier: "uk_UA", displayName: "Ukrainian", backend: .parakeet),
         Entry(identifier: "cy_GB", displayName: "Welsh", backend: .parakeet)
     ]
+
+    nonisolated(unsafe) static let parakeetSupportedLocales: [Entry] = [
+        Entry(identifier: "bg", displayName: "Bulgarian", backend: .parakeet),
+        Entry(identifier: "hr", displayName: "Croatian", backend: .parakeet),
+        Entry(identifier: "cs", displayName: "Czech", backend: .parakeet),
+        Entry(identifier: "da", displayName: "Danish", backend: .parakeet),
+        Entry(identifier: "nl", displayName: "Dutch", backend: .parakeet),
+        Entry(identifier: "en", displayName: "English", backend: .parakeet),
+        Entry(identifier: "et", displayName: "Estonian", backend: .parakeet),
+        Entry(identifier: "fi", displayName: "Finnish", backend: .parakeet),
+        Entry(identifier: "fr", displayName: "French", backend: .parakeet),
+        Entry(identifier: "de", displayName: "German", backend: .parakeet),
+        Entry(identifier: "el", displayName: "Greek", backend: .parakeet),
+        Entry(identifier: "hu", displayName: "Hungarian", backend: .parakeet),
+        Entry(identifier: "it", displayName: "Italian", backend: .parakeet),
+        Entry(identifier: "lv", displayName: "Latvian", backend: .parakeet),
+        Entry(identifier: "lt", displayName: "Lithuanian", backend: .parakeet),
+        Entry(identifier: "mt", displayName: "Maltese", backend: .parakeet),
+        Entry(identifier: "pl", displayName: "Polish", backend: .parakeet),
+        Entry(identifier: "pt", displayName: "Portuguese", backend: .parakeet),
+        Entry(identifier: "ro", displayName: "Romanian", backend: .parakeet),
+        Entry(identifier: "sk", displayName: "Slovak", backend: .parakeet),
+        Entry(identifier: "sl", displayName: "Slovenian", backend: .parakeet),
+        Entry(identifier: "es", displayName: "Spanish", backend: .parakeet),
+        Entry(identifier: "sv", displayName: "Swedish", backend: .parakeet),
+        Entry(identifier: "ru", displayName: "Russian", backend: .parakeet),
+        Entry(identifier: "uk", displayName: "Ukrainian", backend: .parakeet),
+    ]
 }
