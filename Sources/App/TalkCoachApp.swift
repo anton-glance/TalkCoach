@@ -202,9 +202,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct TalkCoachApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some Scene {
-        MenuBarExtra("TalkCoach", image: "MenuBarIcon") {
+        MenuBarExtra("TalkCoach", image: "MenuBarIcon", isInserted: $hasCompletedOnboarding) {
             MenuBarContent()
                 .environmentObject(delegate.settingsStore)
         }
