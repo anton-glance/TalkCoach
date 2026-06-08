@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var floatingPanelController: FloatingPanelController!
     private(set) var sessionStore: SessionStore?
     private(set) var settingsWindow: NSWindow?
+    private var onboardingController: OnboardingWindowController?
     private var parakeetBackend: ParakeetBackend?
     private var sileroProcessor: ProductionSileroFrameProcessor?
     private var wpmCalculator: WPMCalculator?
@@ -70,61 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         #endif
 
-        let defaults = UserDefaults.standard
-        let wasSetupCompletedBefore = defaults.bool(forKey: "hasCompletedSetup")
-
-        if !wasSetupCompletedBefore {
-            let declaredLocales = defaults.object(forKey: "declaredLocales") as? [String] ?? []
-            if declaredLocales.isEmpty {
-                let sysLocale = Locale.current.identifier
-                    .replacingOccurrences(of: "-", with: "_")
-                if LocaleRegistry.allLocales.contains(where: { $0.identifier == sysLocale }) {
-                    defaults.set([sysLocale], forKey: "declaredLocales")
-                    defaults.set(true, forKey: "hasCompletedSetup")
-                    Logger.app.info("Silent-committed system locale: \(sysLocale)")
-                }
-            }
-            DispatchQueue.main.async {
-                self.openSettings()
-            }
+        if !settingsStore.hasCompletedOnboarding {
+            DispatchQueue.main.async { self.openOnboarding() }
+            return
         }
 
-        sessionCoordinator.start()
-
-        // Architecture AA: ParakeetBackend — model loads lazily on first session start.
-        let audioPipeline = AudioPipeline()
-        let declaredLocales = settingsStore.declaredLocales.map { Locale(identifier: $0) }
-        let bufferProvider = AudioPipelineBufferProvider(pipeline: audioPipeline)
-        let languageDetector = LanguageDetector(
-            declaredLocales: declaredLocales,
-            partialTranscriptProvider: StubPartialTranscriptProvider(),
-            whisperLIDProvider: StubWhisperLIDProvider(),
-            audioBufferProvider: bufferProvider
-        )
-        let backend = ParakeetBackend()
-
-        // Silero VAD gate — loaded if model is present; degrades gracefully when absent
-        // (isVoiceInactive stays false, widget dim feature inactive until model downloads).
-        let vadGate: SileroVADGate?
-        if let modelPath = try? SileroModelLoader.modelPath(),
-           let processor = ProductionSileroFrameProcessor(modelPath: modelPath) {
-            sileroProcessor = processor
-            vadGate = SileroVADGate(frameProcessor: processor)
-            Logger.session.info("SileroVADGate: loaded from \(modelPath)")
-        } else {
-            Logger.session.info("SileroVADGate: silero_vad.onnx absent — VAD gate inactive until model downloads")
-            vadGate = nil
-        }
-
-        sessionCoordinator.wiring = SessionWiring(
-            audioPipeline: audioPipeline,
-            languageDetector: languageDetector,
-            backend: backend,
-            vadGate: vadGate
-        )
-        parakeetBackend = backend
-
-        floatingPanelController.start()
+        bootSessionEngine()
 
         if let store = sessionStore {
             sessionCoordinator.onSessionEnded { ended in
@@ -161,6 +113,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // is released at app termination. No Metal contexts (Architecture AA is CPU-only ONNX).
     }
 
+    // swiftlint:disable:next function_body_length
+    private func bootSessionEngine() {
+        sessionCoordinator.start()
+
+        // Architecture AA: ParakeetBackend — model loads lazily on first session start.
+        let audioPipeline = AudioPipeline()
+        let declaredLocales = settingsStore.declaredLocales.map { Locale(identifier: $0) }
+        let bufferProvider = AudioPipelineBufferProvider(pipeline: audioPipeline)
+        let languageDetector = LanguageDetector(
+            declaredLocales: declaredLocales,
+            partialTranscriptProvider: StubPartialTranscriptProvider(),
+            whisperLIDProvider: StubWhisperLIDProvider(),
+            audioBufferProvider: bufferProvider
+        )
+        let backend = ParakeetBackend()
+
+        // Silero VAD gate — loaded if model is present; degrades gracefully when absent
+        // (isVoiceInactive stays false, widget dim feature inactive until model downloads).
+        let vadGate: SileroVADGate?
+        if let modelPath = try? SileroModelLoader.modelPath(),
+           let processor = ProductionSileroFrameProcessor(modelPath: modelPath) {
+            sileroProcessor = processor
+            vadGate = SileroVADGate(frameProcessor: processor)
+            Logger.session.info("SileroVADGate: loaded from \(modelPath)")
+        } else {
+            Logger.session.info("SileroVADGate: silero_vad.onnx absent — VAD gate inactive until model downloads")
+            vadGate = nil
+        }
+
+        sessionCoordinator.wiring = SessionWiring(
+            audioPipeline: audioPipeline,
+            languageDetector: languageDetector,
+            backend: backend,
+            vadGate: vadGate
+        )
+        parakeetBackend = backend
+
+        floatingPanelController.start()
+    }
+
     func openSettings() {
         if let existing = settingsWindow, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
@@ -184,6 +176,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func openOnboarding() {
+        guard onboardingController == nil else { return }
+        let controller = OnboardingWindowController()
+        onboardingController = controller
+        controller.open(settingsStore: settingsStore) { [weak self] in
+            self?.completeOnboarding()
+        }
+    }
+
+    func completeOnboarding() {
+        onboardingController?.close()
+        onboardingController = nil
+        // Boot the session coordinator and panel (deferred until onboarding completes)
+        bootSessionEngine()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        onboardingController?.applicationShouldHandleReopen() ?? true
     }
 }
 
