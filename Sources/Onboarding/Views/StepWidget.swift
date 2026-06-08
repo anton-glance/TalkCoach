@@ -118,7 +118,7 @@ private struct WidgetCrop: View {
             ZStack(alignment: .bottomTrailing) {
                 WidgetView(viewModel: syntheticVM) { }
                 // Drag cursor: spec path "M5 3l5.5 16 2.2-6.4L19 10 5 3z"
-                Canvas { ctx, size in
+                Canvas { ctx, _ in
                     var path = Path()
                     path.move(to: CGPoint(x: 5, y: 3))
                     path.addLine(to: CGPoint(x: 10.5, y: 19))

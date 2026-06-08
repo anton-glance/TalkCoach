@@ -38,16 +38,16 @@ struct ModalSheet<Content: View, Footer: View>: View {
                 if let onClose {
                     Button(action: onClose) {
                         Canvas { ctx, size in
-                            let s = size.width / 24
-                            var p1 = Path()
-                            p1.move(to: CGPoint(x: 6 * s, y: 6 * s))
-                            p1.addLine(to: CGPoint(x: 18 * s, y: 18 * s))
-                            var p2 = Path()
-                            p2.move(to: CGPoint(x: 18 * s, y: 6 * s))
-                            p2.addLine(to: CGPoint(x: 6 * s, y: 18 * s))
-                            let style = StrokeStyle(lineWidth: 2 * s, lineCap: .round)
-                            ctx.stroke(p1, with: .color(DesignTokens.Text.secondary), style: style)
-                            ctx.stroke(p2, with: .color(DesignTokens.Text.secondary), style: style)
+                            let unit = size.width / 24
+                            var diagPath1 = Path()
+                            diagPath1.move(to: CGPoint(x: 6 * unit, y: 6 * unit))
+                            diagPath1.addLine(to: CGPoint(x: 18 * unit, y: 18 * unit))
+                            var diagPath2 = Path()
+                            diagPath2.move(to: CGPoint(x: 18 * unit, y: 6 * unit))
+                            diagPath2.addLine(to: CGPoint(x: 6 * unit, y: 18 * unit))
+                            let strokeStyle = StrokeStyle(lineWidth: 2 * unit, lineCap: .round)
+                            ctx.stroke(diagPath1, with: .color(DesignTokens.Text.secondary), style: strokeStyle)
+                            ctx.stroke(diagPath2, with: .color(DesignTokens.Text.secondary), style: strokeStyle)
                         }
                         .frame(width: 14, height: 14)
                         .frame(width: 28, height: 28)
@@ -321,7 +321,7 @@ struct OnboardingDropdown: View {
     let includeNone: Bool
     let noneLabel: String
     @State private var isOpen = false
-    @State private var hoveredID: String? = nil  // nil means none-row hover
+    @State private var hoveredID: String?  // nil means none-row hover
 
     init(
         selectedID: Binding<String?>,

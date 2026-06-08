@@ -97,6 +97,6 @@ enum LocaleRegistry: Sendable {
         Entry(identifier: "es", displayName: "Spanish", backend: .parakeet),
         Entry(identifier: "sv", displayName: "Swedish", backend: .parakeet),
         Entry(identifier: "ru", displayName: "Russian", backend: .parakeet),
-        Entry(identifier: "uk", displayName: "Ukrainian", backend: .parakeet),
+        Entry(identifier: "uk", displayName: "Ukrainian", backend: .parakeet)
     ]
 }
