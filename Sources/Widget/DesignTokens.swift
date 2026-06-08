@@ -83,6 +83,9 @@ enum DesignTokens {
     enum Border {
         static let restingWhiteOpacity: Double = 0.55
         static let hoverWhiteOpacity: Double = 0.78
+        // M6.11 onboarding tokens
+        static let subtle  = Color(red: 15/255, green: 110/255, blue: 86/255).opacity(0.12)
+        static let strong  = Color(red: 15/255, green: 110/255, blue: 86/255).opacity(0.22)
     }
 
     // MARK: - Math helpers (tokens.js lines 62–65)
@@ -217,5 +220,40 @@ enum DesignTokens {
 
     static func spectrumPosition(wpm: Int) -> Double {
         clamp01((Double(wpm) - Double(Pace.wpmMin)) / (Double(Pace.wpmMax) - Double(Pace.wpmMin)))
+    }
+
+    // MARK: - Brand colors (onboarding, M6.11)
+
+    enum Brand {
+        static let brand       = Color(red: 15/255,  green: 110/255, blue: 86/255)
+        static let brandDark   = Color(red: 8/255,   green: 80/255,  blue: 65/255)
+        static let brandLight  = Color(red: 225/255, green: 245/255, blue: 238/255)
+        static let brandInk    = Color(red: 4/255,   green: 52/255,  blue: 44/255)
+        static let teal200     = Color(red: 93/255,  green: 202/255, blue: 165/255)
+    }
+
+    // MARK: - Surface colors (onboarding, M6.11)
+
+    enum Surface {
+        static let surface     = Color.white
+        static let surface2    = Color(red: 245/255, green: 243/255, blue: 236/255)
+        static let coralLight  = Color(red: 230/255, green: 175/255, blue: 162/255)
+        static let coralMid    = Color(red: 220/255, green: 142/255, blue: 122/255)
+    }
+
+    // MARK: - Text colors (onboarding, M6.11)
+
+    enum Text {
+        static let primary     = Color(red: 31/255,  green: 41/255,  blue: 55/255)
+        static let secondary   = Color(red: 95/255,  green: 94/255,  blue: 90/255)
+        static let tertiary    = Color(red: 156/255, green: 154/255, blue: 147/255)
+    }
+
+    // MARK: - Motion durations (onboarding, M6.11)
+
+    enum Motion {
+        static let fast:  TimeInterval = 0.20
+        static let base:  TimeInterval = 0.35
+        static let slow:  TimeInterval = 0.60
     }
 }
