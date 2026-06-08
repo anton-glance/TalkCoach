@@ -1,4 +1,5 @@
 import AVFoundation
+import Speech
 import XCTest
 @testable import TalkCoach
 

@@ -15,26 +15,40 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(store.coachingEnabled)
     }
 
-    func testDeclaredLocalesDefaultsToEnglish() {
+    func testDeclaredLocalesDefaultsToEmptyOnFreshInstall() {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertEqual(store.declaredLocales, ["en_US"])
+        XCTAssertEqual(store.declaredLocales, [],
+                       "Fresh install: onboarding owns first locale selection")
     }
 
-    func testHasCompletedSetupDefaultsToTrue() {
+    func testHasCompletedSetupDefaultsToFalseOnFreshInstall() {
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertTrue(store.hasCompletedSetup)
+        XCTAssertFalse(store.hasCompletedSetup,
+                       "Fresh install: setup is not complete until onboarding finishes")
     }
 
-    func testFreshStoreLocaleLockedToEnglish() {
+    func testHasCompletedOnboardingDefaultsFalseForFreshInstall() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        XCTAssertFalse(store.hasCompletedOnboarding,
+                       "Fresh install: onboarding has not been completed")
+    }
+
+    func testHasCompletedOnboardingMigrationFromExistingUser() {
         let defaults = makeIsolatedDefaults()
+        // Simulate existing user: hasCompletedSetup=true, no hasCompletedOnboarding key
+        defaults.set(true, forKey: "hasCompletedSetup")
+        defaults.set(["en_US"], forKey: "declaredLocales")
+        // No hasCompletedOnboarding key written yet
+
         let store = SettingsStore(userDefaults: defaults)
-        XCTAssertEqual(store.declaredLocales, ["en_US"],
-                       "v1 locale lock: fresh store must default to en_US")
-        XCTAssertTrue(store.hasCompletedSetup,
-                      "v1 locale lock: fresh store must report setup complete")
-        // Verify the lock was written to UserDefaults (so AppDelegate's direct UDs read sees it)
-        XCTAssertEqual(defaults.object(forKey: "declaredLocales") as? [String], ["en_US"])
-        XCTAssertEqual(defaults.bool(forKey: "hasCompletedSetup"), true)
+        XCTAssertTrue(store.hasCompletedOnboarding,
+                      "Existing user with hasCompletedSetup=true must skip onboarding via migration")
+    }
+
+    func testHasCompletedOnboardingWriteThenRead() {
+        let store = SettingsStore(userDefaults: makeIsolatedDefaults())
+        store.hasCompletedOnboarding = true
+        XCTAssertTrue(store.hasCompletedOnboarding)
     }
 
     func testWidgetPositionByDisplayDefaultsToEmpty() {

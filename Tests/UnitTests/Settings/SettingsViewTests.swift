@@ -21,10 +21,12 @@ final class SettingsViewTests: XCTestCase {
     // MARK: - Locale toggle behavior
 
     func testFirstSelectionSetsHasCompletedSetup() {
-        // v1 locale lock: fresh store starts with en_US selected and setup already complete.
+        // M6.11: fresh store starts empty; onboarding owns first locale selection.
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
-        XCTAssertTrue(store.hasCompletedSetup)
-        XCTAssertEqual(store.declaredLocales, ["en_US"])
+        XCTAssertFalse(store.hasCompletedSetup,
+                       "M6.11: fresh install setup not complete until onboarding finishes")
+        XCTAssertEqual(store.declaredLocales, [],
+                       "M6.11: fresh install locale list is empty until onboarding sets it")
     }
 
     func testRemovingAllLocalesDoesNotResetHasCompletedSetup() {
@@ -52,19 +54,22 @@ final class SettingsViewTests: XCTestCase {
     // MARK: - Silent system-locale commit
 
     func testFirstLaunchSilentCommitsSystemLocaleWhenSupported() {
-        // v1 locale lock: hasCompletedSetup starts true, so commitSystemLocaleIfApplicable
-        // is always a no-op — its guard fires immediately.
+        // M6.11: commitSystemLocaleIfApplicable is a no-op; onboarding handles first locale.
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
         store.commitSystemLocaleIfApplicable(systemLocaleIdentifier: "en_US")
-        XCTAssertEqual(store.declaredLocales, ["en_US"])
-        XCTAssertTrue(store.hasCompletedSetup)
+        XCTAssertEqual(store.declaredLocales, [],
+                       "M6.11: commitSystemLocaleIfApplicable is a no-op; locales stay empty")
+        XCTAssertFalse(store.hasCompletedSetup,
+                       "M6.11: hasCompletedSetup stays false until onboarding completes")
     }
 
     func testFirstLaunchDoesNothingWhenSystemLocaleNotInRegistry() {
-        // v1 locale lock: commitSystemLocaleIfApplicable is always a no-op (setup starts complete).
+        // M6.11: commitSystemLocaleIfApplicable is always a no-op.
         let store = SettingsStore(userDefaults: makeIsolatedDefaults())
         store.commitSystemLocaleIfApplicable(systemLocaleIdentifier: "ka_GE")
-        XCTAssertEqual(store.declaredLocales, ["en_US"])
-        XCTAssertTrue(store.hasCompletedSetup)
+        XCTAssertEqual(store.declaredLocales, [],
+                       "M6.11: commitSystemLocaleIfApplicable is a no-op; locales stay empty")
+        XCTAssertFalse(store.hasCompletedSetup,
+                       "M6.11: hasCompletedSetup stays false until onboarding completes")
     }
 }

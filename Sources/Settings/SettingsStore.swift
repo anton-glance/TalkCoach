@@ -22,6 +22,7 @@ private enum Keys {
     static let lingerFullSeconds = "lingerFullSeconds"
     static let lingerFadeSeconds = "lingerFadeSeconds"
     static let recoveryGraceSeconds = "recoveryGraceSeconds"
+    static let hasCompletedOnboarding = "hasCompletedOnboarding"
 }
 
 @MainActor
@@ -53,8 +54,12 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    // M6.11 stub — full implementation added in Commit 2
-    @Published var hasCompletedOnboarding: Bool = false
+    @Published var hasCompletedOnboarding: Bool {
+        didSet {
+            guard !isSyncing else { return }
+            userDefaults.set(hasCompletedOnboarding, forKey: Keys.hasCompletedOnboarding)
+        }
+    }
 
     @Published var widgetPositionByDisplay: [String: CGPoint] {
         didSet {
@@ -197,16 +202,21 @@ final class SettingsStore: ObservableObject {
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
 
-        // v1 locale lock: on first launch (no stored declaredLocales key), write en_US and mark
-        // setup complete into UserDefaults before applicationDidFinishLaunching reads them.
         let rawLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String]
-        if rawLocales == nil {
-            userDefaults.set(["en_US"], forKey: Keys.declaredLocales)
-            userDefaults.set(true, forKey: Keys.hasCompletedSetup)
-        }
-        self.declaredLocales = rawLocales ?? ["en_US"]
+        self.declaredLocales = rawLocales ?? []
         self.coachingEnabled = userDefaults.object(forKey: Keys.coachingEnabled) as? Bool ?? true
-        self.hasCompletedSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? true
+        let completedSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? false
+        self.hasCompletedSetup = completedSetup
+
+        let rawOnboarding = userDefaults.object(forKey: Keys.hasCompletedOnboarding) as? Bool
+        if rawOnboarding == nil {
+            // First read of this key. Migrate: existing users who completed setup skip onboarding.
+            let migrated = completedSetup
+            userDefaults.set(migrated, forKey: Keys.hasCompletedOnboarding)
+            self.hasCompletedOnboarding = migrated
+        } else {
+            self.hasCompletedOnboarding = rawOnboarding ?? false
+        }
 
         if let data = userDefaults.data(forKey: Keys.widgetPositionByDisplay) {
             if let decoded = Self.decodePositions(data) {
@@ -317,20 +327,11 @@ final class SettingsStore: ObservableObject {
         } else {
             guard declaredLocales.count < 2 else { return }
             declaredLocales.append(identifier)
-            if !hasCompletedSetup {
-                hasCompletedSetup = true
-            }
         }
     }
 
     func commitSystemLocaleIfApplicable(systemLocaleIdentifier: String) {
-        guard !hasCompletedSetup, declaredLocales.isEmpty else { return }
-        let normalized = systemLocaleIdentifier.replacingOccurrences(of: "-", with: "_")
-        guard LocaleRegistry.allLocales.contains(where: { $0.identifier == normalized }) else {
-            return
-        }
-        declaredLocales = [normalized]
-        hasCompletedSetup = true
+        // No-op: first-launch locale selection is handled by M6.11 onboarding.
     }
 
 }
@@ -343,14 +344,17 @@ private extension SettingsStore {
         isSyncing = true
         defer { isSyncing = false }
 
-        let newDeclaredLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String] ?? ["en_US"]
+        let newDeclaredLocales = userDefaults.object(forKey: Keys.declaredLocales) as? [String] ?? []
         if newDeclaredLocales != declaredLocales { declaredLocales = newDeclaredLocales }
 
         let newCoaching = userDefaults.object(forKey: Keys.coachingEnabled) as? Bool ?? true
         if newCoaching != coachingEnabled { coachingEnabled = newCoaching }
 
-        let newSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? true
+        let newSetup = userDefaults.object(forKey: Keys.hasCompletedSetup) as? Bool ?? false
         if newSetup != hasCompletedSetup { hasCompletedSetup = newSetup }
+
+        let newOnboarding = userDefaults.object(forKey: Keys.hasCompletedOnboarding) as? Bool ?? false
+        if newOnboarding != hasCompletedOnboarding { hasCompletedOnboarding = newOnboarding }
 
         let newLastUsed = userDefaults.string(forKey: Keys.widgetLastUsedDisplay)
         if newLastUsed != widgetLastUsedDisplay { widgetLastUsedDisplay = newLastUsed }
