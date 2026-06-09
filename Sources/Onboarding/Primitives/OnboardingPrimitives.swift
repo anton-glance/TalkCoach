@@ -315,6 +315,7 @@ struct OnboardingDropdown: View {
     let placeholder: String
     let includeNone: Bool
     let noneLabel: String
+    let opensUpward: Bool
     @State private var isOpen = false
     @State private var hoveredID: String?  // nil means none-row hover
     @State private var eventMonitor: Any?
@@ -323,12 +324,14 @@ struct OnboardingDropdown: View {
         selectedID: Binding<String?>,
         placeholder: String = "Select…",
         includeNone: Bool = false,
-        noneLabel: String = "None"
+        noneLabel: String = "None",
+        opensUpward: Bool = false
     ) {
         self._selectedID = selectedID
         self.placeholder = placeholder
         self.includeNone = includeNone
         self.noneLabel = noneLabel
+        self.opensUpward = opensUpward
     }
 
     private var displayName: String {
@@ -393,7 +396,7 @@ struct OnboardingDropdown: View {
                 )
                 .shadow(color: .black.opacity(0.16), radius: 18, y: 6)
                 .shadow(color: .black.opacity(0.08), radius: 4, y: 1)
-                .offset(y: 42 + 6)  // pill height (42) + 6pt gap
+                .offset(y: opensUpward ? -(232 + 6) : 42 + 6)
                 .zIndex(10)
             }
         }
@@ -452,17 +455,16 @@ struct OnboardingDropdown: View {
 
 // MARK: - AppParadeView
 
-private let appParadeItems: [(name: String, symbolName: String)] = [
-    ("Zoom", "video"),
-    ("Teams", "person.3"),
-    ("Meet", "video.fill"),
-    ("FaceTime", "phone.fill"),
-    ("Slack", "message"),
-    ("Discord", "headphones"),
-    ("Webex", "circle.grid.3x3"),
-    ("Skype", "bubble.left"),
-    ("WhatsApp", "message.fill"),
-    ("Telegram", "paperplane")
+private let appParadeItems: [(name: String, imageName: String)] = [
+    ("Zoom",      "ParadeZoom"),
+    ("Teams",     "ParadeTeams"),
+    ("Meet",      "ParadeMeet"),
+    ("FaceTime",  "ParadeFaceTime"),
+    ("Slack",     "ParadeSlack"),
+    ("Discord",   "ParadeDiscord"),
+    ("Webex",     "ParadeWebex"),
+    ("WhatsApp",  "ParadeWhatsApp"),
+    ("Telegram",  "ParadeTelegram")
 ]
 
 struct AppParadeView: View {
@@ -516,15 +518,14 @@ struct AppParadeView: View {
             ForEach(0..<appParadeItems.count * 2, id: \.self) { index in
                 let item = appParadeItems[index % appParadeItems.count]
                 VStack(spacing: 8) {
-                    Image(systemName: item.symbolName)
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(DesignTokens.Text.secondary)
+                    Image(item.imageName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
                         .frame(width: 60, height: 60)
-                        .background(DesignTokens.Surface.surface2)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(DesignTokens.Border.subtle, lineWidth: 0.5)
+                                .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
                         )
                     Text(item.name)
                         .font(.system(size: 11.5))
