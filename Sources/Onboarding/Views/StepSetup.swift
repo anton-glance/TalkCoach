@@ -69,8 +69,7 @@ struct StepSetup: View {
                                 get: { viewModel.primaryLocaleID },
                                 set: { viewModel.setPrimaryLocale($0) }
                             ),
-                            placeholder: "Select language…",
-                            opensUpward: true
+                            placeholder: "Select language…"
                         )
                     }
                     VStack(alignment: .leading, spacing: 7) {
@@ -83,8 +82,7 @@ struct StepSetup: View {
                                 set: { viewModel.setSecondaryLocale($0) }
                             ),
                             includeNone: true,
-                            noneLabel: "None",
-                            opensUpward: true
+                            noneLabel: "None"
                         )
                     }
                 }

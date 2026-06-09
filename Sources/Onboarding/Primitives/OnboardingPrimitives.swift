@@ -318,7 +318,6 @@ struct OnboardingDropdown: View {
     let opensUpward: Bool
     @State private var isOpen = false
     @State private var hoveredID: String?  // nil means none-row hover
-    @State private var eventMonitor: Any?
 
     init(
         selectedID: Binding<String?>,
@@ -387,7 +386,7 @@ struct OnboardingDropdown: View {
                     }
                     .padding(6)
                 }
-                .frame(height: 232)
+                .frame(height: 190)
                 .background(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
@@ -396,26 +395,12 @@ struct OnboardingDropdown: View {
                 )
                 .shadow(color: .black.opacity(0.16), radius: 18, y: 6)
                 .shadow(color: .black.opacity(0.08), radius: 4, y: 1)
-                .offset(y: opensUpward ? -(232 + 6) : 42 + 6)
+                .offset(y: opensUpward ? -(190 + 6) : 42 + 6)
                 .zIndex(10)
             }
         }
         .zIndex(isOpen ? 10 : 0)
         .accessibilityLabel(placeholder)
-        .onChange(of: isOpen) { _, open in
-            if open {
-                let closeBinding = $isOpen
-                eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-                    withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
-                        closeBinding.wrappedValue = false
-                    }
-                    return event
-                }
-            } else if let mon = eventMonitor {
-                NSEvent.removeMonitor(mon)
-                eventMonitor = nil
-            }
-        }
     }
 
     private func dropdownRow(id: String?, label: String) -> some View {
@@ -455,16 +440,16 @@ struct OnboardingDropdown: View {
 
 // MARK: - AppParadeView
 
-private let appParadeItems: [(name: String, imageName: String)] = [
-    ("Zoom",      "ParadeZoom"),
-    ("Teams",     "ParadeTeams"),
-    ("Meet",      "ParadeMeet"),
-    ("FaceTime",  "ParadeFaceTime"),
-    ("Slack",     "ParadeSlack"),
-    ("Discord",   "ParadeDiscord"),
-    ("Webex",     "ParadeWebex"),
-    ("WhatsApp",  "ParadeWhatsApp"),
-    ("Telegram",  "ParadeTelegram")
+private let appParadeItems: [(name: String, imageName: String, scale: CGFloat)] = [
+    ("Zoom",      "ParadeZoom",      1.00),
+    ("Teams",     "ParadeTeams",     0.80),  // smaller so icon fits within tile
+    ("Meet",      "ParadeMeet",      0.90),  // slight shrink for padding
+    ("FaceTime",  "ParadeFaceTime",  1.00),
+    ("Slack",     "ParadeSlack",     1.00),
+    ("Discord",   "ParadeDiscord",   1.00),
+    ("Webex",     "ParadeWebex",     1.00),
+    ("WhatsApp",  "ParadeWhatsApp",  1.15),  // zoom in to fill past white margin
+    ("Telegram",  "ParadeTelegram",  1.00)
 ]
 
 struct AppParadeView: View {
@@ -518,15 +503,19 @@ struct AppParadeView: View {
             ForEach(0..<appParadeItems.count * 2, id: \.self) { index in
                 let item = appParadeItems[index % appParadeItems.count]
                 VStack(spacing: 8) {
-                    Image(item.imageName)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 60, height: 60)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
-                        )
+                    ZStack {
+                        if item.scale < 1.0 { Color.white }
+                        Image(item.imageName)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 60 * item.scale, height: 60 * item.scale)
+                    }
+                    .frame(width: 60, height: 60)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
+                    )
                     Text(item.name)
                         .font(.system(size: 11.5))
                         .foregroundStyle(DesignTokens.Text.tertiary)
