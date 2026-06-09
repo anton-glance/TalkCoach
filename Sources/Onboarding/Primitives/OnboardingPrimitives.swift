@@ -37,6 +37,7 @@ struct ModalSheet<Content: View, Footer: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 48)
             .padding(.top, 44)
+            .zIndex(1)
 
             HStack {
                 footer()
@@ -316,6 +317,7 @@ struct OnboardingDropdown: View {
     let noneLabel: String
     @State private var isOpen = false
     @State private var hoveredID: String?  // nil means none-row hover
+    @State private var eventMonitor: Any?
 
     init(
         selectedID: Binding<String?>,
@@ -397,6 +399,20 @@ struct OnboardingDropdown: View {
         }
         .zIndex(isOpen ? 10 : 0)
         .accessibilityLabel(placeholder)
+        .onChange(of: isOpen) { _, open in
+            if open {
+                let closeBinding = $isOpen
+                eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+                    withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
+                        closeBinding.wrappedValue = false
+                    }
+                    return event
+                }
+            } else if let mon = eventMonitor {
+                NSEvent.removeMonitor(mon)
+                eventMonitor = nil
+            }
+        }
     }
 
     private func dropdownRow(id: String?, label: String) -> some View {
@@ -462,12 +478,14 @@ struct AppParadeView: View {
     private var cycleWidth: CGFloat { singleSetWidth + tileSpacing }
 
     var body: some View {
-        // Color.clear is flexible — it reports the parent's proposed width, not the
-        // tiles' natural 1954pt. Without this, the tilesHStack propagates its full
-        // width up through ZStack → VStack → ModalSheet, pushing buttons off-screen.
+        // Color.clear fixes the layout footprint to the parent's proposed width (not
+        // the tiles' natural 1954pt). overlay(alignment:.leading) anchors the tile
+        // strip's leading edge at x=0, so offset=0 shows tile 0 (Zoom) and the
+        // cycle wraps seamlessly. mask{} feathers the edges via alpha — independent
+        // of background color, unlike a solid LinearGradient overlay.
         Color.clear
             .frame(height: 92)
-            .overlay {
+            .overlay(alignment: .leading) {
                 ZStack {
                     if reducedMotion {
                         tilesHStack(offset: 0)
@@ -478,22 +496,18 @@ struct AppParadeView: View {
                             tilesHStack(offset: -(phase / cycleDuration) * cycleWidth)
                         }
                     }
-                    HStack {
-                        LinearGradient(
-                            colors: [DesignTokens.Surface.surface, .clear],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: 48, height: 92)
-                        Spacer()
-                        LinearGradient(
-                            colors: [.clear, DesignTokens.Surface.surface],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: 48, height: 92)
-                    }
-                    .allowsHitTesting(false)
                 }
+                .frame(height: 92)
                 .clipped()
+            }
+            .mask {
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 48)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 48)
+                }
             }
     }
 

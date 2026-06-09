@@ -6,7 +6,10 @@ struct OnboardingShell: View {
 
     var body: some View {
         ZStack {
+            // clipShape only on the background so dropdown overlays inside step views
+            // can escape the rounded-corner clip boundary without being cut off
             Color.white
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             Group {
                 switch viewModel.currentStep {
                 case 1: StepWelcome(viewModel: viewModel)
@@ -19,7 +22,6 @@ struct OnboardingShell: View {
             .id(viewModel.currentStep)
             .transition(.opacity.animation(.easeInOut(duration: DesignTokens.Motion.fast)))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(Color.black.opacity(0.06), lineWidth: 0.5)
