@@ -318,6 +318,7 @@ struct OnboardingDropdown: View {
     let opensUpward: Bool
     @State private var isOpen = false
     @State private var hoveredID: String?  // nil means none-row hover
+    @State private var eventMonitor: Any?
 
     init(
         selectedID: Binding<String?>,
@@ -375,18 +376,30 @@ struct OnboardingDropdown: View {
         .overlay(alignment: .top) {
             // Open list: anchored to top of pill, offset down by pill height + 6pt gap
             if isOpen {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        if includeNone {
-                            dropdownRow(id: nil, label: noneLabel)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            if includeNone {
+                                dropdownRow(id: nil, label: noneLabel)
+                                    .id("__none__")
+                            }
+                            ForEach(LocaleRegistry.parakeetSupportedLocales, id: \.identifier) { entry in
+                                dropdownRow(id: entry.identifier, label: entry.displayName)
+                                    .id(entry.identifier)
+                            }
                         }
-                        ForEach(LocaleRegistry.parakeetSupportedLocales, id: \.identifier) { entry in
-                            dropdownRow(id: entry.identifier, label: entry.displayName)
+                        .padding(6)
+                    }
+                    .frame(height: 190)
+                    .onAppear {
+                        if let selected = selectedID {
+                            // Defer one runloop so SwiftUI layout is complete before scrolling
+                            DispatchQueue.main.async {
+                                proxy.scrollTo(selected, anchor: .center)
+                            }
                         }
                     }
-                    .padding(6)
                 }
-                .frame(height: 190)
                 .background(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
@@ -401,6 +414,24 @@ struct OnboardingDropdown: View {
         }
         .zIndex(isOpen ? 10 : 0)
         .accessibilityLabel(placeholder)
+        .onChange(of: isOpen) { _, open in
+            if open {
+                let closeBinding = $isOpen
+                eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+                    // Async so button's own toggle action fires first; this then sets to false
+                    // (which is a no-op if the button already toggled it shut).
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
+                            closeBinding.wrappedValue = false
+                        }
+                    }
+                    return event
+                }
+            } else if let mon = eventMonitor {
+                NSEvent.removeMonitor(mon)
+                eventMonitor = nil
+            }
+        }
     }
 
     private func dropdownRow(id: String?, label: String) -> some View {
