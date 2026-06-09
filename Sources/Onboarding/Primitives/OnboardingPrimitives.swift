@@ -24,30 +24,29 @@ struct ModalSheet<Content: View, Footer: View>: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 0) {
-                    if align == .center {
-                        Spacer(minLength: 0)
-                    }
-                    content()
-                    if align == .center {
-                        Spacer(minLength: 0)
-                    }
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                if align == .center {
+                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 48)
-                .padding(.top, 44)
-
-                HStack {
-                    footer()
+                content()
+                if align == .center {
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 48)
-                .padding(.top, 24)
-                .padding(.bottom, 30)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 48)
+            .padding(.top, 44)
 
+            HStack {
+                footer()
+            }
+            .padding(.horizontal, 48)
+            .padding(.top, 24)
+            .padding(.bottom, 30)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) {
             if let onClose {
                 Button(action: onClose) {
                     Canvas { ctx, size in
@@ -297,7 +296,7 @@ struct OnboardingLockup: View {
     let markSize: CGFloat
     init(markSize: CGFloat = 30) { self.markSize = markSize }
     private var lockupHeight: CGFloat { markSize * 80 / 64 }
-    private var lockupWidth: CGFloat { lockupHeight * 380 / 80 }
+    private var lockupWidth: CGFloat { lockupHeight * 250 / 80 }
     var body: some View {
         Image("LoctoLockup")
             .resizable()
@@ -383,7 +382,7 @@ struct OnboardingDropdown: View {
                     }
                     .padding(6)
                 }
-                .frame(maxHeight: 232)
+                .frame(height: 232)
                 .background(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
@@ -463,33 +462,39 @@ struct AppParadeView: View {
     private var cycleWidth: CGFloat { singleSetWidth + tileSpacing }
 
     var body: some View {
-        ZStack {
-            if reducedMotion {
-                tilesHStack(offset: 0)
-            } else {
-                TimelineView(.animation) { context in
-                    let elapsed = context.date.timeIntervalSince(startDate)
-                    let phase = elapsed.truncatingRemainder(dividingBy: cycleDuration)
-                    tilesHStack(offset: -(phase / cycleDuration) * cycleWidth)
+        // Color.clear is flexible — it reports the parent's proposed width, not the
+        // tiles' natural 1954pt. Without this, the tilesHStack propagates its full
+        // width up through ZStack → VStack → ModalSheet, pushing buttons off-screen.
+        Color.clear
+            .frame(height: 92)
+            .overlay {
+                ZStack {
+                    if reducedMotion {
+                        tilesHStack(offset: 0)
+                    } else {
+                        TimelineView(.animation) { context in
+                            let elapsed = context.date.timeIntervalSince(startDate)
+                            let phase = elapsed.truncatingRemainder(dividingBy: cycleDuration)
+                            tilesHStack(offset: -(phase / cycleDuration) * cycleWidth)
+                        }
+                    }
+                    HStack {
+                        LinearGradient(
+                            colors: [DesignTokens.Surface.surface, .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: 48, height: 92)
+                        Spacer()
+                        LinearGradient(
+                            colors: [.clear, DesignTokens.Surface.surface],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: 48, height: 92)
+                    }
+                    .allowsHitTesting(false)
                 }
+                .clipped()
             }
-            // Edge fades — fixed height so they don't expand the ZStack
-            HStack {
-                LinearGradient(
-                    colors: [DesignTokens.Surface.surface, .clear],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: 48, height: 92)
-                Spacer()
-                LinearGradient(
-                    colors: [.clear, DesignTokens.Surface.surface],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(width: 48, height: 92)
-            }
-            .allowsHitTesting(false)
-        }
-        .clipped()
     }
 
     @ViewBuilder private func tilesHStack(offset: CGFloat) -> some View {
