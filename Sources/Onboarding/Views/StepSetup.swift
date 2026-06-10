@@ -1,9 +1,9 @@
+import AppKit
 import AVFoundation
 import SwiftUI
 
 struct StepSetup: View {
     @ObservedObject var viewModel: OnboardingViewModel
-    @State private var showMicConfirmation = false
 
     var body: some View {
         ModalSheet(align: .top) {
@@ -32,8 +32,12 @@ struct StepSetup: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
-                    OnboardingToggle(isOn: viewModel.micGranted) {
-                        handleToggle()
+                    if viewModel.micGranted {
+                        MicGrantedIndicator()
+                    } else {
+                        OnboardingToggle(isOn: false) {
+                            handleToggle()
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -54,15 +58,7 @@ struct StepSetup: View {
                 }
 
                 if viewModel.micDenied {
-                    InlineMessage(
-                        "To enable microphone access, go to System Settings → Privacy & Security → Microphone.",
-                        tone: .coral
-                    )
-                    .padding(.top, 10)
-                }
-
-                if showMicConfirmation {
-                    InlineMessage("Microphone access is on. To turn it off, manage it in System Settings → Privacy.", tone: .neutral)
+                    MicDeniedCard()
                         .padding(.top, 10)
                 }
 
@@ -117,27 +113,88 @@ struct StepSetup: View {
                 viewModel.advance()
             }
         }
-        .onChange(of: viewModel.micGranted) { _, granted in
-            if granted {
-                withAnimation { showMicConfirmation = true }
-                Task {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    withAnimation { showMicConfirmation = false }
-                }
-            }
-        }
     }
 
     private func handleToggle() {
-        if viewModel.micGranted {
-            withAnimation { showMicConfirmation = true }
-            Task {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                withAnimation { showMicConfirmation = false }
+        Task { await viewModel.requestMicPermission() }
+    }
+}
+
+// MARK: - Private subviews
+
+private struct MicGrantedIndicator: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .frame(width: 26, height: 26)
+                .foregroundStyle(DesignTokens.Brand.brand)
+            Canvas { ctx, size in
+                let scale = size.width / 24
+                var path = Path()
+                path.move(to: CGPoint(x: 5 * scale, y: 12 * scale))
+                path.addLine(to: CGPoint(x: 10 * scale, y: 17 * scale))
+                path.addLine(to: CGPoint(x: 20 * scale, y: 7 * scale))
+                ctx.stroke(
+                    path, with: .color(.white),
+                    style: StrokeStyle(lineWidth: 2.5 * scale, lineCap: .round, lineJoin: .round)
+                )
             }
-        } else {
-            withAnimation { showMicConfirmation = false }
-            Task { await viewModel.requestMicPermission() }
+            .frame(width: 14, height: 14)
+        }
+        .accessibilityLabel("Microphone access granted")
+    }
+}
+
+private let kDeniedTextColor = Color(red: 92 / 255, green: 44 / 255, blue: 31 / 255)
+
+private struct MicDeniedCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("To enable microphone access, go to System Settings → Privacy & Security → Microphone.")
+                .font(.system(size: 13))
+                .foregroundStyle(kDeniedTextColor)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            OpenMicSettingsButton()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .background(
+            LinearGradient(
+                colors: [DesignTokens.Surface.coralLight, DesignTokens.Surface.coralMid],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(kDeniedTextColor.opacity(0.28), lineWidth: 0.5)
+        )
+    }
+}
+
+private struct OpenMicSettingsButton: View {
+    var body: some View {
+        Button {
+            // Deep-link to Microphone privacy pane in System Settings
+            NSWorkspace.shared.open(
+                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+            )
+        } label: {
+            HStack(spacing: 4) {
+                Text("Open Settings")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(kDeniedTextColor)
+                    .underline()
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(kDeniedTextColor)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open System Settings to Microphone privacy")
+        .onHover { hovering in
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
     }
 }

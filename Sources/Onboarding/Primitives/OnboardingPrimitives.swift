@@ -471,16 +471,22 @@ struct OnboardingDropdown: View {
 
 // MARK: - AppParadeView
 
-private let appParadeItems: [(name: String, imageName: String, scale: CGFloat)] = [
-    ("Zoom",      "ParadeZoom",      1.00),
-    ("Teams",     "ParadeTeams",     0.80),  // smaller so icon fits within tile
-    ("Meet",      "ParadeMeet",      0.90),  // slight shrink for padding
-    ("FaceTime",  "ParadeFaceTime",  1.00),
-    ("Slack",     "ParadeSlack",     1.00),
-    ("Discord",   "ParadeDiscord",   1.00),
-    ("Webex",     "ParadeWebex",     1.00),
-    ("WhatsApp",  "ParadeWhatsApp",  1.15),  // zoom in to fill past white margin
-    ("Telegram",  "ParadeTelegram",  1.00)
+private struct AppParadeItem {
+    let name: String
+    let imageName: String
+    let scale: CGFloat
+}
+
+private let appParadeItems: [AppParadeItem] = [
+    AppParadeItem(name: "Zoom", imageName: "ParadeZoom", scale: 1.00),
+    AppParadeItem(name: "Teams", imageName: "ParadeTeams", scale: 0.80), // smaller so icon fits within tile
+    AppParadeItem(name: "Meet", imageName: "ParadeMeet", scale: 0.90), // slight shrink for padding
+    AppParadeItem(name: "FaceTime", imageName: "ParadeFaceTime", scale: 1.00),
+    AppParadeItem(name: "Slack", imageName: "ParadeSlack", scale: 1.00),
+    AppParadeItem(name: "Discord", imageName: "ParadeDiscord", scale: 1.00),
+    AppParadeItem(name: "Webex", imageName: "ParadeWebex", scale: 1.00),
+    AppParadeItem(name: "WhatsApp", imageName: "ParadeWhatsApp", scale: 1.15), // zoom in to fill past white margin
+    AppParadeItem(name: "Telegram", imageName: "ParadeTelegram", scale: 1.00)
 ]
 
 struct AppParadeView: View {
