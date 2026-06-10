@@ -32,6 +32,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         win.delegate = self
         centerOnScreen(win)
         self.window = win
+        ActivationPolicyController.shared.registerWindow("onboarding")
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -40,6 +41,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         window?.orderOut(nil)
         window = nil
         viewModel = nil
+        ActivationPolicyController.shared.unregisterWindow("onboarding")
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool { false }

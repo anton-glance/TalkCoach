@@ -7,6 +7,7 @@ import OSLog
 final class OnboardingViewModel: ObservableObject {
     @Published var currentStep: Int = 1
     @Published var micGranted: Bool = false
+    @Published var micDenied: Bool = false
     @Published var primaryLocaleID: String?
     @Published var secondaryLocaleID: String?
     @Published var revokeHintVisible: Bool = false
@@ -31,7 +32,9 @@ final class OnboardingViewModel: ObservableObject {
         self.settingsStore = settingsStore
         self.statusProvider = statusProvider
         self.onComplete = onComplete
-        micGranted = statusProvider.micAuthorizationStatus() == .authorized
+        let micStatus = statusProvider.micAuthorizationStatus()
+        micGranted = micStatus == .authorized
+        micDenied = micStatus == .denied
         primaryLocaleID = settingsStore.declaredLocales.first
         secondaryLocaleID = settingsStore.declaredLocales.count > 1
             ? settingsStore.declaredLocales[1]
@@ -52,6 +55,7 @@ final class OnboardingViewModel: ObservableObject {
     func requestMicPermission() async {
         let granted = await statusProvider.requestMicAccess()
         micGranted = granted
+        micDenied = !granted
     }
 
     func setPrimaryLocale(_ id: String?) {

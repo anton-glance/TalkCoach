@@ -46,11 +46,19 @@ struct StepSetup: View {
                 )
                 .padding(.top, 22)
 
-                if !viewModel.micGranted {
+                if !viewModel.micGranted && !viewModel.micDenied {
                     Text("macOS will ask you to confirm.")
                         .font(.system(size: 12.5))
                         .foregroundStyle(DesignTokens.Text.tertiary)
                         .padding(.top, 8)
+                }
+
+                if viewModel.micDenied {
+                    InlineMessage(
+                        "To enable microphone access, go to System Settings → Privacy & Security → Microphone.",
+                        tone: .coral
+                    )
+                    .padding(.top, 10)
                 }
 
                 if showMicConfirmation {
@@ -107,6 +115,15 @@ struct StepSetup: View {
             Spacer()
             OnboardingPrimaryButton("Continue", isDisabled: !viewModel.canContinueStep2) {
                 viewModel.advance()
+            }
+        }
+        .onChange(of: viewModel.micGranted) { _, granted in
+            if granted {
+                withAnimation { showMicConfirmation = true }
+                Task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    withAnimation { showMicConfirmation = false }
+                }
             }
         }
     }

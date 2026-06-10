@@ -222,4 +222,38 @@ final class OnboardingViewModelTests: XCTestCase {
         viewModel.complete()
         XCTAssertTrue(fired)
     }
+
+    // MARK: - Test 22
+
+    func testRequestMicPermission_denied_setsMicDenied() async {
+        let mock = MockPermissionStatusProvider()
+        mock.micRequestResult = false
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
+        await viewModel.requestMicPermission()
+        XCTAssertTrue(viewModel.micDenied)
+        XCTAssertFalse(viewModel.micGranted)
+    }
+
+    // MARK: - Test 23
+
+    func testInitWithDeniedStatus_setsMicDenied() {
+        let mock = MockPermissionStatusProvider()
+        mock.micStatus = .denied
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
+        XCTAssertTrue(viewModel.micDenied)
+        XCTAssertFalse(viewModel.micGranted)
+    }
+
+    // MARK: - Test 24
+
+    func testRequestMicPermission_granted_clearsMicDenied() async {
+        let mock = MockPermissionStatusProvider()
+        mock.micStatus = .denied
+        mock.micRequestResult = true
+        let viewModel = OnboardingViewModel(settingsStore: makeStore(), statusProvider: mock)
+        XCTAssertTrue(viewModel.micDenied)
+        await viewModel.requestMicPermission()
+        XCTAssertFalse(viewModel.micDenied)
+        XCTAssertTrue(viewModel.micGranted)
+    }
 }

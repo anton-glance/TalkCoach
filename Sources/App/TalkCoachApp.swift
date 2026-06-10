@@ -7,7 +7,7 @@ nonisolated func pauseResumeMenuTitle(coachingEnabled: Bool) -> String {
     coachingEnabled ? "Pause Coaching" : "Resume Coaching"
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     static private(set) weak var current: AppDelegate?
 
     let settingsStore = SettingsStore()
@@ -170,8 +170,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.isReleasedWhenClosed = false
         window.isRestorable = false
+        window.delegate = self
 
         settingsWindow = window
+        ActivationPolicyController.shared.registerWindow("settings")
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -194,6 +196,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         onboardingController?.applicationShouldHandleReopen() ?? true
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === settingsWindow else { return }
+        ActivationPolicyController.shared.unregisterWindow("settings")
     }
 }
 
