@@ -22,9 +22,9 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         win.isOpaque = false
         win.backgroundColor = .clear
         win.hasShadow = true
-        win.isMovableByWindowBackground = false
+        win.isMovableByWindowBackground = true
         win.isReleasedWhenClosed = false
-        win.level = .floating
+        win.level = .normal
         win.contentView?.wantsLayer = true
         win.contentView?.layer?.cornerRadius = kCornerRadius
         win.contentView?.layer?.masksToBounds = true

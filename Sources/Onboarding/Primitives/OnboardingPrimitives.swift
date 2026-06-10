@@ -319,6 +319,7 @@ struct OnboardingDropdown: View {
     @State private var isOpen = false
     @State private var hoveredID: String?  // nil means none-row hover
     @State private var eventMonitor: Any?
+    @State private var pillGlobalFrame: CGRect = .zero
 
     init(
         selectedID: Binding<String?>,
@@ -373,6 +374,7 @@ struct OnboardingDropdown: View {
             )
         }
         .buttonStyle(.plain)
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { pillGlobalFrame = $0 }
         .overlay(alignment: .top) {
             // Open list: anchored to top of pill, offset down by pill height + 6pt gap
             if isOpen {
@@ -417,9 +419,16 @@ struct OnboardingDropdown: View {
         .onChange(of: isOpen) { _, open in
             if open {
                 let closeBinding = $isOpen
+                let capturedFrame = pillGlobalFrame
                 eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
-                    // Async so button's own toggle action fires first; this then sets to false
-                    // (which is a no-op if the button already toggled it shut).
+                    // Convert AppKit screen coords (bottom-left origin, y-up) to SwiftUI global
+                    // coords (top-left origin, y-down) and skip close when click is on the pill
+                    // itself — otherwise the async close fires after the button's toggle, reopening.
+                    let screenPt = event.window?.convertPoint(toScreen: event.locationInWindow)
+                        ?? event.locationInWindow
+                    let screenH = NSScreen.main?.frame.height ?? 0
+                    let swiftUIPt = CGPoint(x: screenPt.x, y: screenH - screenPt.y)
+                    guard !capturedFrame.contains(swiftUIPt) else { return event }
                     DispatchQueue.main.async {
                         withAnimation(.easeOut(duration: DesignTokens.Motion.fast)) {
                             closeBinding.wrappedValue = false

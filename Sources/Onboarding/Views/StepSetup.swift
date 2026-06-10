@@ -20,7 +20,7 @@ struct StepSetup: View {
                     .padding(.top, 6)
 
                 // Mic permission card
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .center, spacing: 14) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Microphone")
                             .font(.system(size: 15, weight: .medium))
