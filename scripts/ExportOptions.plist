@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Developer ID = direct-download distribution (not Mac App Store). -->
+	<key>method</key>
+	<string>developer-id</string>
+
+	<!-- TalkCoach Apple Developer team. -->
+	<key>teamID</key>
+	<string>ABHZSV6FGT</string>
+
+	<!-- Use the "Developer ID Application" cert that Xcode/automatic signing manages. -->
+	<key>signingStyle</key>
+	<string>automatic</string>
+
+	<!-- Export the signed .app to disk; do NOT auto-upload anywhere. -->
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>
