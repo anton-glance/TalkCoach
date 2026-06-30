@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & test (macOS)
+    # The app's deployment target is macOS 26 (Tahoe), so the runner must ship the
+    # macOS 26 / Xcode 26 SDK. If GitHub hasn't published this image yet, pin to the
+    # newest available image and bump the deployment target check accordingly.
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Vendor/parakeet-bridge
+
+      # Builds libparakeet_bridge.a (Rust staticlib wrapping parakeet-rs + ort).
+      # `ort` downloads the ONNX Runtime at build time — runners have network.
+      - name: Build Parakeet bridge
+        run: bash Vendor/build-parakeet-bridge.sh
+
+      - name: Verify bridge artifact
+        run: test -f Vendor/parakeet-bridge/target/release/libparakeet_bridge.a
+
+      # Unit tests run model-free; integration tests that need on-disk models
+      # XCTSkip when those models are absent (expected in CI).
+      - name: Build & test
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -scheme TalkCoach \
+            -destination 'platform=macOS' \
+            -resultBundlePath build/TestResults.xcresult \
+            clean test
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresult
+          path: build/TestResults.xcresult
+          if-no-files-found: ignore
+
+  lint:
+    name: SwiftLint (informational)
+    runs-on: macos-26
+    # Non-blocking: surfaces the violations CLAUDE.md says are run manually,
+    # without gating the PR.
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: Run SwiftLint
+        run: swiftlint --strict
