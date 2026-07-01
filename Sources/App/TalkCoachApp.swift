@@ -220,10 +220,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 @main
 struct TalkCoachApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some Scene {
-        MenuBarExtra("TalkCoach", image: "MenuBarIcon", isInserted: $hasCompletedOnboarding) {
+        // MenuBarExtra is always present; hasCompletedOnboarding gates session-engine boot
+        // in AppDelegate (not menubar visibility) to avoid @AppStorage / SettingsStore conflicts.
+        MenuBarExtra("TalkCoach", image: "MenuBarIcon") {
             MenuBarContent()
                 .environmentObject(delegate.settingsStore)
         }
