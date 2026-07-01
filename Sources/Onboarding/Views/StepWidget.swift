@@ -9,12 +9,17 @@ private let widgetPositions: [CGPoint] = [
 ]
 
 struct StepWidget: View {
-    @ObservedObject var viewModel: OnboardingViewModel
-    @StateObject private var syntheticVM = WidgetViewModel(settings: SettingsStore())
+    @ObservedObject private var viewModel: OnboardingViewModel
+    @StateObject private var syntheticVM: WidgetViewModel
     @State private var posIdx: Int = 0
     @State private var wpmValue: Int = 150
     @State private var streakValue: Double = 14
     @State private var reducedMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+    init(viewModel: OnboardingViewModel) {
+        _viewModel = ObservedObject(wrappedValue: viewModel)
+        _syntheticVM = StateObject(wrappedValue: WidgetViewModel(settings: viewModel.settingsStore))
+    }
 
     private var pos: CGPoint { widgetPositions[posIdx] }
 

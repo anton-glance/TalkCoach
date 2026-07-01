@@ -12,7 +12,7 @@ final class OnboardingViewModel: ObservableObject {
     @Published var secondaryLocaleID: String?
     @Published var revokeHintVisible: Bool = false
 
-    private let settingsStore: SettingsStore
+    let settingsStore: SettingsStore
     let statusProvider: PermissionStatusProvider
     var onComplete: (() -> Void)?
 

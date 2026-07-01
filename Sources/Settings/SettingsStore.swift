@@ -32,6 +32,7 @@ final class SettingsStore: ObservableObject {
     private let userDefaults: UserDefaults
     nonisolated(unsafe) private var observer: (any NSObjectProtocol)?
     private var isSyncing = false
+    private var isWritingLocally = false
 
     @Published var declaredLocales: [String] {
         didSet {
@@ -57,6 +58,8 @@ final class SettingsStore: ObservableObject {
     @Published var hasCompletedOnboarding: Bool {
         didSet {
             guard !isSyncing else { return }
+            isWritingLocally = true
+            defer { isWritingLocally = false }
             userDefaults.set(hasCompletedOnboarding, forKey: Keys.hasCompletedOnboarding)
         }
     }
@@ -256,6 +259,7 @@ final class SettingsStore: ObservableObject {
                 self.syncFromDefaults()
             }
         }
+
     }
 
     deinit {
@@ -341,6 +345,7 @@ final class SettingsStore: ObservableObject {
 private extension SettingsStore {
     // swiftlint:disable:next cyclomatic_complexity
     func syncFromDefaults() {
+        guard !isWritingLocally else { return }
         isSyncing = true
         defer { isSyncing = false }
 
