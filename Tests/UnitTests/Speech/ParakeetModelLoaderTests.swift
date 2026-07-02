@@ -95,4 +95,77 @@ final class ParakeetModelLoaderTests: XCTestCase {
             XCTFail("Unexpected error type from production path: \(error)")
         }
     }
+
+    // MARK: - Bundle-first resolution tests
+
+    func testBundlePreferredWhenBundleValid() throws {
+        let bundleRoot = tempDir.appendingPathComponent("bundle", isDirectory: true)
+        let bundleModelDir = bundleRoot
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("parakeet-tdt-v3-int8", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleModelDir, withIntermediateDirectories: true)
+        for name in ParakeetModelLoader.requiredFiles {
+            FileManager.default.createFile(atPath: bundleModelDir.appendingPathComponent(name).path, contents: nil)
+        }
+        let emptyBase = tempDir.appendingPathComponent("emptyBase", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyBase, withIntermediateDirectories: true)
+
+        let result = try ParakeetModelLoader.modelDirectoryURL(bundleResourceRoot: bundleRoot, baseURL: emptyBase)
+        XCTAssertEqual(result.path, bundleModelDir.path)
+        XCTAssertFalse(result.path.contains("TalkCoach"), "Bundle candidate must not contain TalkCoach segment")
+    }
+
+    func testFallsBackToApplicationSupportWhenBundleAbsent() throws {
+        let emptyBundle = tempDir.appendingPathComponent("emptyBundle", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyBundle, withIntermediateDirectories: true)
+        let validBase = tempDir.appendingPathComponent("validBase", isDirectory: true)
+        let validModelDir = validBase
+            .appendingPathComponent("TalkCoach", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("parakeet-tdt-v3-int8", isDirectory: true)
+        try FileManager.default.createDirectory(at: validModelDir, withIntermediateDirectories: true)
+        for name in ParakeetModelLoader.requiredFiles {
+            FileManager.default.createFile(atPath: validModelDir.appendingPathComponent(name).path, contents: nil)
+        }
+
+        let result = try ParakeetModelLoader.modelDirectoryURL(bundleResourceRoot: emptyBundle, baseURL: validBase)
+        XCTAssertEqual(result.path, validModelDir.path)
+        XCTAssertTrue(result.path.contains("TalkCoach"), "Application Support candidate must contain TalkCoach segment")
+    }
+
+    func testFallsBackWhenBundleDirPresentButFilesMissing() throws {
+        let bundleRoot = tempDir.appendingPathComponent("bundle", isDirectory: true)
+        let bundleModelDir = bundleRoot
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("parakeet-tdt-v3-int8", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleModelDir, withIntermediateDirectories: true)
+        for name in ParakeetModelLoader.requiredFiles.dropLast() {
+            FileManager.default.createFile(atPath: bundleModelDir.appendingPathComponent(name).path, contents: nil)
+        }
+        let validBase = tempDir.appendingPathComponent("validBase", isDirectory: true)
+        let validModelDir = validBase
+            .appendingPathComponent("TalkCoach", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("parakeet-tdt-v3-int8", isDirectory: true)
+        try FileManager.default.createDirectory(at: validModelDir, withIntermediateDirectories: true)
+        for name in ParakeetModelLoader.requiredFiles {
+            FileManager.default.createFile(atPath: validModelDir.appendingPathComponent(name).path, contents: nil)
+        }
+
+        let result = try ParakeetModelLoader.modelDirectoryURL(bundleResourceRoot: bundleRoot, baseURL: validBase)
+        XCTAssertEqual(result.path, validModelDir.path)
+    }
+
+    func testThrowsWhenNeitherBundleNorFallbackValid() throws {
+        let emptyBundle = tempDir.appendingPathComponent("emptyBundle", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyBundle, withIntermediateDirectories: true)
+        let emptyBase = tempDir.appendingPathComponent("emptyBase", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyBase, withIntermediateDirectories: true)
+
+        XCTAssertThrowsError(
+            try ParakeetModelLoader.modelDirectoryURL(bundleResourceRoot: emptyBundle, baseURL: emptyBase)
+        ) { error in
+            XCTAssertEqual(error as? ParakeetModelLoader.LoaderError, .modelDirectoryNotFound)
+        }
+    }
 }
