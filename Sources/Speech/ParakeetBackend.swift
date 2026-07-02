@@ -70,7 +70,7 @@ actor ParakeetBackend: TranscriberBackend {
         if engine == nil {
             let modelDir: URL
             do {
-                modelDir = try ParakeetModelLoader.modelDirectoryURL()
+                modelDir = try ParakeetModelLoader.modelDirectoryURL(bundleResourceRoot: ParakeetModelLoader.mainBundleResourceRoot)
             } catch {
                 Logger.speech.error("ParakeetBackend: model directory not found — \(error)")
                 throw TranscriberBackendError.modelUnavailable

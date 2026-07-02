@@ -141,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Silero VAD gate — loaded if model is present; degrades gracefully when absent
         // (isVoiceInactive stays false, widget dim feature inactive until model downloads).
         let vadGate: SileroVADGate?
-        if let modelPath = try? SileroModelLoader.modelPath(),
+        if let modelPath = try? SileroModelLoader.modelPath(bundleResourceRoot: SileroModelLoader.mainBundleResourceRoot),
            let processor = ProductionSileroFrameProcessor(modelPath: modelPath) {
             sileroProcessor = processor
             vadGate = SileroVADGate(frameProcessor: processor)

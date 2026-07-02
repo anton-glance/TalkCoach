@@ -11,14 +11,25 @@ struct SileroModelLoader {
         case modelNotFound
     }
 
+    /// The resource root of the running app bundle. Pass this as `bundleResourceRoot` at
+    /// production call sites so the resolver checks the bundle first. Tests leave
+    /// `bundleResourceRoot` nil (the default) so the bundle branch is skipped entirely,
+    /// keeping them immune to whatever models happen to be bundled.
+    nonisolated static var mainBundleResourceRoot: URL? {
+        Bundle.main.resourcePath.map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
     /// Full path to `silero_vad.onnx`.
     ///
-    /// Checks the bundle resource root first (no "TalkCoach" segment in path), then falls back
+    /// Checks `bundleResourceRoot` first (no "TalkCoach" segment in path), then falls back
     /// to Application Support (path includes "TalkCoach/Models"). Pass `bundleResourceRoot`
-    /// and `baseURL` to override the respective roots (testing only).
-    /// Throws `modelNotFound` if the file is absent in both locations.
+    /// and `baseURL` to override the respective roots.
+    /// Defaults to nil so that test call sites (which pass no argument) skip the bundle
+    /// branch entirely. Production call sites pass `SileroModelLoader.mainBundleResourceRoot`
+    /// explicitly.
+    /// Throws `modelNotFound` if the file is absent in all checked locations.
     nonisolated static func modelPath(
-        bundleResourceRoot: URL? = Bundle.main.resourcePath.map { URL(fileURLWithPath: $0, isDirectory: true) },
+        bundleResourceRoot: URL? = nil,
         baseURL: URL? = nil
     ) throws -> String {
         // Step 1: bundle candidate — no "TalkCoach" segment
