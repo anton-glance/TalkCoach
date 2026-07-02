@@ -29,7 +29,7 @@ final class SileroModelLoaderTests: XCTestCase {
 
         let result = try SileroModelLoader.modelPath(bundleResourceRoot: bundleRoot, baseURL: emptyBase)
         XCTAssertEqual(result, bundleModelsDir.appendingPathComponent("silero_vad.onnx").path)
-        XCTAssertFalse(result.contains("TalkCoach"), "Bundle candidate must not contain TalkCoach segment")
+        XCTAssertTrue(result.hasPrefix(bundleRoot.path), "Result must be rooted in bundle root, not Application Support")
     }
 
     func testFallsBackToApplicationSupportWhenBundleAbsent() throws {
@@ -47,7 +47,7 @@ final class SileroModelLoaderTests: XCTestCase {
 
         let result = try SileroModelLoader.modelPath(bundleResourceRoot: emptyBundle, baseURL: validBase)
         XCTAssertEqual(result, validModelsDir.appendingPathComponent("silero_vad.onnx").path)
-        XCTAssertTrue(result.contains("TalkCoach"), "Application Support candidate must contain TalkCoach segment")
+        XCTAssertTrue(result.hasPrefix(validBase.path), "Result must be rooted in Application Support root, not bundle")
     }
 
     func testThrowsWhenNeitherBundleNorFallbackValid() throws {

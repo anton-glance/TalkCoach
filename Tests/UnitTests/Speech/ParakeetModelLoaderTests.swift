@@ -112,7 +112,7 @@ final class ParakeetModelLoaderTests: XCTestCase {
 
         let result = try ParakeetModelLoader.modelDirectoryURL(bundleResourceRoot: bundleRoot, baseURL: emptyBase)
         XCTAssertEqual(result.path, bundleModelDir.path)
-        XCTAssertFalse(result.path.contains("TalkCoach"), "Bundle candidate must not contain TalkCoach segment")
+        XCTAssertTrue(result.path.hasPrefix(bundleRoot.path), "Result must be rooted in bundle root, not Application Support")
     }
 
     func testFallsBackToApplicationSupportWhenBundleAbsent() throws {
@@ -130,7 +130,7 @@ final class ParakeetModelLoaderTests: XCTestCase {
 
         let result = try ParakeetModelLoader.modelDirectoryURL(bundleResourceRoot: emptyBundle, baseURL: validBase)
         XCTAssertEqual(result.path, validModelDir.path)
-        XCTAssertTrue(result.path.contains("TalkCoach"), "Application Support candidate must contain TalkCoach segment")
+        XCTAssertTrue(result.path.hasPrefix(validBase.path), "Result must be rooted in Application Support root, not bundle")
     }
 
     func testFallsBackWhenBundleDirPresentButFilesMissing() throws {
