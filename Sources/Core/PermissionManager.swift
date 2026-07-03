@@ -121,13 +121,13 @@ final class PermissionManager {
     private nonisolated func alertMessage(for outcome: AuthorizationOutcome) -> String {
         switch outcome {
         case .micDenied:
-            "TalkCoach needs microphone access to analyze your speaking pace. "
+            "Locto needs microphone access to analyze your speaking pace. "
                 + "Please grant access in System Settings."
         case .speechDenied:
-            "TalkCoach needs speech recognition permission to transcribe your speech on-device. "
+            "Locto needs speech recognition permission to transcribe your speech on-device. "
                 + "Please grant access in System Settings."
         case .bothDenied:
-            "TalkCoach needs both microphone and speech recognition access. "
+            "Locto needs both microphone and speech recognition access. "
                 + "Please grant access in System Settings."
         case .allAuthorized, .notDetermined:
             ""

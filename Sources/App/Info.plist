@@ -26,9 +26,11 @@
 	<string></string>
 	<key>ATSApplicationFontsPath</key>
 	<string>Fonts</string>
+	<key>CFBundleDisplayName</key>
+	<string>Locto</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Speech Coach analyzes your speaking pace and filler words during meetings, fully on-device.</string>
+	<string>Locto analyzes your speaking pace and filler words during meetings, fully on-device.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Speech Coach uses on-device speech recognition to count words and detect filler words. No audio leaves your Mac.</string>
+	<string>Locto uses on-device speech recognition to count words and detect filler words. No audio leaves your Mac.</string>
 </dict>
 </plist>

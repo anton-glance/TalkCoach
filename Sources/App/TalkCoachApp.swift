@@ -175,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
 
         let window = NSWindow(contentViewController: hostingView)
-        window.title = "TalkCoach Settings"
+        window.title = "Locto Settings"
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 520, height: 600))
         window.center()
@@ -224,7 +224,7 @@ struct TalkCoachApp: App {
     var body: some Scene {
         // MenuBarExtra is always present; hasCompletedOnboarding gates session-engine boot
         // in AppDelegate (not menubar visibility) to avoid @AppStorage / SettingsStore conflicts.
-        MenuBarExtra("TalkCoach", image: "MenuBarIcon") {
+        MenuBarExtra("Locto", image: "MenuBarIcon") {
             MenuBarContent()
                 .environmentObject(delegate.settingsStore)
         }
@@ -236,7 +236,7 @@ struct MenuBarContent: View {
     @AppStorage("hasCompletedSetup") private var hasCompletedSetup = false
 
     var body: some View {
-        Button("About TalkCoach") {
+        Button("About Locto") {
             NSApplication.shared.activate()
             NSApplication.shared.orderFrontStandardAboutPanel(nil)
         }
@@ -264,7 +264,7 @@ struct MenuBarContent: View {
 
         Divider()
 
-        Button("Quit TalkCoach") {
+        Button("Quit Locto") {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: .command)
