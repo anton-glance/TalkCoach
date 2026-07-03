@@ -28,3 +28,4 @@ Vendor/parakeet-bridge/target/
 Vendor/parakeet-bridge/Cargo.lock
 **/Models/parakeet-tdt-v3-int8/
 *.onnx
+Vendor/models/

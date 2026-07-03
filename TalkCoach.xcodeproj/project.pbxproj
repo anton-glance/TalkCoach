@@ -99,6 +99,7 @@
 				A9D2424D2FA534C10039FC37 /* Sources */,
 				A9D2424E2FA534C10039FC37 /* Frameworks */,
 				A9D2424F2FA534C10039FC37 /* Resources */,
+				A9BD6F942FF7344400425C71 /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -185,6 +186,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A9BD6F942FF7344400425C71 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n\nSRC=\"${SRCROOT}/Vendor/models\"\nDST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Models\"\nPARAKEET_DIR=\"parakeet-tdt-v3-int8\"\nPARAKEET_FILES=\"encoder-model.int8.onnx decoder_joint-model.int8.onnx nemo128.onnx vocab.txt config.json\"\n\nmkdir -p \"${DST}/${PARAKEET_DIR}\"\n\nfor f in ${PARAKEET_FILES}; do\n  if [ ! -f \"${SRC}/${PARAKEET_DIR}/${f}\" ]; then\n    echo \"error: M6.13 model bundling — missing source file ${SRC}/${PARAKEET_DIR}/${f}\"\n    exit 1\n  fi\n  rsync -a \"${SRC}/${PARAKEET_DIR}/${f}\" \"${DST}/${PARAKEET_DIR}/${f}\"\ndone\n\nif [ ! -f \"${SRC}/silero_vad.onnx\" ]; then\n  echo \"error: M6.13 model bundling — missing source file ${SRC}/silero_vad.onnx\"\n  exit 1\nfi\nrsync -a \"${SRC}/silero_vad.onnx\" \"${DST}/silero_vad.onnx\"\n\necho \"M6.13 model bundling: copied 6 model files into ${DST}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A9D2424D2FA534C10039FC37 /* Sources */ = {
