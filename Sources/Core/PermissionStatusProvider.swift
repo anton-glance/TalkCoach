@@ -18,7 +18,7 @@ struct SystemPermissionStatusProvider: PermissionStatusProvider {
         SFSpeechRecognizer.authorizationStatus()
     }
 
-    func requestMicAccess() async -> Bool {
+    nonisolated func requestMicAccess() async -> Bool {
         await withCheckedContinuation { continuation in
             AVCaptureDevice.requestAccess(for: .audio) { granted in
                 continuation.resume(returning: granted)
@@ -26,7 +26,7 @@ struct SystemPermissionStatusProvider: PermissionStatusProvider {
         }
     }
 
-    func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+    nonisolated func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in
                 continuation.resume(returning: status)

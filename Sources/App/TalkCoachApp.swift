@@ -249,19 +249,6 @@ struct MenuBarContent: View {
             AppDelegate.current?.openSettings()
         }
 
-        #if DEBUG
-        // MARK: M1.6 debug scaffolding — remove when permission flow is triggered automatically
-        Button("Check Permissions") {
-            Task {
-                guard let manager = AppDelegate.current?.permissionManager else { return }
-                let outcome = await manager.requestAll()
-                if outcome != .allAuthorized {
-                    manager.showDeniedAlert(for: outcome)
-                }
-            }
-        }
-        #endif
-
         Divider()
 
         Button("Quit Locto") {
