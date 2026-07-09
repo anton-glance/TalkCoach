@@ -33,9 +33,20 @@ extension View {
                 )
                 .clipShape(shape)
         } else {
-            self
-                .clipShape(shape)
-                .glassEffect(.regular, in: shape)
+            if #available(macOS 26.0, *) {
+                self
+                    .clipShape(shape)
+                    .glassEffect(.regular, in: shape)
+            } else {
+                self
+                    .background(
+                        shape.fill(
+                            Color(NSColor.windowBackgroundColor)
+                                .shadow(.inner(color: .black.opacity(0.10), radius: 3, x: 0, y: 2))
+                        )
+                    )
+                    .clipShape(shape)
+            }
         }
     }
 }
